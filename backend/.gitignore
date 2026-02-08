@@ -1,0 +1,6 @@
+# Backend
+.env
+.env.local
+
+__pycache__
+.db

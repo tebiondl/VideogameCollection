@@ -1,0 +1,33 @@
+# General
+.DS_Store
+Thumbs.db
+
+# User specifics
+.vscode/
+.idea/
+
+# Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.env
+backend/.venv
+backend/venv
+backend/env
+backend/.db
+backend/*.sqlite3
+*.db
+
+# Mobile App
+mobile-app/node_modules/
+mobile-app/.expo/
+mobile-app/npm-debug.log
+mobile-app/yarn-error.log
+mobile-app/android/
+mobile-app/ios/
+
+# Root
+.venv
+venv
+env
+*.log
