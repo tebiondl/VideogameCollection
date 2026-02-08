@@ -47,11 +47,18 @@ export default function MainMenuScreen() {
                     </Card.Content>
                 </Card>
 
-                <Card style={styles.card} onPress={() => navigation.navigate('Settings')}>
-                    <Card.Content>
-                        <Text variant="titleLarge">{i18n.t('settings')}</Text>
-                    </Card.Content>
-                </Card>
+                <Button mode="contained" onPress={() => navigation.navigate('Session')} style={styles.button}>
+                    Session
+                </Button>
+
+                {/* Admin Only - In real app check user role */}
+                <Button mode="contained" onPress={() => navigation.navigate('ImportData')} style={[styles.button, { backgroundColor: '#6200ee' }]}>
+                    Fetch Data (Admin)
+                </Button>
+
+                <Button mode="outlined" onPress={() => navigation.navigate('Settings')} style={styles.button}>
+                    Settings
+                </Button>
             </View>
         </SafeAreaView>
     );
@@ -78,13 +85,17 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     grid: {
-        flex: 1,
-        flexDirection: 'column',
-        gap: 20,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
     },
     card: {
-        padding: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
+        width: '48%', // Approx half with spacing
+        marginBottom: 16,
     },
+    button: {
+        marginTop: 10,
+        marginBottom: 5,
+        width: '100%'
+    }
 });

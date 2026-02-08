@@ -13,6 +13,8 @@ import GameDetailScreen from '../screens/GameDetailScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import i18n from '../i18n';
 
+import ImportDataScreen from '../screens/ImportDataScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function RootNavigator() {
@@ -38,6 +40,7 @@ export default function RootNavigator() {
                     <Stack.Screen name="GamesFinished" component={GamesListScreen} initialParams={{ mode: 'finished' }} options={{ title: i18n.t('gamesFinished') }} />
                     <Stack.Screen name="GameDetail" component={GameDetailScreen} options={{ title: 'Game Details' }} />
                     <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: i18n.t('settings') }} />
+                    <Stack.Screen name="ImportData" component={ImportDataScreen} options={{ title: 'Import Data' }} />
                 </Stack.Navigator>
             </NavigationContainer>
         </PaperProvider>

@@ -10,3 +10,9 @@ python-multipart
 pydantic-settings
 email-validator
 aiosqlite
+pandas
+openpyxl
+thefuzz
+python-levenshtein
+aiohttp
+

@@ -13,10 +13,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Game Tracker API", lifespan=lifespan)
 
-from .routers import users, games
+from .routers import users, games, import_data
 
 app.include_router(users.router)
 app.include_router(games.router)
+app.include_router(import_data.router)
 
 
 @app.get("/")
