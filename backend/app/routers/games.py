@@ -61,3 +61,12 @@ async def delete_game(
     if db_game is None:
         raise HTTPException(status_code=404, detail="Game not found")
     return {"ok": True}
+
+
+@router.delete("/")
+async def delete_all_games(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: AsyncSession = Depends(database.get_db),
+):
+    await crud.delete_user_games(db, user_id=current_user.id)
+    return {"ok": True, "count": "All deleted"}

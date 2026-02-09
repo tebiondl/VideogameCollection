@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import delete
 from . import models, schemas
 # auth import moved to function level to avoid circular dependency
 
@@ -83,3 +84,9 @@ async def delete_game(db: AsyncSession, game_id: int, user_id: int):
     await db.delete(db_game)
     await db.commit()
     return db_game
+
+
+async def delete_user_games(db: AsyncSession, user_id: int):
+    # Pass execution_options={"synchronize_session": False} if not needing session update
+    await db.execute(delete(models.Game).where(models.Game.user_id == user_id))
+    await db.commit()

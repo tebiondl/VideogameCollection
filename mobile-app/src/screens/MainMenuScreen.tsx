@@ -52,9 +52,11 @@ export default function MainMenuScreen() {
                 </Button>
 
                 {/* Admin Only - In real app check user role */}
-                <Button mode="contained" onPress={() => navigation.navigate('ImportData')} style={[styles.button, { backgroundColor: '#6200ee' }]}>
-                    Fetch Data (Admin)
-                </Button>
+                {user && (
+                    <Button mode="contained" onPress={() => navigation.navigate('ImportData')} style={[styles.button, { backgroundColor: '#6200ee' }]}>
+                        Fetch Data (Admin)
+                    </Button>
+                )}
 
                 <Button mode="outlined" onPress={() => navigation.navigate('Settings')} style={styles.button}>
                     Settings

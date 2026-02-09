@@ -1,8 +1,8 @@
-import pandas as pd
 from io import BytesIO
 from thefuzz import process
 from .models import Game
 from typing import List, Dict, Any, Optional
+import openpyxl
 
 # Map internal DB columns to potential human-readable headers (Spanish/English)
 COLUMN_MAPPING_TARGETS = {
@@ -23,23 +23,59 @@ COLUMN_MAPPING_TARGETS = {
 
 def parse_excel_file(file_content: bytes) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Parses an Excel file (or similar) from bytes.
-    Returns a dict where keys are sheet names and values are list of records (rows).
+    Parses an Excel file using openpyxl to extract values AND background colors.
+    Returns a dict where keys are sheet names and values are list of records.
+    Each record is: { "Header": { "v": value, "c": "FFFFFF" } }
     """
-    xls = pd.ExcelFile(BytesIO(file_content))
+    wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
     result = {}
-    for sheet_name in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet_name)
-        # Drop completely empty rows/cols
-        df.dropna(how="all", inplace=True)
-        # Convert to object to allow None
-        df = df.astype(object)
-        # Convert NaN to None
-        df = df.where(pd.notnull(df), None)
-        # Convert to records
-        records = df.to_dict(orient="records")
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows())
+        if not rows:
+            continue
+
+        # Get headers from first row
+        headers = []
+        for cell in rows[0]:
+            h_val = (
+                str(cell.value).strip()
+                if cell.value is not None
+                else f"Unnamed:{cell.column}"
+            )
+            headers.append(h_val)
+
+        records = []
+        for row in rows[1:]:
+            # Skip empty rows
+            if all(cell.value is None for cell in row):
+                continue
+
+            row_data = {}
+            for i, cell in enumerate(row):
+                if i >= len(headers):
+                    break
+
+                val = cell.value
+
+                # Extract Color
+                color = None
+                if cell.fill and cell.fill.patternType == "solid":
+                    raw_color = cell.fill.start_color
+                    if raw_color.type == "rgb":
+                        # ARGB hex string
+                        if raw_color.rgb and len(raw_color.rgb) >= 6:
+                            # Keep last 6 chars (RGB)
+                            color = raw_color.rgb[-6:]
+                    # Note: Theme colors are complex to resolve, skipping for now
+                    # user likely uses standard colors if they color-code manually
+
+                row_data[headers[i]] = {"v": val, "c": color}
+            records.append(row_data)
+
         if records:
             result[sheet_name] = records
+
     return result
 
 
@@ -56,23 +92,11 @@ def propose_mapping(headers: List[str]) -> Dict[str, Dict[str, Any]]:
     }
     """
     mapping = {}
-    used_headers = set()
-
-    # Prioritize 'title' as it is mandatory
-    # Logic: Iterate over DB targets. For each, fuzzy match against all headers.
 
     for db_col, candidates in COLUMN_MAPPING_TARGETS.items():
-        # Find best match among all headers
-        # We can use process.extractOne
         best_match = None
         best_score = 0
-        alternatives = []
-
-        # We match against the list of candidates for this db_col
-        # But we need to match the *headers* from file against these *candidates*
-
-        # Strategy: For each header, calculate score against db_col candidates.
-        # Keep the header with the highest score.
+        alternatives = []  # type: List[str]
 
         header_scores = []
         for header in headers:
@@ -91,7 +115,7 @@ def propose_mapping(headers: List[str]) -> Dict[str, Dict[str, Any]]:
             alternatives = [h[0] for h in header_scores[1:3]]
 
             mapping[db_col] = {
-                "selected": best_match if best_score > 60 else None,  # Threshold
+                "selected": best_match if best_score > 60 else None,
                 "score": best_score,
                 "alternatives": alternatives,
             }

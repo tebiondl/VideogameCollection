@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # In production, these should be env vars
 SECRET_KEY = "changethissecr3tkey"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # 30 days (30 * 24 * 60)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 

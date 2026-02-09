@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import { Text, Switch, List, RadioButton } from 'react-native-paper';
+import { View, StyleSheet, Alert } from 'react-native';
+import { Text, Switch, List, RadioButton, Button } from 'react-native-paper';
 import { useThemeStore } from '../store/useThemeStore';
 import i18n from '../i18n';
+import client from '../api/client';
 
 export default function SettingsScreen() {
     const { isDark, toggleTheme } = useThemeStore();
@@ -33,6 +34,36 @@ export default function SettingsScreen() {
                     <List.Item title="Español" onPress={() => changeLang('es')} />
                 </List.Accordion>
             </List.Section>
+
+            <View style={{ marginTop: 30 }}>
+                <Button
+                    mode="contained"
+                    buttonColor="red"
+                    onPress={() => {
+                        Alert.alert(
+                            "Borrar Todos los Juegos",
+                            "¿Estás seguro? Esta acción borrará TODOS los juegos de tu colección y no se puede deshacer.",
+                            [
+                                { text: "Cancelar", style: "cancel" },
+                                {
+                                    text: "Borrar Todo",
+                                    style: "destructive",
+                                    onPress: async () => {
+                                        try {
+                                            await client.delete('/games/');
+                                            Alert.alert("Éxito", "Colección borrada correctamente.");
+                                        } catch (e) {
+                                            Alert.alert("Error", "No se pudo borrar la colección.");
+                                        }
+                                    }
+                                }
+                            ]
+                        );
+                    }}
+                >
+                    Borrar Todos los Datos
+                </Button>
+            </View>
         </View>
     );
 }
