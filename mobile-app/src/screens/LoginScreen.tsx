@@ -30,8 +30,15 @@ export default function LoginScreen() {
             const { access_token } = response.data;
             await login(access_token, username);
             navigation.goBack();
-        } catch (error) {
-            Alert.alert('Error', 'Invalid credentials');
+        } catch (error: any) {
+            console.error('Login error details:', {
+                message: error?.message,
+                status: error?.response?.status,
+                data: error?.response?.data,
+                code: error?.code,
+            });
+            const detail = error?.response?.data?.detail || error?.message || 'Unknown error';
+            Alert.alert('Error', `Login failed: ${detail}`);
         } finally {
             setLoading(false);
         }

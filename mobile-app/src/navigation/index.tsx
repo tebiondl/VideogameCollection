@@ -14,6 +14,7 @@ import SettingsScreen from '../screens/SettingsScreen';
 import i18n from '../i18n';
 
 import ImportDataScreen from '../screens/ImportDataScreen';
+import ImportAIScreen from '../screens/ImportAIScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -41,6 +42,7 @@ export default function RootNavigator() {
                     <Stack.Screen name="GameDetail" component={GameDetailScreen} options={{ title: 'Game Details' }} />
                     <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: i18n.t('settings') }} />
                     <Stack.Screen name="ImportData" component={ImportDataScreen} options={{ title: 'Import Data' }} />
+                    <Stack.Screen name="ImportAI" component={ImportAIScreen} options={{ title: 'Excel + IA' }} />
                 </Stack.Navigator>
             </NavigationContainer>
         </PaperProvider>

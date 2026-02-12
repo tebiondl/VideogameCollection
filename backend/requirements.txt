@@ -15,4 +15,6 @@ openpyxl
 thefuzz
 python-levenshtein
 aiohttp
+openai
+python-dotenv
 

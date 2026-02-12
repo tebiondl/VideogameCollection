@@ -61,3 +61,19 @@ class Game(GameBase):
 
     class Config:
         from_attributes = True
+
+
+# AI Import - all fields optional except title
+class GameAIImport(BaseModel):
+    title: str
+    status: Optional[GameStatus] = None
+    hype_score: Optional[int] = None
+    rating: Optional[float] = None
+    progress: Optional[GameProgress] = None
+    playtime_hours: Optional[float] = None
+    finish_year: Optional[int] = None
+    release_year: Optional[int] = None
+    price: Optional[float] = None
+    platform: Optional[str] = None
+    steam_deck: Optional[bool] = None
+    notes: Optional[str] = None

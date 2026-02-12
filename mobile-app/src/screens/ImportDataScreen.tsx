@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import client from '../api/client';
 import { useAuthStore } from '../store/useAuthStore';
 import i18n from '../i18n';
+import { useNavigation } from '@react-navigation/native';
 
 // Types matches backend
 type MappingProposal = {
@@ -36,6 +37,7 @@ const DB_COLUMNS = [
 ];
 
 export default function ImportDataScreen() {
+    const navigation = useNavigation();
     const [step, setStep] = useState(1); // 1: Select File, 2: Select Sheet, 3: Map Columns, 4: Execute/Result
     const [loading, setLoading] = useState(false);
     const [analysis, setAnalysis] = useState<SheetAnalysis[]>([]);
@@ -349,9 +351,21 @@ export default function ImportDataScreen() {
             {loading && <ActivityIndicator animating={true} style={styles.loader} />}
 
             {step === 1 && (
-                <View>
-                    <Button icon="file" mode="contained" onPress={pickFile}>
-                        Seleccionar Excel
+                <View style={styles.centerContainer}>
+                    <Text variant="headlineMedium" style={{ marginBottom: 20 }}>Importar Datos</Text>
+
+                    <Button icon="file-excel" mode="contained" onPress={pickFile} contentStyle={{ height: 60 }} style={{ marginBottom: 20, width: '100%' }}>
+                        Excel (Manual)
+                    </Button>
+
+                    <Button
+                        icon="robot"
+                        mode="contained"
+                        onPress={() => navigation.navigate('ImportAI' as never)}
+                        contentStyle={{ height: 60 }}
+                        style={{ width: '100%', backgroundColor: '#00695c' }}
+                    >
+                        Excel + IA
                     </Button>
                 </View>
             )}
@@ -430,6 +444,7 @@ export default function ImportDataScreen() {
 
 const styles = StyleSheet.create({
     container: { padding: 20, paddingBottom: 50 },
+    centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     loader: { marginBottom: 20 },
     card: { marginBottom: 10 },
     mappingRow: { marginBottom: 15, borderBottomWidth: 1, borderColor: '#eee', paddingBottom: 5 },
