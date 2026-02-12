@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { Button, Text, Card, ActivityIndicator, RadioButton, ProgressBar, useTheme, Surface } from 'react-native-paper';
+import { Button, Text, Card, ActivityIndicator, RadioButton, ProgressBar, useTheme, Surface, TextInput } from 'react-native-paper';
 import * as DocumentPicker from 'expo-document-picker';
 import client from '../api/client';
 import i18n from '../i18n';
@@ -40,6 +40,7 @@ export default function ImportAIScreen() {
     const [statusChoice, setStatusChoice] = useState<'backlog' | 'finished'>('backlog');
     const [strategy, setStrategy] = useState<'update' | 'skip'>('update');
     const [titleColumn, setTitleColumn] = useState<string | null>(null);
+    const [instructions, setInstructions] = useState<string>("");
     const abortControllerRef = React.useRef<AbortController | null>(null);
 
     // Results
@@ -114,6 +115,7 @@ export default function ImportAIScreen() {
             formData.append('status_choice', statusChoice);
             formData.append('processing_strategy', strategy);
             if (titleColumn) formData.append('title_column', titleColumn);
+            if (instructions) formData.append('extra_instructions', instructions);
 
             // Using standard HTTP request - for long files this might verify timeout vs sockets
             // But for reasonable sizes it works.
@@ -340,6 +342,24 @@ export default function ImportAIScreen() {
                                     {!titleColumn && <Text style={{ color: theme.colors.error, marginTop: 5 }}>Selecciona una columna para poder saltar.</Text>}
                                 </View>
                             )}
+                        </Card.Content>
+                    </Card>
+
+                    <Card style={styles.card}>
+                        <Card.Content>
+                            <Text variant="titleMedium">Instrucciones para la IA (Opcional)</Text>
+                            <Text variant="bodySmall" style={{ marginBottom: 10, color: theme.colors.secondary }}>
+                                Ej: "Si la celda está en verde, el juego está TERMINADO."
+                            </Text>
+                            <TextInput
+                                mode="outlined"
+                                value={instructions}
+                                onChangeText={setInstructions}
+                                placeholder="Escribe aquí tus indicaciones..."
+                                multiline
+                                numberOfLines={3}
+                                style={{ marginBottom: 10 }}
+                            />
                         </Card.Content>
                     </Card>
 

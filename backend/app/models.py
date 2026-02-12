@@ -10,10 +10,10 @@ class GameStatus(str, enum.Enum):
 
 
 class GameProgress(str, enum.Enum):
-    STARTED = "Empezado"
-    HALFWAY = "A mitad"
-    ADVANCED = "Avanzado"
-    FINISHED = "Terminado"
+    STARTED = "EMPEZADO"
+    HALFWAY = "A MEDIAS"
+    ADVANCED = "AVANZADO"
+    FINISHED = "TERMINADO"
 
 
 class User(Base):

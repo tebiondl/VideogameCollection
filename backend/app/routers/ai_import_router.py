@@ -85,6 +85,7 @@ async def ai_upload(
     status_choice: str = Form(...),
     title_column: str = Form(None),
     processing_strategy: str = Form("update"),  # 'skip' or 'update'
+    extra_instructions: str = Form(None),
     current_user: models.User = Depends(auth.get_current_user),
     db: AsyncSession = Depends(database.get_db),
 ):
@@ -126,14 +127,17 @@ async def ai_upload(
     conflicts: List[ConflictItem] = []
 
     for idx, row in enumerate(rows):
-        # Extract values in header order
+        # Extract values and colors in header order
         row_values = []
+        row_colors = []
         for h in headers:
             cell = row.get(h)
             if isinstance(cell, dict):
                 row_values.append(cell.get("v"))
+                row_colors.append(cell.get("c"))
             else:
                 row_values.append(cell)
+                row_colors.append(None)
 
         # SMART SKIP LOGIC
         if processing_strategy == "skip" and title_column:
@@ -154,7 +158,7 @@ async def ai_upload(
 
         # Call AI
         ai_result = await ai_import.process_row_with_ai(
-            headers, row_values, status_choice
+            headers, row_values, status_choice, extra_instructions, row_colors
         )
         processed += 1
 

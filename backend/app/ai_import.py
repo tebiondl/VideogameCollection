@@ -33,7 +33,7 @@ GAME_SCHEMA = {
         },
         "progress": {
             "type": "string",
-            "enum": ["Empezado", "A mitad", "Avanzado", "Terminado"],
+            "enum": ["EMPEZADO", "A MEDIAS", "AVANZADO", "TERMINADO"],
             "description": "Game progress status",
             "nullable": True,
         },
@@ -85,19 +85,27 @@ async def process_row_with_ai(
     column_names: list[str],
     row_values: list,
     status_choice: str,
+    extra_instructions: str = None,
+    row_colors: list = None,
 ) -> GameAIImport | None:
     """
     Sends one Excel row to Kimi K2.5 and returns a GameAIImport object.
     status_choice is either 'backlog' or 'finished'.
+    row_colors: list of hex strings or None corresponding to row_values
     """
     client = get_client()
 
     # Build the row representation
-    row_repr = "\n".join(
-        f"- {col}: {val}"
-        for col, val in zip(column_names, row_values)
-        if val is not None
-    )
+    row_parts = []
+    for i, (col, val) in enumerate(zip(column_names, row_values)):
+        if val is not None:
+            val_str = f"{col}: {val}"
+            # Append color info if available
+            if row_colors and i < len(row_colors) and row_colors[i]:
+                val_str += f" [Color: {row_colors[i]}]"
+            row_parts.append(f"- {val_str}")
+
+    row_repr = "\\n".join(row_parts)
 
     system_prompt = f"""You are a data parsing assistant for a videogame collection tracker.
 You will receive the column names and values from one row of an Excel spreadsheet.
@@ -110,11 +118,14 @@ Rules:
 - "title" is REQUIRED. Extract the game title from the row.
 - The "status" field MUST be set to "{status_choice}".
 - Only include fields you can confidently extract from the data. Leave out fields you cannot determine (do NOT invent data).
-- For "progress", valid values are: "Empezado", "A mitad", "Avanzado", "Terminado".
+- For "progress", valid values are: "EMPEZADO", "A MEDIAS", "AVANZADO", "TERMINADO".
 - For numeric fields (hype_score, rating, playtime_hours, price), convert to the appropriate number type.
 - For years (finish_year, release_year), extract 4-digit year integers.
 - For "steam_deck", return true/false boolean.
 - Return ONLY valid JSON, no markdown, no explanation."""
+
+    if extra_instructions:
+        system_prompt += f"\n\nUSER EXTRA INSTRUCTIONS:\n{extra_instructions}\n(Follow these instructions carefully when parsing the row)."
 
     user_message = f"Here is the row data:\n{row_repr}"
 
