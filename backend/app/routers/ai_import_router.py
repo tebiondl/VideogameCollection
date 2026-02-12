@@ -153,7 +153,9 @@ async def ai_upload(
                         continue
 
         # Call AI
-        ai_result = ai_import.process_row_with_ai(headers, row_values, status_choice)
+        ai_result = await ai_import.process_row_with_ai(
+            headers, row_values, status_choice
+        )
         processed += 1
 
         if ai_result is None:

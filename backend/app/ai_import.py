@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from openai import OpenAI
+from openai import AsyncOpenAI
 from .schemas import GameAIImport
 from .models import GameStatus, GameProgress
 
@@ -77,11 +77,11 @@ GAME_SCHEMA = {
 }
 
 
-def get_client() -> OpenAI:
-    return OpenAI(api_key=KIMI_API_KEY, base_url=KIMI_BASE_URL)
+def get_client() -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=KIMI_API_KEY, base_url=KIMI_BASE_URL)
 
 
-def process_row_with_ai(
+async def process_row_with_ai(
     column_names: list[str],
     row_values: list,
     status_choice: str,
@@ -119,13 +119,13 @@ Rules:
     user_message = f"Here is the row data:\n{row_repr}"
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=KIMI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            temperature=1,
+            temperature=1.0,
             response_format={"type": "json_object"},
         )
 

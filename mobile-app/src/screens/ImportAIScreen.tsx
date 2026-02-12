@@ -40,6 +40,7 @@ export default function ImportAIScreen() {
     const [statusChoice, setStatusChoice] = useState<'backlog' | 'finished'>('backlog');
     const [strategy, setStrategy] = useState<'update' | 'skip'>('update');
     const [titleColumn, setTitleColumn] = useState<string | null>(null);
+    const abortControllerRef = React.useRef<AbortController | null>(null);
 
     // Results
     const [results, setResults] = useState<{
@@ -99,6 +100,9 @@ export default function ImportAIScreen() {
         setLoading(true);
         setStep(4); // Processing UI
 
+        // Create new controller
+        abortControllerRef.current = new AbortController();
+
         try {
             const formData = new FormData();
             formData.append('file', {
@@ -116,6 +120,7 @@ export default function ImportAIScreen() {
             const res = await client.post('/import/ai/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 timeout: 3600000, // 1 hour
+                signal: abortControllerRef.current.signal
             });
 
             const data = res.data;
@@ -132,12 +137,24 @@ export default function ImportAIScreen() {
             } else {
                 setStep(6);
             }
-        } catch (e) {
-            Alert.alert("Error", "AI processing failed");
-            console.error(e);
-            setStep(3); // Go back
+        } catch (e: any) {
+            if (e.name === 'CanceledError' || e.message === 'canceled') {
+                // Return to config quietly
+                setStep(3);
+            } else {
+                Alert.alert("Error", "AI processing failed");
+                console.error(e);
+                setStep(3); // Go back
+            }
         } finally {
             setLoading(false);
+            abortControllerRef.current = null;
+        }
+    };
+
+    const handleCancel = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
         }
     };
 
@@ -347,7 +364,17 @@ export default function ImportAIScreen() {
                         Esto puede tomar unos minutos dependiendo del número de filas.
                         La IA está leyendo tu Excel...
                     </Text>
-                    <ProgressBar indeterminate visible={true} style={{ width: 200 }} />
+                    <ProgressBar indeterminate visible={true} style={{ width: 200, marginBottom: 30 }} />
+
+                    <Button
+                        mode="outlined"
+                        icon="close-circle"
+                        textColor={theme.colors.error}
+                        onPress={handleCancel}
+                        style={{ borderColor: theme.colors.error }}
+                    >
+                        Cancelar Proceso
+                    </Button>
                 </View>
             )}
 
