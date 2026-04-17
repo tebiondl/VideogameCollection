@@ -1,0 +1,132 @@
+.navbar {
+  background-color: rgba(26, 29, 36, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: 70px;
+  display: flex;
+  align-items: center;
+}
+
+.nav-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.logo-icon {
+  color: var(--accent-primary);
+}
+
+.user-menu-wrapper {
+  position: relative;
+}
+
+.user-menu-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  padding: 0.4rem 1rem 0.4rem 0.4rem;
+  border-radius: var(--radius-round);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: var(--transition);
+}
+
+.user-menu-btn:hover {
+  background-color: var(--bg-tertiary);
+  border-color: #4b5563;
+}
+
+.avatar-icon {
+  width: 32px;
+  height: 32px;
+  color: var(--text-secondary);
+}
+
+.avatar-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.username {
+  font-weight: 500;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 220px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: slideDown 0.2s ease-out forwards;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-header {
+  padding: 1rem;
+}
+
+.dropdown-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dropdown-id {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background-color: var(--border-color);
+}
+
+.dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  text-align: left;
+}
+
+.dropdown-item:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.dropdown-item.danger:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--error-color);
+}
