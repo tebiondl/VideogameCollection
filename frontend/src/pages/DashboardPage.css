@@ -1,0 +1,75 @@
+.dashboard-hub {
+  padding: 4rem 1.5rem;
+}
+
+.hub-header {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+
+.hub-header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2rem;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  transition: var(--transition);
+  padding: 3rem 2rem;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.active-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 15px 40px rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.disabled-card {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(80%);
+}
+
+.hub-icon-wrapper {
+  width: 90px;
+  height: 90px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  margin-bottom: 1.5rem;
+}
+
+.hub-card h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.badge {
+  font-size: 0.7rem;
+  background-color: var(--bg-tertiary);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-round);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

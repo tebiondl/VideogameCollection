@@ -1,0 +1,94 @@
+.add-game-header {
+  margin-bottom: 2.5rem;
+}
+
+.add-game-header h1 {
+  font-size: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.tabs-container {
+  display: flex;
+  background-color: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  padding: 0.25rem;
+  max-width: 100%;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  border-radius: calc(var(--radius-lg) - 0.25rem);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.tab-btn.active {
+  background-color: var(--accent-primary);
+  color: white;
+  box-shadow: 0 4px 10px var(--accent-glow);
+}
+
+/* Form Styles */
+.add-form {
+  padding: 2.5rem;
+}
+
+.form-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+/* Select element theming */
+select.form-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a0a8b5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 1em;
+}
+
+textarea.form-input {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* Tag Checkboxes */
+.tags-container {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.tag-checkbox {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.tag-checkbox input[type="checkbox"] {
+  display: none;
+}
+
+.tag-label {
+  display: inline-block;
+  padding: 0.5rem 1.25rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-round);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: var(--transition);
+}
+
+.tag-checkbox input[type="checkbox"]:checked + .tag-label {
+  background-color: rgba(99, 102, 241, 0.2);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
