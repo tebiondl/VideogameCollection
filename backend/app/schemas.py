@@ -47,3 +47,31 @@ class VideogameResponse(VideogameBase):
 
     class Config:
         from_attributes = True
+
+# Smart Import Schemas
+class SmartImportItemResponse(VideogameBase):
+    id: int
+    session_id: int
+    review_status: str
+
+    class Config:
+        from_attributes = True
+
+class SmartImportSessionResponse(BaseModel):
+    id: int
+    status: str
+    items: list[SmartImportItemResponse] = []
+
+    class Config:
+        from_attributes = True
+
+class SmartImportItemUpdate(VideogameBase):
+    review_status: str
+
+class TagResponse(BaseModel):
+    id: int
+    name: str
+    user_id: int | None = None
+
+    class Config:
+        from_attributes = True

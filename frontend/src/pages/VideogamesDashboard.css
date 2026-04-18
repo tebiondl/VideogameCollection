@@ -144,6 +144,45 @@
   align-items: center;
   padding: 0.75rem;
   gap: 1.5rem;
+  position: relative;
+}
+
+.card-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 10;
+}
+
+.vg-card:hover .card-actions {
+  opacity: 1;
+}
+
+.vg-card {
+  position: relative;
+}
+
+.card-actions .icon-btn {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.card-actions .edit-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--accent-primary);
+}
+
+.card-actions .delete-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--error-color);
 }
 
 .vg-collection.list-view .vg-cover-wrapper {

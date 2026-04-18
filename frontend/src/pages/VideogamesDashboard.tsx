@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2 } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import { TagMultiSelect } from '../components/TagMultiSelect';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -11,23 +12,58 @@ export function VideogamesDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [editingGame, setEditingGame] = useState<any>(null);
+  const [availableTags, setAvailableTags] = useState<any[]>([]);
+  
+  // Need to recreate STATUS_OPTIONS here or import them (copying for simplicity)
+  const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
 
   useEffect(() => {
-    const fetchGames = async () => {
+    const fetchGamesAndTags = async () => {
       try {
-        const res = await fetchWithAuth('/videogames/');
-        if (res.ok) {
-          const data = await res.json();
-          setGames(data);
-        }
+        const [gamesRes, tagsRes] = await Promise.all([
+           fetchWithAuth('/videogames/'),
+           fetchWithAuth('/videogames/tags')
+        ]);
+        if (gamesRes.ok) setGames(await gamesRes.json());
+        if (tagsRes.ok) setAvailableTags(await tagsRes.json());
       } catch (err) {
         console.error('Failed to load games', err);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchGames();
+    fetchGamesAndTags();
   }, []);
+
+  const handleDelete = async (gameId: number) => {
+    if (!window.confirm("Are you sure you want to delete this game?")) return;
+    try {
+      const res = await fetchWithAuth(`/videogames/${gameId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setGames(games.filter(g => g.id !== gameId));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editingGame) return;
+    try {
+      const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingGame)
+      });
+      if (res.ok) {
+        setGames(games.map(g => g.id === editingGame.id ? editingGame : g));
+        setEditingGame(null);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Local filter for data
   const filteredGames = games.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -103,6 +139,10 @@ export function VideogamesDashboard() {
                 <h3>{game.name}</h3>
                 <span className="badge" style={{ marginTop: '0.5rem', display: 'inline-block' }}>{game.status}</span>
               </div>
+              <div className="card-actions">
+                <button className="icon-btn edit-btn" onClick={() => setEditingGame(game)} title="Edit"><Edit2 size={16} /></button>
+                <button className="icon-btn delete-btn" onClick={() => handleDelete(game.id)} title="Delete"><Trash2 size={16} /></button>
+              </div>
             </div>
           ))
         ) : (
@@ -111,6 +151,49 @@ export function VideogamesDashboard() {
           </div>
         )}
       </div>
+
+      {/* Edit Game Modal */}
+      {editingGame && (
+        <div className="modal-overlay">
+          <div className="glass-card modal-content">
+            <button className="modal-close" onClick={() => setEditingGame(null)}><X size={20}/></button>
+            <h2 style={{ marginBottom: '1.5rem' }}>Edit Game</h2>
+            
+            <div className="form-group">
+               <label className="form-label">Name</label>
+               <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
+            </div>
+            
+            <div className="form-row">
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Status</label>
+                <select className="form-input" value={editingGame.status} onChange={e => setEditingGame({...editingGame, status: e.target.value})}>
+                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Rating</label>
+                <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
+              </div>
+            </div>
+            
+            <div className="form-group">
+               <label className="form-label">Tags</label>
+               <TagMultiSelect 
+                  availableTags={availableTags}
+                  selectedTagsString={editingGame.tags || ''}
+                  onChange={(newTags) => setEditingGame({ ...editingGame, tags: newTags })}
+               />
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
+               <button className="btn btn-primary" onClick={saveEdit}>
+                 Save Changes
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

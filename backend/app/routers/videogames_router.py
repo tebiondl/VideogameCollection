@@ -8,6 +8,25 @@ from .auth_router import get_current_user
 
 router = APIRouter(prefix="/api/videogames", tags=["videogames"])
 
+@router.get("/tags", response_model=List[schemas.TagResponse])
+def get_tags(
+    current_user: Annotated[models.User, Depends(get_current_user)], 
+    db: Session = Depends(database.get_db)
+):
+    global_tags = db.query(models.Tag).filter(models.Tag.user_id == None).all()
+    user_tags = db.query(models.Tag).filter(models.Tag.user_id == current_user.id).all()
+    
+    # Auto-seed if exactly empty
+    if not global_tags and not user_tags:
+        default_names = ["Gacha", "Online", "Completed", "Multiplayer", "RPG", "Action", "Strategy"]
+        for name in default_names:
+            tag = models.Tag(name=name, user_id=None)
+            db.add(tag)
+        db.commit()
+        global_tags = db.query(models.Tag).filter(models.Tag.user_id == None).all()
+        
+    return global_tags + user_tags
+
 @router.get("/", response_model=List[schemas.VideogameResponse])
 def get_videogames(
     current_user: Annotated[models.User, Depends(get_current_user)], 
@@ -74,3 +93,21 @@ def update_videogame(
     db.commit()
     db.refresh(db_game)
     return db_game
+
+@router.delete("/{game_id}")
+def delete_videogame(
+    game_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    db_game = db.query(models.Videogame).filter(
+        models.Videogame.id == game_id,
+        models.Videogame.user_id == current_user.id
+    ).first()
+    
+    if not db_game:
+        raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+        
+    db.delete(db_game)
+    db.commit()
+    return {"status": "ok"}
