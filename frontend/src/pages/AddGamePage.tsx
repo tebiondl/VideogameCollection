@@ -9,6 +9,15 @@ import './AddGamePage.css';
 const AVAILABLE_TAGS = ['Gacha', 'Online', 'Runs'];
 const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
 
+interface FileConfig {
+  filename: string;
+  type: 'txt' | 'word' | 'csv' | 'excel' | 'unknown';
+  prompt: string;
+  has_named_columns?: boolean;
+  read_independently?: boolean;
+  sheets?: { name: string; selected: boolean; prompt: string }[];
+}
+
 export function AddGamePage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'search'|'manual'|'smart'>('manual');
@@ -25,6 +34,7 @@ export function AddGamePage() {
   const [mark, setMark] = useState<number | ''>('');
   const [completionDate, setCompletionDate] = useState('');
   const [pubYear, setPubYear] = useState<number | ''>('');
+  const [completionPercentage, setCompletionPercentage] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,7 +45,7 @@ export function AddGamePage() {
   // -------------------------
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
-  const [smartPrompt, setSmartPrompt] = useState('');
+  const [fileConfigs, setFileConfigs] = useState<FileConfig[]>([]);
   const [smartSession, setSmartSession] = useState<any>(null); // holds status and parsing data
   const [isSmartUploading, setIsSmartUploading] = useState(false);
 
@@ -97,15 +107,70 @@ export function AddGamePage() {
     };
   }, [activeTab, pollTrigger]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selected = Array.from(e.target.files);
       if (files.length + selected.length > 10) {
         setError('Maximum 10 files allowed');
         return;
       }
+      
       setFiles(prev => [...prev, ...selected]);
+
+      const newConfigs: FileConfig[] = [];
+      
+      for (const file of selected) {
+        let type: FileConfig['type'] = 'unknown';
+        const nameLower = file.name.toLowerCase();
+        if (nameLower.endsWith('.txt')) type = 'txt';
+        else if (nameLower.endsWith('.doc') || nameLower.endsWith('.docx')) type = 'word';
+        else if (nameLower.endsWith('.csv')) type = 'csv';
+        else if (nameLower.endsWith('.xls') || nameLower.endsWith('.xlsx')) type = 'excel';
+        
+        let sheets: any[] = [];
+        if (type === 'excel') {
+           try {
+             const fd = new FormData();
+             fd.append('file', file);
+             const res = await fetchWithAuth('/smart-import/excel-sheets', {
+               method: 'POST',
+               body: fd,
+             });
+             if (res.ok) {
+               const data = await res.json();
+               sheets = data.sheets.map((s: string) => ({ name: s, selected: true, prompt: '' }));
+             }
+           } catch (err) {
+             console.error("Failed to fetch excel sheets", err);
+           }
+        }
+
+        newConfigs.push({
+           filename: file.name,
+           type,
+           prompt: '',
+           has_named_columns: type === 'csv' ? true : undefined,
+           read_independently: type === 'excel' ? false : undefined,
+           sheets: type === 'excel' ? sheets : undefined
+        });
+      }
+      
+      setFileConfigs(prev => [...prev, ...newConfigs]);
     }
+  };
+
+  const removeFile = (idx: number) => {
+    const fileToRemove = files[idx];
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+    setFileConfigs(prev => prev.filter(c => c.filename !== fileToRemove.name));
+  };
+
+  const updateConfig = (idx: number, updates: Partial<FileConfig>) => {
+    setFileConfigs(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], ...updates };
+      return copy;
+    });
   };
 
   const startSmartImport = async (e: React.FormEvent) => {
@@ -119,7 +184,7 @@ export function AddGamePage() {
     setIsSmartUploading(true);
     
     const formData = new FormData();
-    formData.append('prompt', smartPrompt);
+    formData.append('config', JSON.stringify(fileConfigs));
     files.forEach(f => formData.append('files', f));
     
     try {
@@ -158,19 +223,18 @@ export function AddGamePage() {
   const setAllItemsStatus = async (status: 'accepted' | 'rejected') => {
     if (!smartSession?.items) return;
     setError('');
+    // Immediate optimistic update for perfect responsivenes
+    setSmartSession((prev: any) => ({
+      ...prev,
+      items: prev.items.map((i: any) => ({ ...i, review_status: status }))
+    }));
     try {
-      const itemsToUpdate = smartSession.items.filter((i: any) => i.review_status !== status);
-      for (const item of itemsToUpdate) {
-        await fetchWithAuth(`/smart-import/items/${item.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...item, review_status: status })
-        });
-      }
-      setSmartSession((prev: any) => ({
-        ...prev,
-        items: prev.items.map((i: any) => ({ ...i, review_status: status }))
-      }));
+      const res = await fetchWithAuth(`/smart-import/sessions/${smartSession.id}/bulk-status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (!res.ok) throw new Error("Server rejected bulk update");
     } catch (err: any) {
       setError("Bulk action failed: " + err.message);
     }
@@ -233,6 +297,7 @@ export function AddGamePage() {
         name, description: description || null, image_url: imageUrl || null,
         status, time_spent: timeSpent || null, mark: mark !== '' ? mark : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
+        completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null
       };
 
@@ -259,11 +324,13 @@ export function AddGamePage() {
         name: editingItem.name, description: editingItem.description || null, image_url: editingItem.image_url || null,
         status: editingItem.status, time_spent: editingItem.time_spent || null, mark: editingItem.mark !== '' ? editingItem.mark : null,
         completion_date: editingItem.completion_date || null, publication_year: editingItem.publication_year !== '' ? editingItem.publication_year : null,
+        completion_percentage: editingItem.completion_percentage ?? null,
         tags: editingItem.tags || null
       } : {
         name, description: description || null, image_url: imageUrl || null,
         status, time_spent: timeSpent || null, mark: mark !== '' ? mark : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
+        completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null
       };
 
@@ -347,6 +414,15 @@ export function AddGamePage() {
                 {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
               </select>
             </div>
+            {(status === 'Stopped' || status === 'Finished') && (
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Completion %</label>
+                <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
+                  <option value="">--</option>
+                  {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Your Rating (1-10)</label>
               <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
@@ -417,36 +493,119 @@ export function AddGamePage() {
                   hidden 
                   ref={fileInputRef} 
                   onChange={handleFileChange} 
-                  accept=".csv,.xlsx,.xls,.txt"
+                  accept=".csv,.xlsx,.xls,.txt,.doc,.docx"
                 />
                 <Upload size={32} color="var(--accent-primary)" style={{ marginBottom: '1rem' }} />
                 <h3>Click or drag to attach files</h3>
-                <p className="text-muted">Maximum 10 files (.xlsx, .csv, .txt)</p>
+                <p className="text-muted">Maximum 10 files (.xlsx, .csv, .txt, .docx)</p>
               </div>
 
               {files.length > 0 && (
-                <div className="attached-files">
-                  {files.map((f, i) => (
-                     <div key={i} className="file-chip">
-                        <FileIcon size={14} /> {f.name}
-                        <button onClick={() => setFiles(files.filter((_, idx) => idx !== i))}><X size={14} /></button>
-                     </div>
-                  ))}
+                <div className="attached-files-configs" style={{ marginTop: '2rem' }}>
+                  <h3 style={{ marginBottom: '1rem' }}>File Configuration</h3>
+                  {fileConfigs.map((config, idx) => {
+                     if (config.type === 'unknown') return null;
+                     return (
+                       <div key={idx} className="glass-card" style={{ padding: '1.5rem', marginBottom: '1.5rem', background: 'var(--bg-tertiary)' }}>
+                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                           <h4 style={{ color: 'var(--accent-primary)' }}>{config.filename} <span className="badge" style={{ marginLeft: '0.5rem' }}>{config.type}</span></h4>
+                           <button className="icon-btn delete" onClick={() => removeFile(idx)}><X size={16} /></button>
+                         </div>
+                         
+                         {config.type === 'excel' && (
+                           <>
+                             <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                 <input 
+                                   type="checkbox" 
+                                   checked={config.read_independently} 
+                                   onChange={(e) => updateConfig(idx, { read_independently: e.target.checked })} 
+                                   style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                 />
+                                 Read sheets independently (one by one)
+                               </label>
+                             </div>
+                             
+                             {!config.read_independently && (
+                                 <div className="form-group">
+                                   <label className="form-label">Global Explanation for this Excel (Optional)</label>
+                                   <textarea className="form-input" rows={2} placeholder="e.g. Extract the columns containing standard game properties..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                                 </div>
+                             )}
+
+                             <div className="form-group">
+                               <label className="form-label">Select Sheets to Process</label>
+                               {config.sheets && config.sheets.length === 0 && <span className="text-muted" style={{ fontSize: '0.85rem' }}>Loading sheets...</span>}
+                               {config.sheets?.map((s, sIdx) => (
+                                 <div key={s.name} style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '150px', cursor: 'pointer', margin: 0 }}>
+                                     <input 
+                                       type="checkbox" 
+                                       checked={s.selected} 
+                                       onChange={(e) => {
+                                          const newSheets = [...config.sheets!];
+                                          newSheets[sIdx].selected = e.target.checked;
+                                          updateConfig(idx, { sheets: newSheets });
+                                       }}
+                                       style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                     />
+                                     <span style={{ color: s.selected ? 'inherit' : 'var(--text-muted)' }}>{s.name}</span>
+                                   </label>
+                                   {config.read_independently && s.selected && (
+                                     <div style={{ flex: 1, minWidth: '200px' }}>
+                                        <input 
+                                          type="text" 
+                                          className="form-input" 
+                                          placeholder={`Specific explanation for '${s.name}' (optional)`}
+                                          value={s.prompt}
+                                          onChange={(e) => {
+                                             const newSheets = [...config.sheets!];
+                                             newSheets[sIdx].prompt = e.target.value;
+                                             updateConfig(idx, { sheets: newSheets });
+                                          }}
+                                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                                        />
+                                     </div>
+                                   )}
+                                 </div>
+                               ))}
+                             </div>
+                           </>
+                         )}
+
+                         {config.type === 'csv' && (
+                           <>
+                             <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                 <input 
+                                   type="checkbox" 
+                                   checked={config.has_named_columns} 
+                                   onChange={(e) => updateConfig(idx, { has_named_columns: e.target.checked })} 
+                                   style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                 />
+                                 File has named columns
+                               </label>
+                             </div>
+                             <div className="form-group">
+                               <label className="form-label">Explanation / Prompt (Optional)</label>
+                               <textarea className="form-input" rows={2} placeholder="Explain how to parse this CSV..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                             </div>
+                           </>
+                         )}
+
+                         {(config.type === 'txt' || config.type === 'word') && (
+                           <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                             <label className="form-label">Explanation / Prompt (Optional)</label>
+                             <textarea className="form-input" rows={2} placeholder={`Explain the structure of this ${config.type}...`} value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                           </div>
+                         )}
+                       </div>
+                     )
+                  })}
                 </div>
               )}
 
-              <div className="form-group" style={{ marginTop: '2rem' }}>
-                <label className="form-label">Extraction Prompt</label>
-                <textarea 
-                  className="form-input" 
-                  rows={4} 
-                  placeholder="e.g. Columns are Title, Length, Score 1-10, and completion date. Extract my gacha game sessions specifically as 'Playing'."
-                  value={smartPrompt}
-                  onChange={e => setSmartPrompt(e.target.value)}
-                />
-              </div>
-
-              <div className="form-actions" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <div className="form-actions" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
                  <button onClick={startSmartImport} className="btn btn-primary" disabled={files.length === 0 || isSmartUploading}>
                    {isSmartUploading ? 'Uploading...' : 'Read & Extract games'}
                  </button>
@@ -594,6 +753,15 @@ export function AddGamePage() {
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
+              {(editingItem.status === 'Stopped' || editingItem.status === 'Finished') && (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Completion %</label>
+                  <select className="form-input" value={editingItem.completion_percentage ?? ''} onChange={e => setEditingItem({...editingItem, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
+                    <option value="">--</option>
+                    {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                  </select>
+                </div>
+              )}
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Rating</label>
                 <input type="number" min="1" max="10" className="form-input" value={editingItem.mark || ''} onChange={e => setEditingItem({...editingItem, mark: e.target.value ? Number(e.target.value) : ''})} />

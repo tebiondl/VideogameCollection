@@ -26,6 +26,7 @@ class Videogame(Base):
     mark = Column(Integer, nullable=True) # 1 to 10
     completion_date = Column(String, nullable=True) # string to support just '2024' or '2024-05'
     publication_year = Column(Integer, nullable=True)
+    completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True) # JSON encoded string or comma separated
 
     owner = relationship("User", back_populates="videogames")
@@ -37,6 +38,7 @@ class SmartImportSession(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(String, nullable=False, default="processing") # processing, pending_review, completed, failed
     created_at = Column(DateTime, default=datetime.utcnow)
+    raw_ai_response = Column(String, nullable=True)
     
     items = relationship("SmartImportItem", back_populates="session", cascade="all, delete-orphan")
 
@@ -56,6 +58,7 @@ class SmartImportItem(Base):
     mark = Column(Integer, nullable=True)
     completion_date = Column(String, nullable=True)
     publication_year = Column(Integer, nullable=True)
+    completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True)
 
     session = relationship("SmartImportSession", back_populates="items")

@@ -171,6 +171,15 @@ export function VideogamesDashboard() {
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
+              {(editingGame.status === 'Stopped' || editingGame.status === 'Finished') && (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Completion %</label>
+                  <select className="form-input" value={editingGame.completion_percentage ?? ''} onChange={e => setEditingGame({...editingGame, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
+                    <option value="">--</option>
+                    {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                  </select>
+                </div>
+              )}
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Rating</label>
                 <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />

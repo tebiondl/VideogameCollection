@@ -22,26 +22,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/smart-import", tags=["smart-import"])
 
 
-# Helper function to extract text from uploads
-def extract_text(upload_file: UploadFile) -> str:
-    filename = upload_file.filename.lower()
-    try:
-        if filename.endswith(".csv"):
-            return upload_file.file.read().decode("utf-8")
-        elif filename.endswith(".xlsx") or filename.endswith(".xls"):
-            df = pd.read_excel(upload_file.file)
-            return df.to_csv(index=False)
-        elif filename.endswith(".txt"):
-            return upload_file.file.read().decode("utf-8")
-        else:
-            # Fallback for unrecognized formats
-            return upload_file.file.read().decode("utf-8", errors="ignore")
-    except Exception as e:
-        logger.error(f"Error parsing file {filename}: {e}")
-        return ""
+# Helper function to extract text from uploads is now integrated into the payload builder directly.
 
 
-def process_smart_import(session_id: int, files_texts: List[str], user_prompt: str):
+def process_smart_import(session_id: int, files_payloads: List[dict]):
     db = database.SessionLocal()
     session = (
         db.query(models.SmartImportSession)
@@ -75,17 +59,22 @@ def process_smart_import(session_id: int, files_texts: List[str], user_prompt: s
             "THEN, respond strictly with a valid JSON array of objects wrapped in ```json ... ``` markdown. "
             "Each JSON object MUST contain these exact fields: "
             "'name' (string, required), 'description' (string or null), 'image_url' (string or null), 'status' (string, choices: 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'), "
-            "'time_spent' (string or null), 'mark' (integer 1-10 or null), 'completion_date' (string or null), 'publication_year' (integer or null), 'tags' (string or null). "
+            "'time_spent' (string or null), 'mark' (integer 1-10 or null), 'completion_date' (string or null), 'publication_year' (integer or null), 'completion_percentage' (integer 0-100 or null), 'tags' (string or null). "
             "If the user specifies particular tags, use them (Gacha, Online, Runs). Comma separate tags. If status is unknown, default to 'Not Started'."
         )
 
         all_items = []
-        total_files = len(files_texts)
-        for i, file_text in enumerate(files_texts):
-            session.status = f"processing|{i + 1}/{total_files}|Initializing Moonshot stream..."
+        raw_responses = []
+        total_files = len(files_payloads)
+        for i, payload in enumerate(files_payloads):
+            file_name = payload["name"]
+            file_text = payload["text"]
+            file_prompt = payload.get("prompt", "")
+
+            session.status = f"processing|{i + 1}/{total_files}|Initializing Moonshot stream for {file_name}..."
             db.commit()
 
-            prompt = f"User Instructions:\n{user_prompt}\n\nFile Content:\n{file_text}"
+            prompt = f"User Instructions:\n{file_prompt}\n\nFile Content:\n{file_text}"
 
             max_retries = 3
             collected_content = ""
@@ -139,6 +128,7 @@ def process_smart_import(session_id: int, files_texts: List[str], user_prompt: s
                     raise api_e
 
             content = collected_content.strip()
+            raw_responses.append(f"--- RAW OUTPUT FOR {file_name} ---\n{content}\n")
             
             import re
             json_str = content
@@ -168,10 +158,12 @@ def process_smart_import(session_id: int, files_texts: List[str], user_prompt: s
                 mark=item.get("mark"),
                 completion_date=item.get("completion_date"),
                 publication_year=item.get("publication_year"),
+                completion_percentage=item.get("completion_percentage"),
                 tags=item.get("tags"),
             )
             db.add(new_item)
 
+        session.raw_ai_response = "\n".join(raw_responses)
         session.status = "pending_review"
         db.commit()
 
@@ -183,16 +175,34 @@ def process_smart_import(session_id: int, files_texts: List[str], user_prompt: s
         db.close()
 
 
+@router.post("/excel-sheets")
+def get_excel_sheets(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    file: UploadFile = File(...)
+):
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Must be an excel file")
+    try:
+        xl = pd.ExcelFile(file.file)
+        return {"sheets": xl.sheet_names}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error parsing excel: {e}")
+
 @router.post("/", response_model=schemas.SmartImportSessionResponse)
 async def start_smart_import(
     background_tasks: BackgroundTasks,
     current_user: Annotated[models.User, Depends(get_current_user)],
     db: Session = Depends(database.get_db),
-    prompt: str = Form(""),
+    config: str = Form(...),
     files: List[UploadFile] = File([]),
 ):
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="Maximum 10 files allowed")
+
+    try:
+        config_data = json.loads(config)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid config JSON")
 
     new_session = models.SmartImportSession(
         user_id=current_user.id, status="processing"
@@ -201,16 +211,83 @@ async def start_smart_import(
     db.commit()
     db.refresh(new_session)
 
-    # Read all active files into memory sequentially as separate chunks
-    files_texts = []
-    for f in files:
-        text = extract_text(f)
-        if text.strip():
-            files_texts.append(f"--- [File: {f.filename}] ---\n{text}")
+    file_map = {f.filename: f for f in files}
+    files_payloads = []
+
+    for item in config_data:
+        filename = item.get("filename")
+        if filename not in file_map:
+            continue
+        
+        upload_file = file_map[filename]
+        file_type = item.get("type", "txt")
+        prompt = item.get("prompt", "")
+        
+        if file_type in ("txt", "word", "csv"):
+            text = ""
+            name_lower = filename.lower()
+            try:
+                if name_lower.endswith(".csv"):
+                    content = upload_file.file.read().decode("utf-8", errors="ignore")
+                    has_cols = item.get("has_named_columns", True)
+                    col_info = "The file has named columns." if has_cols else "The file does NOT have named columns."
+                    text = f"--- [CSV Data] {col_info} ---\n{content}"
+                elif name_lower.endswith((".doc", ".docx")):
+                    import docx
+                    doc = docx.Document(upload_file.file)
+                    text = "\n".join([p.text for p in doc.paragraphs])
+                else:
+                    text = upload_file.file.read().decode("utf-8", errors="ignore")
+            except Exception as e:
+                logger.error(f"Error parsing {filename}: {e}")
+                continue
+
+            if text.strip():
+                files_payloads.append({
+                    "name": filename,
+                    "text": text,
+                    "prompt": prompt
+                })
+
+        elif file_type == "excel":
+            read_independently = item.get("read_independently", False)
+            sheets_config = item.get("sheets", [])
+            selected_sheets = [s for s in sheets_config if s.get("selected")]
+            
+            if not selected_sheets:
+                continue
+
+            try:
+                xl = pd.ExcelFile(upload_file.file)
+                
+                if read_independently:
+                    for s in selected_sheets:
+                        if s["name"] in xl.sheet_names:
+                            df = xl.parse(s["name"])
+                            sh_prompt = s.get("prompt") or prompt
+                            files_payloads.append({
+                                "name": f'{filename} - Sheet: {s["name"]}',
+                                "text": df.to_csv(index=False),
+                                "prompt": sh_prompt
+                            })
+                else:
+                    combined_text = []
+                    for s in selected_sheets:
+                        if s["name"] in xl.sheet_names:
+                            df = xl.parse(s["name"])
+                            combined_text.append(f"--- Sheet: {s['name']} ---\n{df.to_csv(index=False)}")
+                    if combined_text:
+                        files_payloads.append({
+                            "name": filename,
+                            "text": "\n\n".join(combined_text),
+                            "prompt": prompt
+                        })
+            except Exception as e:
+                logger.error(f"Excel parsing error for {filename}: {e}")
 
     # Dispatch Background Task
     background_tasks.add_task(
-        process_smart_import, new_session.id, files_texts, prompt
+        process_smart_import, new_session.id, files_payloads
     )
 
     return new_session
@@ -261,6 +338,36 @@ def update_item(
     db.commit()
     db.refresh(item)
     return item
+
+
+class BulkStatusUpdate(schemas.BaseModel):
+    status: str
+
+@router.put("/sessions/{session_id}/bulk-status")
+def update_bulk_status(
+    session_id: int,
+    payload: BulkStatusUpdate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    session = (
+        db.query(models.SmartImportSession)
+        .filter(
+            models.SmartImportSession.id == session_id,
+            models.SmartImportSession.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    for item in session.items:
+        if item.review_status != payload.status:
+            item.review_status = payload.status
+
+    db.commit()
+    return {"message": "Success"}
 
 
 @router.delete("/sessions/{session_id}")
@@ -318,6 +425,7 @@ def commit_session(
             mark=item.mark,
             completion_date=item.completion_date,
             publication_year=item.publication_year,
+            completion_percentage=item.completion_percentage,
             tags=item.tags,
         )
         db.add(new_game)

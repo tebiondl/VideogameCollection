@@ -33,6 +33,7 @@ class VideogameBase(BaseModel):
     mark: int | None = None
     completion_date: str | None = None
     publication_year: int | None = None
+    completion_percentage: int | None = None
     tags: str | None = None
 
 class VideogameCreate(VideogameBase):
