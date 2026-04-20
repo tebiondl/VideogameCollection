@@ -169,6 +169,12 @@ export function VideogamesDashboard() {
             <Filter size={18} />
             Filter
           </button>
+          {(searchQuery !== '' || JSON.stringify(filterState) !== JSON.stringify(DEFAULT_FILTER_STATE)) && (
+            <button className="btn btn-ghost toolbar-btn" style={{ color: 'var(--error-color)' }} onClick={() => { setFilterState(DEFAULT_FILTER_STATE); setSearchQuery(''); }} title="Clear all filters and search">
+              <X size={18} />
+              Clear
+            </button>
+          )}
         </div>
 
         <div className="toolbar-views">

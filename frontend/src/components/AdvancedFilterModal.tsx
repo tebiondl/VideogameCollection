@@ -50,6 +50,7 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
   const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
   const [filterName, setFilterName] = React.useState('');
   const [showSavedList, setShowSavedList] = React.useState(false);
+  const [showHelp, setShowHelp] = React.useState(false);
 
   const updateTagQuery = (newQuery: TagGroup) => {
     onChange({ ...filterState, tagQuery: newQuery });
@@ -178,7 +179,12 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
         <div className="filter-sections-layout">
            <div className="filter-main">
                <div className="filter-section">
-                 <h3>Visual Tag Query Builder</h3>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                   <h3 style={{ margin: 0, padding: 0, border: 'none' }}>Visual Tag Query Builder</h3>
+                   <button className="btn btn-secondary sm" onClick={() => setShowHelp(true)} style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}>
+                     HELP
+                   </button>
+                 </div>
                  {renderTagGroup(filterState.tagQuery)}
                </div>
 
@@ -268,6 +274,36 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
            </button>
         </div>
       </div>
+
+       {showHelp && (
+         <div className="modal-overlay" style={{ zIndex: 100 }}>
+           <div className="glass-card modal-content" style={{ maxWidth: '500px' }}>
+             <div className="modal-header">
+                <h2>How to use Tag Queries</h2>
+                <button className="modal-close" onClick={() => setShowHelp(false)}><X size={20}/></button>
+             </div>
+             <div style={{ marginTop: '1rem', lineHeight: '1.6', fontSize: '0.95rem' }}>
+                <p>The visual tag builder lets you create complex, nested equations without writing confusing text.</p>
+                <div style={{ marginTop: '1rem' }}>
+                  <p><strong>Rules:</strong> Standard strict matching filters (e.g., <em>Includes RPG</em>).</p>
+                  <p><strong>Sub-Groups:</strong> These act exactly like <strong>Math Parentheses ( )</strong>. They let you group rules together and change the logic between <em>Match ALL (AND)</em> and <em>Match ANY (OR)</em>.</p>
+                </div>
+                
+                <h4 style={{ marginTop: '1.5rem', marginBottom: '0.5rem', color: 'var(--accent-primary)' }}>Example: (Gacha AND Online) OR RPG</h4>
+                <ol style={{ paddingLeft: '1.5rem', color: 'var(--text-secondary)' }}>
+                  <li>Set the main outer block to <strong>Match [ANY]</strong>.</li>
+                  <li>Click Add Rule: <em>Includes RPG</em>.</li>
+                  <li>Click <strong>Add Sub-Group</strong> to drop parenthesis inside.</li>
+                  <li>Set the new Sub-Group to <strong>Match [ALL]</strong>.</li>
+                  <li>Add Rules inside the Sub-Group: <em>Includes Gacha</em> and <em>Includes Online</em>.</li>
+                </ol>
+             </div>
+             <div className="modal-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="btn btn-primary" onClick={() => setShowHelp(false)}>Got it</button>
+             </div>
+           </div>
+         </div>
+       )}
     </div>
   );
 }
