@@ -69,3 +69,11 @@ class Tag(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Null means global default tag
+
+class SavedFilter(Base):
+    __tablename__ = "saved_filters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    filter_data = Column(String, nullable=False) # JSON blob of the filter state

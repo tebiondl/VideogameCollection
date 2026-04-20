@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
+import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -14,6 +16,11 @@ export function VideogamesDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
+
+  // Filtering System
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
+  const [savedFilters, setSavedFilters] = useState<any[]>([]);
   
   // Need to recreate STATUS_OPTIONS here or import them (copying for simplicity)
   const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
@@ -21,14 +28,16 @@ export function VideogamesDashboard() {
   useEffect(() => {
     const fetchGamesAndTags = async () => {
       try {
-        const [gamesRes, tagsRes] = await Promise.all([
+        const [gamesRes, tagsRes, filtersRes] = await Promise.all([
            fetchWithAuth('/videogames/'),
-           fetchWithAuth('/videogames/tags')
+           fetchWithAuth('/videogames/tags'),
+           fetchWithAuth('/filters/')
         ]);
         if (gamesRes.ok) setGames(await gamesRes.json());
         if (tagsRes.ok) setAvailableTags(await tagsRes.json());
+        if (filtersRes.ok) setSavedFilters(await filtersRes.json());
       } catch (err) {
-        console.error('Failed to load games', err);
+        console.error('Failed to load dashboard data', err);
       } finally {
         setIsLoading(false);
       }
@@ -65,8 +74,68 @@ export function VideogamesDashboard() {
     }
   };
 
-  // Local filter for data
-  const filteredGames = games.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const handleSaveFilter = async (name: string, data: FilterState) => {
+    try {
+      const res = await fetchWithAuth('/filters/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, filter_data: JSON.stringify(data) })
+      });
+      if (res.ok) setSavedFilters([...savedFilters, await res.json()]);
+    } catch (e) {
+      console.error("Save filter failed");
+    }
+  };
+
+  const handleLoadFilter = (sf: any) => {
+    try {
+       setFilterState(JSON.parse(sf.filter_data));
+    } catch {}
+  };
+
+  const handleDeleteFilter = async (id: number) => {
+    try {
+      if (await fetchWithAuth(`/filters/${id}`, { method: 'DELETE' }).then(r => r.ok)) {
+         setSavedFilters(prev => prev.filter(f => f.id !== id));
+      }
+    } catch {}
+  };
+
+  const evaluateTagGroup = (group: TagGroup, gameTags: string[]): boolean => {
+      if (group.conditions.length === 0) return true;
+      const results = group.conditions.map(cond => {
+          if (cond.type === 'group') return evaluateTagGroup(cond, gameTags);
+          const rule = cond as TagRule;
+          if (!rule.tag) return true; // skip empty rules
+          const hasTag = gameTags.includes(rule.tag);
+          return rule.operator === 'includes' ? hasTag : !hasTag;
+      });
+      if (group.matchLogic === 'AND') return results.every(r => r);
+      return results.some(r => r);
+  };
+
+  const filteredGames = games.filter(g => {
+     if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+     
+     if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
+
+     if (filterState.ratingRange.min !== '' && (g.mark === null || g.mark < filterState.ratingRange.min)) return false;
+     if (filterState.ratingRange.max !== '' && (g.mark === null || g.mark > filterState.ratingRange.max)) return false;
+
+     const hasPercentage = g.completion_percentage !== null && g.completion_percentage !== undefined;
+     if (!hasPercentage || (g.status !== 'Stopped' && g.status !== 'Finished')) {
+         if (!filterState.completionRange.includeEmpty) return false;
+     } else {
+         const p = g.completion_percentage;
+         if (filterState.completionRange.min !== '' && p < filterState.completionRange.min) return false;
+         if (filterState.completionRange.max !== '' && p > filterState.completionRange.max) return false;
+     }
+
+     const gTags = g.tags ? g.tags.split(',').map((s:string) => s.trim()) : [];
+     if (!evaluateTagGroup(filterState.tagQuery, gTags)) return false;
+
+     return true;
+  });
 
   return (
     <div className="container vg-dashboard">
@@ -96,7 +165,7 @@ export function VideogamesDashboard() {
           <button className="btn btn-secondary toolbar-btn">
             Search
           </button>
-          <button className="btn btn-ghost toolbar-btn" disabled title="Filters coming soon">
+          <button className="btn btn-ghost toolbar-btn" onClick={() => setShowFilterModal(true)}>
             <Filter size={18} />
             Filter
           </button>
@@ -202,6 +271,20 @@ export function VideogamesDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {showFilterModal && (
+        <AdvancedFilterModal 
+           filterState={filterState}
+           onChange={setFilterState}
+           onApply={() => setShowFilterModal(false)}
+           onClose={() => setShowFilterModal(false)}
+           availableTags={availableTags}
+           savedFilters={savedFilters}
+           onSaveFilter={handleSaveFilter}
+           onLoadFilter={handleLoadFilter}
+           onDeleteFilter={handleDeleteFilter}
+        />
       )}
     </div>
   );

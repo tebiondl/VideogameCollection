@@ -76,3 +76,15 @@ class TagResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SavedFilterCreate(BaseModel):
+    name: str
+    filter_data: str
+
+class SavedFilterResponse(BaseModel):
+    id: int
+    name: str
+    filter_data: str
+
+    class Config:
+        from_attributes = True
