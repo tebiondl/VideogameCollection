@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
@@ -8,6 +9,47 @@ import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilte
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
+
+// ─── Sort types ────────────────────────────────────────────────────────────────
+type SortField = 'mark' | 'hype' | 'completion_percentage';
+type SortDir = 'asc' | 'desc';
+
+interface SortCriterion {
+  id: number;
+  field: SortField;
+  dir: SortDir;
+}
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  mark: 'Rating',
+  hype: 'Hype',
+  completion_percentage: 'Completion %',
+};
+
+const SORT_FIELDS: SortField[] = ['mark', 'hype', 'completion_percentage'];
+
+let _sortIdCounter = 0;
+const newSortId = () => ++_sortIdCounter;
+
+// ─── Multi-sort comparator ────────────────────────────────────────────────────
+function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
+  if (criteria.length === 0) return games;
+  return [...games].sort((a, b) => {
+    for (const c of criteria) {
+      const av = a[c.field] ?? null;
+      const bv = b[c.field] ?? null;
+
+      // Nulls always go to the end regardless of direction
+      if (av === null && bv === null) continue;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      if (cmp !== 0) return c.dir === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  });
+}
 
 export function VideogamesDashboard() {
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
@@ -21,9 +63,40 @@ export function VideogamesDashboard() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
   const [savedFilters, setSavedFilters] = useState<any[]>([]);
-  
+
+  // Sort System
+  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([]);
+  const [showSortPanel, setShowSortPanel] = useState(false);
+  const sortBtnRef = useRef<HTMLButtonElement>(null);
+  const sortPanelRef = useRef<HTMLDivElement>(null);
+  // Panel position (fixed, set when opening)
+  const [sortPanelPos, setSortPanelPos] = useState({ top: 0, left: 0 });
+
   // Need to recreate STATUS_OPTIONS here or import them (copying for simplicity)
   const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+
+  // Close sort panel on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        sortPanelRef.current && !sortPanelRef.current.contains(e.target as Node) &&
+        sortBtnRef.current && !sortBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowSortPanel(false);
+      }
+    };
+    if (showSortPanel) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSortPanel]);
+
+  // Open sort panel: measure button position and set panel coords
+  const openSortPanel = () => {
+    if (!showSortPanel && sortBtnRef.current) {
+      const rect = sortBtnRef.current.getBoundingClientRect();
+      setSortPanelPos({ top: rect.bottom + 8, left: rect.left });
+    }
+    setShowSortPanel(v => !v);
+  };
 
   useEffect(() => {
     const fetchGamesAndTags = async () => {
@@ -101,6 +174,35 @@ export function VideogamesDashboard() {
     } catch {}
   };
 
+  // ─── Sort helpers ────────────────────────────────────────────────────────────
+  const addSortCriterion = () => {
+    // Default to the first field not already in use, or fall back to 'mark'
+    const usedFields = sortCriteria.map(c => c.field);
+    const nextField = SORT_FIELDS.find(f => !usedFields.includes(f)) ?? 'mark';
+    setSortCriteria(prev => [...prev, { id: newSortId(), field: nextField, dir: 'asc' }]);
+  };
+
+  const updateSortCriterion = (id: number, updates: Partial<Omit<SortCriterion, 'id'>>) => {
+    setSortCriteria(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  };
+
+  const removeSortCriterion = (id: number) => {
+    setSortCriteria(prev => prev.filter(c => c.id !== id));
+  };
+
+  const moveCriterion = (id: number, dir: -1 | 1) => {
+    setSortCriteria(prev => {
+      const idx = prev.findIndex(c => c.id === id);
+      if (idx < 0) return prev;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
+    });
+  };
+
+  // ─── Filter + Sort pipeline ────────────────────────────────────────────────
   const evaluateTagGroup = (group: TagGroup, gameTags: string[]): boolean => {
       if (group.conditions.length === 0) return true;
       const results = group.conditions.map(cond => {
@@ -137,6 +239,11 @@ export function VideogamesDashboard() {
      return true;
   });
 
+  const displayGames = applyMultiSort(filteredGames, sortCriteria);
+
+  const hasSorts = sortCriteria.length > 0;
+  const hasActiveFiltersOrSearch = searchQuery !== '' || JSON.stringify(filterState) !== JSON.stringify(DEFAULT_FILTER_STATE);
+
   return (
     <div className="container vg-dashboard">
       <header className="vg-header">
@@ -169,8 +276,99 @@ export function VideogamesDashboard() {
             <Filter size={18} />
             Filter
           </button>
-          {(searchQuery !== '' || JSON.stringify(filterState) !== JSON.stringify(DEFAULT_FILTER_STATE)) && (
-            <button className="btn btn-ghost toolbar-btn" style={{ color: 'var(--error-color)' }} onClick={() => { setFilterState(DEFAULT_FILTER_STATE); setSearchQuery(''); }} title="Clear all filters and search">
+
+          {/* ── Sort button ── */}
+          <button
+            ref={sortBtnRef}
+            id="sort-btn"
+            className={`btn toolbar-btn sort-btn ${hasSorts ? 'sort-btn--active' : 'btn-ghost'}`}
+            onClick={openSortPanel}
+            title="Multi-sort"
+          >
+            <ArrowUpDown size={18} />
+            Sort
+            {hasSorts && <span className="sort-badge">{sortCriteria.length}</span>}
+          </button>
+
+          {/* ── Sort panel rendered via portal (always above everything) ── */}
+          {showSortPanel && createPortal(
+            <div
+              ref={sortPanelRef}
+              className="sort-panel glass-card"
+              style={{ position: 'fixed', top: sortPanelPos.top, left: sortPanelPos.left, zIndex: 9999 }}
+            >
+              <div className="sort-panel-header">
+                <span className="sort-panel-title">Sort Order</span>
+                {hasSorts && (
+                  <button
+                    className="btn btn-ghost sort-clear-btn"
+                    onClick={() => setSortCriteria([])}
+                    title="Clear all sorts"
+                  >
+                    <X size={14} /> Clear
+                  </button>
+                )}
+              </div>
+
+              {sortCriteria.length === 0 && (
+                <p className="sort-empty-hint">No sorts applied. Add one below.</p>
+              )}
+
+              <div className="sort-criteria-list">
+                {sortCriteria.map((c, idx) => (
+                  <div key={c.id} className="sort-criterion-row">
+                    <span className="sort-priority-badge">{idx + 1}</span>
+
+                    <div className="sort-move-btns">
+                      <button className="sort-move-btn" disabled={idx === 0} onClick={() => moveCriterion(c.id, -1)} title="Move up">
+                        <ArrowUp size={12} />
+                      </button>
+                      <button className="sort-move-btn" disabled={idx === sortCriteria.length - 1} onClick={() => moveCriterion(c.id, 1)} title="Move down">
+                        <ArrowDown size={12} />
+                      </button>
+                    </div>
+
+                    <select
+                      className="form-input sort-field-select"
+                      value={c.field}
+                      onChange={e => updateSortCriterion(c.id, { field: e.target.value as SortField })}
+                    >
+                      {SORT_FIELDS.map(f => (
+                        <option key={f} value={f}>{SORT_FIELD_LABELS[f]}</option>
+                      ))}
+                    </select>
+
+                    <button
+                      className={`sort-dir-btn ${c.dir === 'asc' ? 'asc' : 'desc'}`}
+                      onClick={() => updateSortCriterion(c.id, { dir: c.dir === 'asc' ? 'desc' : 'asc' })}
+                      title={c.dir === 'asc' ? 'Low → High' : 'High → Low'}
+                    >
+                      {c.dir === 'asc' ? <><ArrowUp size={12} /> Low→High</> : <><ArrowDown size={12} /> High→Low</>}
+                    </button>
+
+                    <button className="sort-remove-btn" onClick={() => removeSortCriterion(c.id)} title="Remove">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {sortCriteria.length < SORT_FIELDS.length && (
+                <button className="btn btn-ghost sort-add-btn" onClick={addSortCriterion}>
+                  <PlusIcon size={14} /> Add sort
+                </button>
+              )}
+            </div>,
+            document.body
+          )}
+
+          {(hasActiveFiltersOrSearch || hasSorts) && (
+            <button
+              className="btn btn-ghost toolbar-btn"
+              style={{ color: 'var(--error-color)' }}
+              onClick={() => { setFilterState(DEFAULT_FILTER_STATE); setSearchQuery(''); setSortCriteria([]); }}
+              title="Clear all filters, search and sorts"
+            >
               <X size={18} />
               Clear
             </button>
@@ -200,8 +398,8 @@ export function VideogamesDashboard() {
           <div className="empty-state">
             <Loader2 className="spinner" size={32} />
           </div>
-        ) : filteredGames.length > 0 ? (
-          filteredGames.map((game: any) => (
+        ) : displayGames.length > 0 ? (
+          displayGames.map((game: any) => (
             <div key={game.id} className="vg-card glass-card">
               <div className="vg-cover-wrapper">
                 {game.image_url ? (
