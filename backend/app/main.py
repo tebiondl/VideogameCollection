@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .routers import auth_router, videogames_router, smart_import_router, filters_router
+from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router
 
 # Create db tables
 Base.metadata.create_all(bind=engine)
@@ -30,6 +30,7 @@ app.include_router(auth_router.router)
 app.include_router(videogames_router.router)
 app.include_router(smart_import_router.router)
 app.include_router(filters_router.router)
+app.include_router(igdb_router.router)
 
 @app.get("/")
 def read_root():

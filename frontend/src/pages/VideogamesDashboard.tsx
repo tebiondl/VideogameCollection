@@ -255,10 +255,17 @@ export function VideogamesDashboard() {
                   </select>
                 </div>
               )}
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Rating</label>
-                <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
-              </div>
+              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') ? (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Rating (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
+                </div>
+              ) : (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Hype (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={editingGame.hype || ''} onChange={e => setEditingGame({...editingGame, hype: e.target.value ? Number(e.target.value) : null})} />
+                </div>
+              )}
             </div>
             
             <div className="form-group">

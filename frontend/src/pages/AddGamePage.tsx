@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, File as FileIcon, X, Check, Edit2 } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, File as FileIcon, X, Check, Edit2, Search, Gamepad2 } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -20,7 +20,7 @@ interface FileConfig {
 
 export function AddGamePage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'search'|'manual'|'smart'>('manual');
+  const [activeTab, setActiveTab] = useState<'search' | 'manual' | 'smart'>('manual');
   const [error, setError] = useState('');
 
   // -------------------------
@@ -32,6 +32,7 @@ export function AddGamePage() {
   const [status, setStatus] = useState(STATUS_OPTIONS[0]);
   const [timeSpent, setTimeSpent] = useState('');
   const [mark, setMark] = useState<number | ''>('');
+  const [hype, setHype] = useState<number | ''>('');
   const [completionDate, setCompletionDate] = useState('');
   const [pubYear, setPubYear] = useState<number | ''>('');
   const [completionPercentage, setCompletionPercentage] = useState<number | ''>('');
@@ -39,6 +40,24 @@ export function AddGamePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const toggleTag = (tag: string) => setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+
+  // -------------------------
+  // SEARCH TAB STATE (IGDB)
+  // -------------------------
+  const [igdbQuery, setIgdbQuery] = useState('');
+  const [igdbResults, setIgdbResults] = useState<any[]>([]);
+  const [igdbLoading, setIgdbLoading] = useState(false);
+  const [igdbError, setIgdbError] = useState('');
+  const [selectedIgdbGame, setSelectedIgdbGame] = useState<any>(null);
+  // Fields filled by user after selecting a game from IGDB results
+  const [igdbStatus, setIgdbStatus] = useState(STATUS_OPTIONS[0]);
+  const [igdbMark, setIgdbMark] = useState<number | ''>('');
+  const [igdbHype, setIgdbHype] = useState<number | ''>('');
+  const [igdbTimeSpent, setIgdbTimeSpent] = useState('');
+  const [igdbCompletionDate, setIgdbCompletionDate] = useState('');
+  const [igdbCompletionPct, setIgdbCompletionPct] = useState<number | ''>('');
+  const [igdbTags, setIgdbTags] = useState<string[]>([]);
+  const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -------------------------
   // 2. SMART IMPORT STATE
@@ -70,11 +89,89 @@ export function AddGamePage() {
     fetchTags();
   }, []);
 
+  // IGDB: debounced search — fires 400 ms after user stops typing
+  const runIgdbSearch = useCallback(async (q: string) => {
+    if (!q.trim()) { setIgdbResults([]); return; }
+    setIgdbLoading(true);
+    setIgdbError('');
+    try {
+      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(q)}&limit=12`);
+      if (res.ok) {
+        setIgdbResults(await res.json());
+      } else {
+        setIgdbError('Search failed. Please try again.');
+        setIgdbResults([]);
+      }
+    } catch {
+      setIgdbError('Network error. Is the backend running?');
+      setIgdbResults([]);
+    } finally {
+      setIgdbLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'search') return;
+    if (igdbDebounceRef.current) clearTimeout(igdbDebounceRef.current);
+    if (!igdbQuery.trim()) { setIgdbResults([]); return; }
+    igdbDebounceRef.current = setTimeout(() => runIgdbSearch(igdbQuery), 400);
+    return () => { if (igdbDebounceRef.current) clearTimeout(igdbDebounceRef.current); };
+  }, [igdbQuery, activeTab, runIgdbSearch]);
+
+  const handleSelectIgdbGame = (game: any) => {
+    setSelectedIgdbGame(game);
+    setIgdbStatus(STATUS_OPTIONS[0]);
+    setIgdbMark('');
+    setIgdbHype('');
+    setIgdbTimeSpent('');
+    setIgdbCompletionDate('');
+    setIgdbCompletionPct('');
+    setIgdbTags([]);
+  };
+
+  const handleIgdbAddGame = async () => {
+    if (!selectedIgdbGame) return;
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const matches = await checkSimilar(selectedIgdbGame.name);
+      if (matches.length > 0) {
+        setSimilarGames(matches);
+        setShowFuzzyModal(true);
+        setIsSubmitting(false);
+        return;
+      }
+      const payload = {
+        name: selectedIgdbGame.name,
+        description: selectedIgdbGame.summary || null,
+        image_url: selectedIgdbGame.cover_url || null,
+        status: igdbStatus,
+        time_spent: igdbTimeSpent || null,
+        mark: igdbMark !== '' ? igdbMark : null,
+        hype: igdbHype !== '' ? igdbHype : null,
+        completion_date: igdbCompletionDate || null,
+        publication_year: selectedIgdbGame.release_year || null,
+        completion_percentage: igdbCompletionPct !== '' ? igdbCompletionPct : null,
+        tags: igdbTags.length > 0 ? igdbTags.join(',') : null,
+      };
+      const res = await fetchWithAuth('/videogames/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save game');
+      navigate('/dashboard/videogames');
+    } catch (err: any) {
+      setError(err.message);
+      setIsSubmitting(false);
+    }
+  };
+
   // Poll for background task completion autonomously securely escaping React's equality skips
   useEffect(() => {
     let isMounted = true;
     let timeoutId: any;
-    
+
     const pollSession = async () => {
       if (activeTab !== 'smart') return;
       try {
@@ -82,28 +179,28 @@ export function AddGamePage() {
         if (res.ok) {
           const data = await res.json();
           if (isMounted) setSmartSession(data);
-          
+
           if (data.status.startsWith('failed')) {
-             if (isMounted) {
-                 setError("Smart Import Failed: " + data.status);
-                 setSmartSession(null); 
-             }
+            if (isMounted) {
+              setError("Smart Import Failed: " + data.status);
+              setSmartSession(null);
+            }
           } else if (data.status.startsWith('processing')) {
-             timeoutId = setTimeout(pollSession, 2000);
+            timeoutId = setTimeout(pollSession, 2000);
           }
-        } 
+        }
       } catch (e) {
         console.error("Polling error", e);
       }
     };
-    
+
     if (activeTab === 'smart') {
-       pollSession();
+      pollSession();
     }
-    
+
     return () => {
-       isMounted = false;
-       clearTimeout(timeoutId);
+      isMounted = false;
+      clearTimeout(timeoutId);
     };
   }, [activeTab, pollTrigger]);
 
@@ -114,11 +211,11 @@ export function AddGamePage() {
         setError('Maximum 10 files allowed');
         return;
       }
-      
+
       setFiles(prev => [...prev, ...selected]);
 
       const newConfigs: FileConfig[] = [];
-      
+
       for (const file of selected) {
         let type: FileConfig['type'] = 'unknown';
         const nameLower = file.name.toLowerCase();
@@ -126,35 +223,35 @@ export function AddGamePage() {
         else if (nameLower.endsWith('.doc') || nameLower.endsWith('.docx')) type = 'word';
         else if (nameLower.endsWith('.csv')) type = 'csv';
         else if (nameLower.endsWith('.xls') || nameLower.endsWith('.xlsx')) type = 'excel';
-        
+
         let sheets: any[] = [];
         if (type === 'excel') {
-           try {
-             const fd = new FormData();
-             fd.append('file', file);
-             const res = await fetchWithAuth('/smart-import/excel-sheets', {
-               method: 'POST',
-               body: fd,
-             });
-             if (res.ok) {
-               const data = await res.json();
-               sheets = data.sheets.map((s: string) => ({ name: s, selected: true, prompt: '' }));
-             }
-           } catch (err) {
-             console.error("Failed to fetch excel sheets", err);
-           }
+          try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetchWithAuth('/smart-import/excel-sheets', {
+              method: 'POST',
+              body: fd,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              sheets = data.sheets.map((s: string) => ({ name: s, selected: true, prompt: '' }));
+            }
+          } catch (err) {
+            console.error("Failed to fetch excel sheets", err);
+          }
         }
 
         newConfigs.push({
-           filename: file.name,
-           type,
-           prompt: '',
-           has_named_columns: type === 'csv' ? true : undefined,
-           read_independently: type === 'excel' ? false : undefined,
-           sheets: type === 'excel' ? sheets : undefined
+          filename: file.name,
+          type,
+          prompt: '',
+          has_named_columns: type === 'csv' ? true : undefined,
+          read_independently: type === 'excel' ? false : undefined,
+          sheets: type === 'excel' ? sheets : undefined
         });
       }
-      
+
       setFileConfigs(prev => [...prev, ...newConfigs]);
     }
   };
@@ -179,18 +276,18 @@ export function AddGamePage() {
       setError('Please attach at least one file.');
       return;
     }
-    
+
     setError('');
     setIsSmartUploading(true);
-    
+
     const formData = new FormData();
     formData.append('config', JSON.stringify(fileConfigs));
     files.forEach(f => formData.append('files', f));
-    
+
     try {
       const res = await fetchWithAuth('/smart-import/', {
         method: 'POST',
-        body: formData, 
+        body: formData,
       });
       if (!res.ok) throw new Error('Upload failed');
       const data = await res.json();
@@ -245,9 +342,9 @@ export function AddGamePage() {
     try {
       const res = await fetchWithAuth(`/smart-import/commit/${smartSession.id}`, { method: 'POST' });
       if (res.ok) {
-         navigate('/dashboard/videogames');
+        navigate('/dashboard/videogames');
       } else {
-         setError("Failed to commit array to database");
+        setError("Failed to commit array to database");
       }
     } catch (e: any) {
       setError(e.message);
@@ -270,10 +367,10 @@ export function AddGamePage() {
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    
+
     setError('');
     setIsSubmitting(true);
-    
+
     try {
       const matches = await checkSimilar(name);
       if (matches.length > 0) {
@@ -295,7 +392,9 @@ export function AddGamePage() {
     try {
       const payload = {
         name, description: description || null, image_url: imageUrl || null,
-        status, time_spent: timeSpent || null, mark: mark !== '' ? mark : null,
+        status, time_spent: timeSpent || null,
+        mark: mark !== '' ? mark : null,
+        hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null
@@ -322,13 +421,17 @@ export function AddGamePage() {
       // If we were editing a SmartItem we apply the editingItem fields. If manual, we apply manual fields.
       const payload = editingItem ? {
         name: editingItem.name, description: editingItem.description || null, image_url: editingItem.image_url || null,
-        status: editingItem.status, time_spent: editingItem.time_spent || null, mark: editingItem.mark !== '' ? editingItem.mark : null,
+        status: editingItem.status, time_spent: editingItem.time_spent || null,
+        mark: editingItem.mark !== '' ? editingItem.mark : null,
+        hype: editingItem.hype !== '' ? editingItem.hype : null,
         completion_date: editingItem.completion_date || null, publication_year: editingItem.publication_year !== '' ? editingItem.publication_year : null,
         completion_percentage: editingItem.completion_percentage ?? null,
         tags: editingItem.tags || null
       } : {
         name, description: description || null, image_url: imageUrl || null,
-        status, time_spent: timeSpent || null, mark: mark !== '' ? mark : null,
+        status, time_spent: timeSpent || null,
+        mark: mark !== '' ? mark : null,
+        hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null
@@ -358,7 +461,7 @@ export function AddGamePage() {
           review_status: 'accepted'
         })
       });
-      
+
       setSmartSession((prev: any) => ({
         ...prev,
         items: prev.items.map((i: any) => i.id === editingItem.id ? { ...editingItem, review_status: 'accepted' } : i)
@@ -381,7 +484,7 @@ export function AddGamePage() {
 
       <header className="add-game-header">
         <h1>Add somewhat to your Vault</h1>
-        
+
         <div className="tabs-container">
           <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>
             Search API
@@ -406,7 +509,7 @@ export function AddGamePage() {
             <label className="form-label">Game Name *</label>
             <input type="text" className="form-input" required value={name} onChange={e => setName(e.target.value)} />
           </div>
-          
+
           <div className="form-row">
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Status</label>
@@ -419,14 +522,21 @@ export function AddGamePage() {
                 <label className="form-label">Completion %</label>
                 <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
                   <option value="">--</option>
-                  {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                  {[...Array(11)].map((_, i) => <option key={i * 10} value={i * 10}>{i * 10}%</option>)}
                 </select>
               </div>
             )}
-            <div className="form-group" style={{ flex: 1 }}>
-              <label className="form-label">Your Rating (1-10)</label>
-              <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
-            </div>
+            {(status === 'Finished' || status === 'Stopped') ? (
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Your Rating (1-10)</label>
+                <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
+              </div>
+            ) : (
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Hype (1-10)</label>
+                <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={hype} onChange={e => setHype(e.target.value ? Number(e.target.value) : '')} />
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -448,7 +558,7 @@ export function AddGamePage() {
               <label className="form-label">Completion Date</label>
               <input type="text" className="form-input" placeholder="YYYY or YYYY-MM-DD" value={completionDate} onChange={e => setCompletionDate(e.target.value)} />
             </div>
-             <div className="form-group" style={{ flex: 1 }}>
+            <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Publication Year</label>
               <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={pubYear} onChange={e => setPubYear(e.target.value ? Number(e.target.value) : '')} />
             </div>
@@ -456,10 +566,10 @@ export function AddGamePage() {
 
           <div className="form-group">
             <label className="form-label">Tags</label>
-            <TagMultiSelect 
-              availableTags={availableTags} 
-              selectedTagsString={tags.join(', ')} 
-              onChange={(newTagsStr) => setTags(newTagsStr ? newTagsStr.split(',').map(s=>s.trim()) : [])} 
+            <TagMultiSelect
+              availableTags={availableTags}
+              selectedTagsString={tags.join(', ')}
+              onChange={(newTagsStr) => setTags(newTagsStr ? newTagsStr.split(',').map(s => s.trim()) : [])}
             />
           </div>
 
@@ -483,16 +593,16 @@ export function AddGamePage() {
                 Upload your excel spreadsheets, text files, or note summaries. Then instruct Kimi on how to read the data format.
               </p>
 
-              <div 
-                className="dropzone" 
+              <div
+                className="dropzone"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <input 
-                  type="file" 
-                  multiple 
-                  hidden 
-                  ref={fileInputRef} 
-                  onChange={handleFileChange} 
+                <input
+                  type="file"
+                  multiple
+                  hidden
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
                   accept=".csv,.xlsx,.xls,.txt,.doc,.docx"
                 />
                 <Upload size={32} color="var(--accent-primary)" style={{ marginBottom: '1rem' }} />
@@ -504,111 +614,111 @@ export function AddGamePage() {
                 <div className="attached-files-configs" style={{ marginTop: '2rem' }}>
                   <h3 style={{ marginBottom: '1rem' }}>File Configuration</h3>
                   {fileConfigs.map((config, idx) => {
-                     if (config.type === 'unknown') return null;
-                     return (
-                       <div key={idx} className="glass-card" style={{ padding: '1.5rem', marginBottom: '1.5rem', background: 'var(--bg-tertiary)' }}>
-                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                           <h4 style={{ color: 'var(--accent-primary)' }}>{config.filename} <span className="badge" style={{ marginLeft: '0.5rem' }}>{config.type}</span></h4>
-                           <button className="icon-btn delete" onClick={() => removeFile(idx)}><X size={16} /></button>
-                         </div>
-                         
-                         {config.type === 'excel' && (
-                           <>
-                             <div className="form-group" style={{ marginTop: '1.5rem' }}>
-                               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                                 <input 
-                                   type="checkbox" 
-                                   checked={config.read_independently} 
-                                   onChange={(e) => updateConfig(idx, { read_independently: e.target.checked })} 
-                                   style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
-                                 />
-                                 Read sheets independently (one by one)
-                               </label>
-                             </div>
-                             
-                             {!config.read_independently && (
-                                 <div className="form-group">
-                                   <label className="form-label">Global Explanation for this Excel (Optional)</label>
-                                   <textarea className="form-input" rows={2} placeholder="e.g. Extract the columns containing standard game properties..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
-                                 </div>
-                             )}
+                    if (config.type === 'unknown') return null;
+                    return (
+                      <div key={idx} className="glass-card" style={{ padding: '1.5rem', marginBottom: '1.5rem', background: 'var(--bg-tertiary)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h4 style={{ color: 'var(--accent-primary)' }}>{config.filename} <span className="badge" style={{ marginLeft: '0.5rem' }}>{config.type}</span></h4>
+                          <button className="icon-btn delete" onClick={() => removeFile(idx)}><X size={16} /></button>
+                        </div>
 
-                             <div className="form-group">
-                               <label className="form-label">Select Sheets to Process</label>
-                               {config.sheets && config.sheets.length === 0 && <span className="text-muted" style={{ fontSize: '0.85rem' }}>Loading sheets...</span>}
-                               {config.sheets?.map((s, sIdx) => (
-                                 <div key={s.name} style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '150px', cursor: 'pointer', margin: 0 }}>
-                                     <input 
-                                       type="checkbox" 
-                                       checked={s.selected} 
-                                       onChange={(e) => {
+                        {config.type === 'excel' && (
+                          <>
+                            <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={config.read_independently}
+                                  onChange={(e) => updateConfig(idx, { read_independently: e.target.checked })}
+                                  style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                />
+                                Read sheets independently (one by one)
+                              </label>
+                            </div>
+
+                            {!config.read_independently && (
+                              <div className="form-group">
+                                <label className="form-label">Global Explanation for this Excel (Optional)</label>
+                                <textarea className="form-input" rows={2} placeholder="e.g. Extract the columns containing standard game properties..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                              </div>
+                            )}
+
+                            <div className="form-group">
+                              <label className="form-label">Select Sheets to Process</label>
+                              {config.sheets && config.sheets.length === 0 && <span className="text-muted" style={{ fontSize: '0.85rem' }}>Loading sheets...</span>}
+                              {config.sheets?.map((s, sIdx) => (
+                                <div key={s.name} style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '150px', cursor: 'pointer', margin: 0 }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={s.selected}
+                                      onChange={(e) => {
+                                        const newSheets = [...config.sheets!];
+                                        newSheets[sIdx].selected = e.target.checked;
+                                        updateConfig(idx, { sheets: newSheets });
+                                      }}
+                                      style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                    />
+                                    <span style={{ color: s.selected ? 'inherit' : 'var(--text-muted)' }}>{s.name}</span>
+                                  </label>
+                                  {config.read_independently && s.selected && (
+                                    <div style={{ flex: 1, minWidth: '200px' }}>
+                                      <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder={`Specific explanation for '${s.name}' (optional)`}
+                                        value={s.prompt}
+                                        onChange={(e) => {
                                           const newSheets = [...config.sheets!];
-                                          newSheets[sIdx].selected = e.target.checked;
+                                          newSheets[sIdx].prompt = e.target.value;
                                           updateConfig(idx, { sheets: newSheets });
-                                       }}
-                                       style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
-                                     />
-                                     <span style={{ color: s.selected ? 'inherit' : 'var(--text-muted)' }}>{s.name}</span>
-                                   </label>
-                                   {config.read_independently && s.selected && (
-                                     <div style={{ flex: 1, minWidth: '200px' }}>
-                                        <input 
-                                          type="text" 
-                                          className="form-input" 
-                                          placeholder={`Specific explanation for '${s.name}' (optional)`}
-                                          value={s.prompt}
-                                          onChange={(e) => {
-                                             const newSheets = [...config.sheets!];
-                                             newSheets[sIdx].prompt = e.target.value;
-                                             updateConfig(idx, { sheets: newSheets });
-                                          }}
-                                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
-                                        />
-                                     </div>
-                                   )}
-                                 </div>
-                               ))}
-                             </div>
-                           </>
-                         )}
+                                        }}
+                                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
 
-                         {config.type === 'csv' && (
-                           <>
-                             <div className="form-group" style={{ marginTop: '1.5rem' }}>
-                               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                                 <input 
-                                   type="checkbox" 
-                                   checked={config.has_named_columns} 
-                                   onChange={(e) => updateConfig(idx, { has_named_columns: e.target.checked })} 
-                                   style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
-                                 />
-                                 File has named columns
-                               </label>
-                             </div>
-                             <div className="form-group">
-                               <label className="form-label">Explanation / Prompt (Optional)</label>
-                               <textarea className="form-input" rows={2} placeholder="Explain how to parse this CSV..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
-                             </div>
-                           </>
-                         )}
+                        {config.type === 'csv' && (
+                          <>
+                            <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={config.has_named_columns}
+                                  onChange={(e) => updateConfig(idx, { has_named_columns: e.target.checked })}
+                                  style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }}
+                                />
+                                File has named columns
+                              </label>
+                            </div>
+                            <div className="form-group">
+                              <label className="form-label">Explanation / Prompt (Optional)</label>
+                              <textarea className="form-input" rows={2} placeholder="Explain how to parse this CSV..." value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                            </div>
+                          </>
+                        )}
 
-                         {(config.type === 'txt' || config.type === 'word') && (
-                           <div className="form-group" style={{ marginTop: '1.5rem' }}>
-                             <label className="form-label">Explanation / Prompt (Optional)</label>
-                             <textarea className="form-input" rows={2} placeholder={`Explain the structure of this ${config.type}...`} value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
-                           </div>
-                         )}
-                       </div>
-                     )
+                        {(config.type === 'txt' || config.type === 'word') && (
+                          <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                            <label className="form-label">Explanation / Prompt (Optional)</label>
+                            <textarea className="form-input" rows={2} placeholder={`Explain the structure of this ${config.type}...`} value={config.prompt} onChange={e => updateConfig(idx, { prompt: e.target.value })} />
+                          </div>
+                        )}
+                      </div>
+                    )
                   })}
                 </div>
               )}
 
               <div className="form-actions" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-                 <button onClick={startSmartImport} className="btn btn-primary" disabled={files.length === 0 || isSmartUploading}>
-                   {isSmartUploading ? 'Uploading...' : 'Read & Extract games'}
-                 </button>
+                <button onClick={startSmartImport} className="btn btn-primary" disabled={files.length === 0 || isSmartUploading}>
+                  {isSmartUploading ? 'Uploading...' : 'Read & Extract games'}
+                </button>
               </div>
             </div>
           )}
@@ -617,38 +727,38 @@ export function AddGamePage() {
             <div className="glass-card text-center" style={{ padding: '3rem 2rem' }}>
               <Loader2 className="spinner" size={48} color="var(--accent-primary)" style={{ margin: '0 auto 1.5rem auto' }} />
               <h2 className="text-gradient">Kimi is thinking...</h2>
-              
-              {(() => {
-                 let chunkText = "";
-                 let streamText = "";
-                 if (smartSession.status.startsWith('processing|')) {
-                    const parts = smartSession.status.split('|');
-                    chunkText = parts.length > 1 ? `(File chunk ${parts[1]})` : "";
-                    streamText = parts.length > 2 ? parts.slice(2).join('|') : "";
-                 } else {
-                    chunkText = smartSession.status.replace('processing: ', '');
-                 }
 
-                 return (
-                    <>
-                      {chunkText && (
-                         <p className="text-accent" style={{ fontWeight: 'bold', fontSize: '1.1rem', marginTop: '1rem', color: 'var(--accent-primary)' }}>
-                           {chunkText}
-                         </p>
-                      )}
-                      {streamText && (
-                         <div style={{
-                            marginTop: '1.5rem', padding: '1rem', background: '#0a0a0a', 
-                            border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', 
-                            textAlign: 'left', height: '250px', overflowY: 'auto', 
-                            fontFamily: 'monospace', fontSize: '0.85rem', color: '#a0a0a0', 
-                            whiteSpace: 'pre-wrap', lineHeight: '1.5'
-                         }}>
-                            {streamText}
-                         </div>
-                      )}
-                    </>
-                 );
+              {(() => {
+                let chunkText = "";
+                let streamText = "";
+                if (smartSession.status.startsWith('processing|')) {
+                  const parts = smartSession.status.split('|');
+                  chunkText = parts.length > 1 ? `(File chunk ${parts[1]})` : "";
+                  streamText = parts.length > 2 ? parts.slice(2).join('|') : "";
+                } else {
+                  chunkText = smartSession.status.replace('processing: ', '');
+                }
+
+                return (
+                  <>
+                    {chunkText && (
+                      <p className="text-accent" style={{ fontWeight: 'bold', fontSize: '1.1rem', marginTop: '1rem', color: 'var(--accent-primary)' }}>
+                        {chunkText}
+                      </p>
+                    )}
+                    {streamText && (
+                      <div style={{
+                        marginTop: '1.5rem', padding: '1rem', background: '#0a0a0a',
+                        border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)',
+                        textAlign: 'left', height: '250px', overflowY: 'auto',
+                        fontFamily: 'monospace', fontSize: '0.85rem', color: '#a0a0a0',
+                        whiteSpace: 'pre-wrap', lineHeight: '1.5'
+                      }}>
+                        {streamText}
+                      </div>
+                    )}
+                  </>
+                );
               })()}
 
               <p className="text-secondary" style={{ marginTop: '1.5rem', maxWidth: '400px', margin: '1.5rem auto 0 auto' }}>
@@ -680,23 +790,23 @@ export function AddGamePage() {
               <div className="review-list">
                 {smartSession.items.map((item: any) => (
                   <div key={item.id} className={`review-card glass-card status-${item.review_status}`}>
-                     <div className="rc-info">
-                       <div className="rc-title-row">
-                          <h3>{item.name}</h3>
-                          <span className="badge">{item.status}</span>
-                          {item.mark && <span className="badge">⭐ {item.mark}/10</span>}
-                       </div>
-                       <p className="text-muted rc-desc">{item.description}</p>
-                     </div>
-                     <div className="rc-actions">
-                        {item.review_status !== 'accepted' && (
-                          <button className="icon-btn accept" onClick={() => updateSmartItemStatus(item, 'accepted')} title="Accept"><Check size={20} /></button>
-                        )}
-                        {item.review_status !== 'rejected' && (
-                          <button className="icon-btn reject" onClick={() => updateSmartItemStatus(item, 'rejected')} title="Reject"><X size={20} /></button>
-                        )}
-                        <button className="icon-btn edit" onClick={() => setEditingItem(item)} title="Edit"><Edit2 size={18} /></button>
-                     </div>
+                    <div className="rc-info">
+                      <div className="rc-title-row">
+                        <h3>{item.name}</h3>
+                        <span className="badge">{item.status}</span>
+                        {item.mark && <span className="badge">⭐ {item.mark}/10</span>}
+                      </div>
+                      <p className="text-muted rc-desc">{item.description}</p>
+                    </div>
+                    <div className="rc-actions">
+                      {item.review_status !== 'accepted' && (
+                        <button className="icon-btn accept" onClick={() => updateSmartItemStatus(item, 'accepted')} title="Accept"><Check size={20} /></button>
+                      )}
+                      {item.review_status !== 'rejected' && (
+                        <button className="icon-btn reject" onClick={() => updateSmartItemStatus(item, 'rejected')} title="Reject"><X size={20} /></button>
+                      )}
+                      <button className="icon-btn edit" onClick={() => setEditingItem(item)} title="Edit"><Edit2 size={18} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -706,14 +816,196 @@ export function AddGamePage() {
       )}
 
       {/* ------------------------------- */}
-      {/* SEARCH TAB PLACEHOLDER */}
+      {/* SEARCH TAB — IGDB Integration   */}
       {/* ------------------------------- */}
       {activeTab === 'search' && (
-        <div className="glass-card text-center" style={{ padding: '4rem 2rem' }}>
-          <h2 style={{ color: 'var(--text-muted)' }}>Feature Coming Soon</h2>
-          <p className="text-secondary" style={{ marginTop: '0.5rem' }}>
-            The API search function is still under development.
-          </p>
+        <div className="igdb-search-section">
+          {/* Search bar */}
+          <div className="glass-card igdb-search-bar">
+            <div className="igdb-search-input-wrap">
+              <Search size={20} className="igdb-search-icon" />
+              <input
+                id="igdb-search-input"
+                type="text"
+                className="form-input igdb-search-input"
+                placeholder="Search for a game on IGDB…"
+                value={igdbQuery}
+                onChange={e => setIgdbQuery(e.target.value)}
+                autoFocus
+              />
+              {igdbLoading && <Loader2 size={18} className="spinner igdb-spinner" />}
+              {igdbQuery && !igdbLoading && (
+                <button className="igdb-clear-btn" onClick={() => { setIgdbQuery(''); setIgdbResults([]); setSelectedIgdbGame(null); }} title="Clear">
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+            {igdbError && <p className="igdb-error">{igdbError}</p>}
+          </div>
+
+          {/* Results grid — shown when no game is selected */}
+          {!selectedIgdbGame && igdbResults.length > 0 && (
+            <div className="igdb-results-grid">
+              {igdbResults.map(game => (
+                <button
+                  key={game.igdb_id}
+                  className="igdb-result-card glass-card"
+                  onClick={() => handleSelectIgdbGame(game)}
+                >
+                  <div className="igdb-cover-wrap">
+                    {game.cover_url ? (
+                      <img src={game.cover_url} alt={game.name} className="igdb-cover" />
+                    ) : (
+                      <div className="igdb-cover igdb-no-cover">
+                        <Gamepad2 size={32} color="var(--text-muted)" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="igdb-card-info">
+                    <h4 className="igdb-card-title">{game.name}</h4>
+                    {game.release_year && (
+                      <span className="igdb-card-year">{game.release_year}</span>
+                    )}
+                    {game.genres?.length > 0 && (
+                      <div className="igdb-card-genres">
+                        {game.genres.slice(0, 2).map((g: string) => (
+                          <span key={g} className="badge igdb-genre-badge">{g}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!selectedIgdbGame && igdbResults.length === 0 && !igdbLoading && (
+            <div className="igdb-empty-state glass-card">
+              <Gamepad2 size={48} color="var(--text-muted)" style={{ marginBottom: '1rem' }} />
+              <h3 style={{ color: 'var(--text-muted)' }}>
+                {igdbQuery ? 'No games found' : 'Start typing to search IGDB'}
+              </h3>
+              <p className="text-secondary" style={{ marginTop: '0.5rem' }}>
+                {igdbQuery
+                  ? 'Try a different title or check the spelling'
+                  : 'Powered by the Internet Game Database'}
+              </p>
+            </div>
+          )}
+
+          {/* Configure & Add panel — shown after selecting a game */}
+          {selectedIgdbGame && (
+            <div className="igdb-detail-panel glass-card">
+              {/* Back to results */}
+              <button
+                className="btn btn-ghost igdb-back-btn"
+                onClick={() => setSelectedIgdbGame(null)}
+                style={{ marginBottom: '1.5rem', padding: '0.4rem 0' }}
+              >
+                <ArrowLeft size={16} /> Back to results
+              </button>
+
+              <div className="igdb-detail-header">
+                {/* Cover */}
+                <div className="igdb-detail-cover-wrap">
+                  {selectedIgdbGame.cover_url ? (
+                    <img src={selectedIgdbGame.cover_url} alt={selectedIgdbGame.name} className="igdb-detail-cover" />
+                  ) : (
+                    <div className="igdb-detail-cover igdb-no-cover">
+                      <Gamepad2 size={48} color="var(--text-muted)" />
+                    </div>
+                  )}
+                </div>
+                {/* Meta */}
+                <div className="igdb-detail-meta">
+                  <h2 style={{ color: 'var(--text-primary)' }}>{selectedIgdbGame.name}</h2>
+                  {selectedIgdbGame.release_year && (
+                    <span className="badge" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
+                      {selectedIgdbGame.release_year}
+                    </span>
+                  )}
+                  {selectedIgdbGame.genres?.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                      {selectedIgdbGame.genres.map((g: string) => (
+                        <span key={g} className="badge igdb-genre-badge">{g}</span>
+                      ))}
+                    </div>
+                  )}
+                  {selectedIgdbGame.summary && (
+                    <p className="text-secondary igdb-summary">{selectedIgdbGame.summary}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="igdb-config-divider" />
+
+              <h3 style={{ marginBottom: '1.25rem', color: 'var(--text-primary)' }}>Your Play Details</h3>
+
+              {/* Status + Rating/Hype row */}
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Status</label>
+                  <select className="form-input" value={igdbStatus} onChange={e => setIgdbStatus(e.target.value)}>
+                    {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </div>
+                {(igdbStatus === 'Stopped' || igdbStatus === 'Finished') && (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Completion %</label>
+                    <select className="form-input" value={igdbCompletionPct} onChange={e => setIgdbCompletionPct(e.target.value ? Number(e.target.value) : '')}>
+                      <option value="">--</option>
+                      {[...Array(11)].map((_, i) => <option key={i * 10} value={i * 10}>{i * 10}%</option>)}
+                    </select>
+                  </div>
+                )}
+                {(igdbStatus === 'Finished' || igdbStatus === 'Stopped') ? (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Your Rating (1-10)</label>
+                    <input type="number" min="1" max="10" className="form-input" value={igdbMark} onChange={e => setIgdbMark(e.target.value ? Number(e.target.value) : '')} />
+                  </div>
+                ) : (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Hype (1-10)</label>
+                    <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={igdbHype} onChange={e => setIgdbHype(e.target.value ? Number(e.target.value) : '')} />
+                  </div>
+                )}
+              </div>
+
+              {/* Time + Completion Date row */}
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Time Spent</label>
+                  <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={igdbTimeSpent} onChange={e => setIgdbTimeSpent(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Completion Date</label>
+                  <input type="text" className="form-input" placeholder="YYYY or YYYY-MM-DD" value={igdbCompletionDate} onChange={e => setIgdbCompletionDate(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Tags */}
+              <div className="form-group">
+                <label className="form-label">Tags</label>
+                <TagMultiSelect
+                  availableTags={availableTags}
+                  selectedTagsString={igdbTags.join(', ')}
+                  onChange={newTagsStr => setIgdbTags(newTagsStr ? newTagsStr.split(',').map(s => s.trim()) : [])}
+                />
+              </div>
+
+              {/* Action button */}
+              <div className="form-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleIgdbAddGame}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Saving…' : `Add "${selectedIgdbGame.name}" to Vault`}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -723,7 +1015,7 @@ export function AddGamePage() {
 
       {/* 1. Standard Fuzzy Duplicate Modal */}
       {showFuzzyModal && !editingItem && (
-        <SimilarGameModal 
+        <SimilarGameModal
           matches={similarGames}
           onCancel={() => setShowFuzzyModal(false)}
           onSaveNew={() => {
@@ -738,77 +1030,84 @@ export function AddGamePage() {
       {editingItem && (
         <div className="modal-overlay">
           <div className="glass-card modal-content editor-modal">
-            <button className="modal-close" onClick={() => setEditingItem(null)}><X size={20}/></button>
+            <button className="modal-close" onClick={() => setEditingItem(null)}><X size={20} /></button>
             <h2 style={{ marginBottom: '1.5rem' }}>Edit Extracted Game</h2>
-            
+
             <div className="form-group">
-               <label className="form-label">Name</label>
-               <input type="text" className="form-input" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})}/>
+              <label className="form-label">Name</label>
+              <input type="text" className="form-input" value={editingItem.name} onChange={e => setEditingItem({ ...editingItem, name: e.target.value })} />
             </div>
 
             <div className="form-row">
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Status</label>
-                <select className="form-input" value={editingItem.status} onChange={e => setEditingItem({...editingItem, status: e.target.value})}>
+                <select className="form-input" value={editingItem.status} onChange={e => setEditingItem({ ...editingItem, status: e.target.value })}>
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
               {(editingItem.status === 'Stopped' || editingItem.status === 'Finished') && (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Completion %</label>
-                  <select className="form-input" value={editingItem.completion_percentage ?? ''} onChange={e => setEditingItem({...editingItem, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
+                  <select className="form-input" value={editingItem.completion_percentage ?? ''} onChange={e => setEditingItem({ ...editingItem, completion_percentage: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">--</option>
-                    {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                    {[...Array(11)].map((_, i) => <option key={i * 10} value={i * 10}>{i * 10}%</option>)}
                   </select>
                 </div>
               )}
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Rating</label>
-                <input type="number" min="1" max="10" className="form-input" value={editingItem.mark || ''} onChange={e => setEditingItem({...editingItem, mark: e.target.value ? Number(e.target.value) : ''})} />
-              </div>
+              {(editingItem.status === 'Finished' || editingItem.status === 'Stopped') ? (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Rating (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" value={editingItem.mark || ''} onChange={e => setEditingItem({ ...editingItem, mark: e.target.value ? Number(e.target.value) : '' })} />
+                </div>
+              ) : (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Hype (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={editingItem.hype || ''} onChange={e => setEditingItem({ ...editingItem, hype: e.target.value ? Number(e.target.value) : '' })} />
+                </div>
+              )}
             </div>
 
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-               <label className="form-label">Tags</label>
-               <TagMultiSelect 
-                  availableTags={availableTags}
-                  selectedTagsString={editingItem.tags || ''}
-                  onChange={(newTags) => setEditingItem({ ...editingItem, tags: newTags })}
-               />
+              <label className="form-label">Tags</label>
+              <TagMultiSelect
+                availableTags={availableTags}
+                selectedTagsString={editingItem.tags || ''}
+                onChange={(newTags) => setEditingItem({ ...editingItem, tags: newTags })}
+              />
             </div>
 
             <div className="modal-actions" style={{ marginTop: '2rem' }}>
-               <button className="btn btn-ghost" onClick={async () => {
-                   // Optional explicitly check Fuzzy Match during edit!
-                   const matches = await checkSimilar(editingItem.name);
-                   if (matches.length > 0) {
-                      setSimilarGames(matches);
-                      // Since we are already inside a modal hack, we trigger a stacked modal visibility
-                      setShowFuzzyModal(true); 
-                   } else {
-                      saveSmartEdit();
-                   }
-               }}>
-                 Verify & Save Edit
-               </button>
+              <button className="btn btn-ghost" onClick={async () => {
+                // Optional explicitly check Fuzzy Match during edit!
+                const matches = await checkSimilar(editingItem.name);
+                if (matches.length > 0) {
+                  setSimilarGames(matches);
+                  // Since we are already inside a modal hack, we trigger a stacked modal visibility
+                  setShowFuzzyModal(true);
+                } else {
+                  saveSmartEdit();
+                }
+              }}>
+                Verify & Save Edit
+              </button>
             </div>
-            
+
             {showFuzzyModal && (
               <div style={{ marginTop: '2rem', padding: '1.5rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
-                 <h4 className="text-error" style={{ marginBottom: '1rem' }}>Warning: Existing Games Detected!</h4>
-                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                   {similarGames.map(g => (
-                      <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                         <span>{g.name} ({g.status})</span>
-                         <button className="btn btn-secondary" style={{ padding: '0.4rem 1rem' }} onClick={() => performUpdateNativeData(g.id)}>
-                            Overwrite existing Game
-                         </button>
-                      </div>
-                   ))}
-                   <button className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={() => { setShowFuzzyModal(false); saveSmartEdit(); }}>
-                     Save as duplicate nonetheless
-                   </button>
-                 </div>
+                <h4 className="text-error" style={{ marginBottom: '1rem' }}>Warning: Existing Games Detected!</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {similarGames.map(g => (
+                    <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{g.name} ({g.status})</span>
+                      <button className="btn btn-secondary" style={{ padding: '0.4rem 1rem' }} onClick={() => performUpdateNativeData(g.id)}>
+                        Overwrite existing Game
+                      </button>
+                    </div>
+                  ))}
+                  <button className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={() => { setShowFuzzyModal(false); saveSmartEdit(); }}>
+                    Save as duplicate nonetheless
+                  </button>
+                </div>
               </div>
             )}
           </div>

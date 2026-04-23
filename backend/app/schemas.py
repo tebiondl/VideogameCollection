@@ -31,6 +31,7 @@ class VideogameBase(BaseModel):
     status: str = "Not Started"
     time_spent: str | None = None
     mark: int | None = None
+    hype: int | None = None
     completion_date: str | None = None
     publication_year: int | None = None
     completion_percentage: int | None = None

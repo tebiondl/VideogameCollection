@@ -213,3 +213,211 @@ textarea.form-input {
   max-height: 90vh;
   overflow-y: auto;
 }
+
+/* ===================================================
+   IGDB SEARCH TAB STYLES
+   =================================================== */
+
+.igdb-search-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Search bar card */
+.igdb-search-bar {
+  padding: 1.25rem 1.5rem;
+}
+
+.igdb-search-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  position: relative;
+}
+
+.igdb-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.igdb-search-input {
+  flex: 1;
+  font-size: 1.05rem;
+  padding-left: 0.75rem;
+  border-radius: var(--radius-md);
+}
+
+.igdb-spinner {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.igdb-clear-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+.igdb-clear-btn:hover { color: var(--error-color); }
+
+.igdb-error {
+  color: var(--error-color);
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0;
+}
+
+/* Results grid */
+.igdb-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.igdb-result-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  transition: var(--transition), transform 0.15s ease;
+}
+.igdb-result-card:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.2);
+}
+
+.igdb-cover-wrap {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+}
+
+.igdb-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s ease;
+}
+.igdb-result-card:hover .igdb-cover {
+  transform: scale(1.05);
+}
+
+.igdb-no-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.igdb-card-info {
+  padding: 0.75rem;
+}
+
+.igdb-card-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin-bottom: 0.25rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.igdb-card-year {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.igdb-card-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.igdb-genre-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+}
+
+/* Empty state */
+.igdb-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+/* Detail / configure panel */
+.igdb-detail-panel {
+  padding: 2rem;
+}
+
+.igdb-back-btn {
+  gap: 0.4rem;
+}
+
+.igdb-detail-header {
+  display: flex;
+  gap: 1.75rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.igdb-detail-cover-wrap {
+  width: 140px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  aspect-ratio: 3 / 4;
+}
+
+.igdb-detail-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.igdb-detail-meta {
+  flex: 1;
+  min-width: 200px;
+}
+
+.igdb-summary {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.igdb-config-divider {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1.5rem 0 1.75rem;
+}
+
