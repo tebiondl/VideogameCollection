@@ -1,10 +1,27 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from .database import engine, Base
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router
 
-# Create db tables
+# Create db tables (new tables only)
 Base.metadata.create_all(bind=engine)
+
+# Safe migration: add new columns to existing tables without data loss
+def _run_migrations():
+    migrations = [
+        "ALTER TABLE videogames ADD COLUMN dlcs TEXT",
+        "ALTER TABLE smart_import_items ADD COLUMN dlcs TEXT",
+    ]
+    with engine.connect() as conn:
+        for stmt in migrations:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists — silently skip
+
+_run_migrations()
 
 app = FastAPI(title="Videogame Collection API")
 

@@ -4,6 +4,8 @@ import { ArrowLeft, Upload, Loader2, File as FileIcon, X, Check, Edit2, Search, 
 import { fetchWithAuth } from '../lib/api';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { CompletionDatePicker } from '../components/CompletionDatePicker';
+import { DlcEditor } from '../components/DlcEditor';
 import './AddGamePage.css';
 
 const AVAILABLE_TAGS = ['Gacha', 'Online', 'Runs'];
@@ -37,6 +39,7 @@ export function AddGamePage() {
   const [pubYear, setPubYear] = useState<number | ''>('');
   const [completionPercentage, setCompletionPercentage] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
+  const [dlcs, setDlcs] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const toggleTag = (tag: string) => setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
@@ -57,6 +60,7 @@ export function AddGamePage() {
   const [igdbCompletionDate, setIgdbCompletionDate] = useState('');
   const [igdbCompletionPct, setIgdbCompletionPct] = useState<number | ''>('');
   const [igdbTags, setIgdbTags] = useState<string[]>([]);
+  const [igdbDlcs, setIgdbDlcs] = useState('');
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -------------------------
@@ -127,6 +131,7 @@ export function AddGamePage() {
     setIgdbCompletionDate('');
     setIgdbCompletionPct('');
     setIgdbTags([]);
+    setIgdbDlcs('');
   };
 
   const handleIgdbAddGame = async () => {
@@ -153,6 +158,7 @@ export function AddGamePage() {
         publication_year: selectedIgdbGame.release_year || null,
         completion_percentage: igdbCompletionPct !== '' ? igdbCompletionPct : null,
         tags: igdbTags.length > 0 ? igdbTags.join(',') : null,
+        dlcs: igdbDlcs || null,
       };
       const res = await fetchWithAuth('/videogames/', {
         method: 'POST',
@@ -397,7 +403,8 @@ export function AddGamePage() {
         hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
-        tags: tags.length > 0 ? tags.join(',') : null
+        tags: tags.length > 0 ? tags.join(',') : null,
+        dlcs: dlcs || null,
       };
 
       const res = await fetchWithAuth('/videogames/', {
@@ -426,7 +433,8 @@ export function AddGamePage() {
         hype: editingItem.hype !== '' ? editingItem.hype : null,
         completion_date: editingItem.completion_date || null, publication_year: editingItem.publication_year !== '' ? editingItem.publication_year : null,
         completion_percentage: editingItem.completion_percentage ?? null,
-        tags: editingItem.tags || null
+        tags: editingItem.tags || null,
+        dlcs: editingItem.dlcs || null,
       } : {
         name, description: description || null, image_url: imageUrl || null,
         status, time_spent: timeSpent || null,
@@ -434,7 +442,8 @@ export function AddGamePage() {
         hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
-        tags: tags.length > 0 ? tags.join(',') : null
+        tags: tags.length > 0 ? tags.join(',') : null,
+        dlcs: dlcs || null,
       };
 
       const res = await fetchWithAuth(`/videogames/${gameId}`, {
@@ -555,13 +564,19 @@ export function AddGamePage() {
               <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} />
             </div>
             <div className="form-group" style={{ flex: 1 }}>
-              <label className="form-label">Completion Date</label>
-              <input type="text" className="form-input" placeholder="YYYY or YYYY-MM-DD" value={completionDate} onChange={e => setCompletionDate(e.target.value)} />
-            </div>
-            <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Publication Year</label>
               <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={pubYear} onChange={e => setPubYear(e.target.value ? Number(e.target.value) : '')} />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Completion Date</label>
+            <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">DLCs</label>
+            <DlcEditor value={dlcs} onChange={setDlcs} />
           </div>
 
           <div className="form-group">
@@ -972,16 +987,22 @@ export function AddGamePage() {
                 )}
               </div>
 
-              {/* Time + Completion Date row */}
-              <div className="form-row">
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Time Spent</label>
-                  <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={igdbTimeSpent} onChange={e => setIgdbTimeSpent(e.target.value)} />
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Completion Date</label>
-                  <input type="text" className="form-input" placeholder="YYYY or YYYY-MM-DD" value={igdbCompletionDate} onChange={e => setIgdbCompletionDate(e.target.value)} />
-                </div>
+              {/* Time Spent */}
+              <div className="form-group">
+                <label className="form-label">Time Spent</label>
+                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={igdbTimeSpent} onChange={e => setIgdbTimeSpent(e.target.value)} />
+              </div>
+
+              {/* Completion Date */}
+              <div className="form-group">
+                <label className="form-label">Completion Date</label>
+                <CompletionDatePicker value={igdbCompletionDate} onChange={setIgdbCompletionDate} />
+              </div>
+
+              {/* DLCs */}
+              <div className="form-group">
+                <label className="form-label">DLCs</label>
+                <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} />
               </div>
 
               {/* Tags */}
@@ -1073,6 +1094,22 @@ export function AddGamePage() {
                 availableTags={availableTags}
                 selectedTagsString={editingItem.tags || ''}
                 onChange={(newTags) => setEditingItem({ ...editingItem, tags: newTags })}
+              />
+            </div>
+
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Completion Date</label>
+              <CompletionDatePicker
+                value={editingItem.completion_date || ''}
+                onChange={(val) => setEditingItem({ ...editingItem, completion_date: val })}
+              />
+            </div>
+
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">DLCs</label>
+              <DlcEditor
+                value={editingItem.dlcs || ''}
+                onChange={(val) => setEditingItem({ ...editingItem, dlcs: val })}
               />
             </div>
 

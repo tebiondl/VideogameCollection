@@ -29,6 +29,7 @@ class Videogame(Base):
     publication_year = Column(Integer, nullable=True)
     completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True) # JSON encoded string or comma separated
+    dlcs = Column(String, nullable=True) # JSON array: [{name, state: not_owned|not_started|finished}]
 
     owner = relationship("User", back_populates="videogames")
 
@@ -62,6 +63,7 @@ class SmartImportItem(Base):
     publication_year = Column(Integer, nullable=True)
     completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True)
+    dlcs = Column(String, nullable=True) # JSON array: [{name, state: not_owned|not_started|finished}]
 
     session = relationship("SmartImportSession", back_populates="items")
 

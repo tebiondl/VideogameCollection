@@ -36,6 +36,7 @@ class VideogameBase(BaseModel):
     publication_year: int | None = None
     completion_percentage: int | None = None
     tags: str | None = None
+    dlcs: str | None = None
 
 class VideogameCreate(VideogameBase):
     pass

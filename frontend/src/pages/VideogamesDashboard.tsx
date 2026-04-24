@@ -6,6 +6,8 @@ import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
+import { CompletionDatePicker } from '../components/CompletionDatePicker';
+import { DlcEditor } from '../components/DlcEditor';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -133,10 +135,24 @@ export function VideogamesDashboard() {
   const saveEdit = async () => {
     if (!editingGame) return;
     try {
+      const payload = {
+        name: editingGame.name,
+        description: editingGame.description || null,
+        image_url: editingGame.image_url || null,
+        status: editingGame.status,
+        time_spent: editingGame.time_spent || null,
+        mark: editingGame.mark || null,
+        hype: editingGame.hype || null,
+        completion_date: editingGame.completion_date || null,
+        publication_year: editingGame.publication_year || null,
+        completion_percentage: editingGame.completion_percentage ?? null,
+        tags: editingGame.tags || null,
+        dlcs: editingGame.dlcs || null,
+      };
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingGame)
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         setGames(games.map(g => g.id === editingGame.id ? editingGame : g));
@@ -436,6 +452,11 @@ export function VideogamesDashboard() {
                <label className="form-label">Name</label>
                <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
             </div>
+
+            <div className="form-group">
+               <label className="form-label">Description / Review</label>
+               <textarea className="form-input" rows={3} value={editingGame.description || ''} onChange={e => setEditingGame({...editingGame, description: e.target.value})} />
+            </div>
             
             <div className="form-row">
               <div className="form-group" style={{ flex: 1 }}>
@@ -465,6 +486,25 @@ export function VideogamesDashboard() {
                 </div>
               )}
             </div>
+
+            <div className="form-row">
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Time Spent</label>
+                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={editingGame.time_spent || ''} onChange={e => setEditingGame({...editingGame, time_spent: e.target.value})} />
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Publication Year</label>
+                <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={editingGame.publication_year || ''} onChange={e => setEditingGame({...editingGame, publication_year: e.target.value ? Number(e.target.value) : null})} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Completion Date</label>
+              <CompletionDatePicker
+                value={editingGame.completion_date || ''}
+                onChange={(val) => setEditingGame({...editingGame, completion_date: val})}
+              />
+            </div>
             
             <div className="form-group">
                <label className="form-label">Tags</label>
@@ -473,6 +513,14 @@ export function VideogamesDashboard() {
                   selectedTagsString={editingGame.tags || ''}
                   onChange={(newTags) => setEditingGame({ ...editingGame, tags: newTags })}
                />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">DLCs</label>
+              <DlcEditor
+                value={editingGame.dlcs || ''}
+                onChange={(val) => setEditingGame({...editingGame, dlcs: val})}
+              />
             </div>
 
             <div className="modal-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
