@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -61,10 +61,84 @@ export function VideogamesDashboard() {
   const [editingGame, setEditingGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
 
+  // Image Selection
+  const [showImageSelectModal, setShowImageSelectModal] = useState(false);
+  const [igdbImages, setIgdbImages] = useState<any[]>([]);
+  const [isIgdbImagesLoading, setIsIgdbImagesLoading] = useState(false);
+
+  const handleOpenImageSelect = async () => {
+    if (!editingGame) return;
+    setShowImageSelectModal(true);
+    setIsIgdbImagesLoading(true);
+    try {
+      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(editingGame.name)}&limit=15`);
+      if (res.ok) {
+        const data = await res.json();
+        setIgdbImages(data.filter((d: any) => d.cover_url));
+      } else {
+        setIgdbImages([]);
+      }
+    } catch (e) {
+      setIgdbImages([]);
+    } finally {
+      setIsIgdbImagesLoading(false);
+    }
+  };
+
   // Filtering System
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
   const [savedFilters, setSavedFilters] = useState<any[]>([]);
+
+  // Auto-Fill
+  const [showAutoFillModal, setShowAutoFillModal] = useState(false);
+  const [autoFillOverwrite, setAutoFillOverwrite] = useState(false);
+  const [isAutoFilling, setIsAutoFilling] = useState(false);
+  const [autoFillProgress, setAutoFillProgress] = useState<{ total: number, completed: number, status: string } | null>(null);
+
+  // Check if there is an active auto-fill on mount
+  useEffect(() => {
+    const checkActiveAutoFill = async () => {
+      try {
+        const res = await fetchWithAuth('/videogames/auto-fill/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.status === 'running') {
+            setAutoFillProgress(data);
+            setIsAutoFilling(true);
+          }
+        }
+      } catch (e) {}
+    };
+    checkActiveAutoFill();
+  }, []);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (isAutoFilling) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetchWithAuth('/videogames/auto-fill/status');
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.status) {
+              setAutoFillProgress(data);
+              if (data.status === 'done' || data.status === 'error') {
+                setIsAutoFilling(false);
+                clearInterval(interval);
+                const gamesRes = await fetchWithAuth('/videogames/');
+                if (gamesRes.ok) setGames(await gamesRes.json());
+                setTimeout(() => setAutoFillProgress(null), 3000);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to poll progress');
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isAutoFilling]);
 
   // Sort System
   const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([]);
@@ -191,6 +265,29 @@ export function VideogamesDashboard() {
     } catch {}
   };
 
+  const handleAutoFill = async () => {
+    setIsAutoFilling(true);
+    try {
+      const payload = {
+        game_ids: displayGames.map(g => g.id),
+        overwrite: autoFillOverwrite
+      };
+      const res = await fetchWithAuth('/videogames/auto-fill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        throw new Error('Failed to start auto-fill');
+      }
+      setShowAutoFillModal(false);
+    } catch (e) {
+      console.error('Auto fill error:', e);
+      alert('Error starting completion');
+      setIsAutoFilling(false);
+    }
+  };
+
   // ─── Sort helpers ────────────────────────────────────────────────────────────
   const addSortCriterion = () => {
     // Default to the first field not already in use, or fall back to 'mark'
@@ -268,11 +365,34 @@ export function VideogamesDashboard() {
           <h1 className="text-gradient">Videogames Vault</h1>
           <p className="text-secondary">Track and manage your collection</p>
         </div>
-        <Link to="/dashboard/videogames/add" className="btn btn-primary add-btn">
-          <Plus size={20} />
-          Add Game
-        </Link>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button className="btn btn-primary add-btn" onClick={() => setShowAutoFillModal(true)}>
+            <Sparkles size={20} />
+            Completion
+          </button>
+          <Link to="/dashboard/videogames/add" className="btn btn-primary add-btn">
+            <Plus size={20} />
+            Add Game
+          </Link>
+        </div>
       </header>
+
+      {autoFillProgress && autoFillProgress.status !== 'idle' && (
+        <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            <span>{autoFillProgress.status === 'done' ? 'Completion Finished!' : autoFillProgress.status === 'error' ? 'Completion Error' : 'Completing Games...'}</span>
+            <span>{autoFillProgress.completed} / {autoFillProgress.total}</span>
+          </div>
+          <div style={{ height: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden', width: '100%' }}>
+            <div style={{ 
+              height: '100%', 
+              backgroundColor: 'var(--primary-color)', 
+              width: `${autoFillProgress.total > 0 ? Math.round((autoFillProgress.completed / autoFillProgress.total) * 100) : 0}%`,
+              transition: 'width 0.3s ease'
+            }}></div>
+          </div>
+        </div>
+      )}
 
       <div className="vg-toolbar glass-card">
         <div className="toolbar-search">
@@ -462,22 +582,25 @@ export function VideogamesDashboard() {
               <h3 className="section-title">Game Data</h3>
 
               <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                <div style={{ flexShrink: 0, width: '120px', height: '160px', borderRadius: 'var(--radius-md)', overflow: 'hidden', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)' }}>
+                <div 
+                  style={{ flexShrink: 0, width: '120px', height: '160px', borderRadius: 'var(--radius-md)', overflow: 'hidden', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', cursor: 'pointer', position: 'relative' }}
+                  onClick={handleOpenImageSelect}
+                  title="Click to select image"
+                >
                   {editingGame.image_url ? (
                     <img src={editingGame.image_url} alt="Cover" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
                     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No Cover</div>
                   )}
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.6)', color: 'white', fontSize: '0.7rem', padding: '4px', textAlign: 'center' }}>
+                    Click to change
+                  </div>
                 </div>
                 
                 <div style={{ flex: 1, minWidth: '250px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                      <label className="form-label">Name</label>
                      <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Image Cover URL</label>
-                    <input type="url" className="form-input" placeholder="https://..." value={editingGame.image_url || ''} onChange={e => setEditingGame({...editingGame, image_url: e.target.value})} />
                   </div>
                 </div>
               </div>
@@ -552,10 +675,58 @@ export function VideogamesDashboard() {
               </div>
             </div>
 
-            <div className="modal-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
-               <button className="btn btn-primary" onClick={saveEdit}>
-                 Save Changes
-               </button>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setEditingGame(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveEdit}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Select Modal */}
+      {showImageSelectModal && editingGame && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="glass-card modal-content" style={{ maxWidth: '600px', width: '90%' }}>
+            <button className="modal-close" onClick={() => setShowImageSelectModal(false)}><X size={20}/></button>
+            <h2 style={{ marginBottom: '1.5rem' }}>Select Cover Image</h2>
+            
+            <div className="form-group">
+              <label className="form-label">Image Link (Manual override)</label>
+              <input type="url" className="form-input" placeholder="https://..." value={editingGame.image_url || ''} onChange={e => setEditingGame({...editingGame, image_url: e.target.value})} />
+            </div>
+            
+            <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0', paddingTop: '1rem' }}>
+              <h3 className="section-title">IGDB Results</h3>
+              {isIgdbImagesLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+                  <Loader2 className="spinner" size={24} />
+                </div>
+              ) : igdbImages.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '1rem', maxHeight: '400px', overflowY: 'auto', padding: '0.5rem' }}>
+                  {igdbImages.map((img) => (
+                    <div 
+                      key={img.igdb_id} 
+                      style={{ cursor: 'pointer', border: editingGame.image_url === img.cover_url ? '2px solid var(--primary-color)' : '2px solid transparent', borderRadius: '4px', overflow: 'hidden' }}
+                      onClick={() => {
+                        setEditingGame({...editingGame, image_url: img.cover_url});
+                        setShowImageSelectModal(false);
+                      }}
+                      title={img.name}
+                    >
+                      <img src={img.cover_url} alt={img.name} style={{ width: '100%', display: 'block' }} />
+                      <div style={{ padding: '0.25rem', fontSize: '0.75rem', backgroundColor: 'var(--bg-secondary)', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {img.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted">No images found for "{editingGame.name}".</p>
+              )}
+            </div>
+            
+            <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn btn-ghost" onClick={() => setShowImageSelectModal(false)}>Close</button>
             </div>
           </div>
         </div>
@@ -573,6 +744,30 @@ export function VideogamesDashboard() {
            onLoadFilter={handleLoadFilter}
            onDeleteFilter={handleDeleteFilter}
         />
+      )}
+
+      {showAutoFillModal && (
+        <div className="modal-overlay">
+          <div className="glass-card modal-content" style={{ maxWidth: '500px' }}>
+            <button className="modal-close" onClick={() => setShowAutoFillModal(false)}><X size={20}/></button>
+            <h2 style={{ marginBottom: '1.5rem' }}>Auto-Fill Missing Data</h2>
+            <p style={{ marginBottom: '1rem', lineHeight: '1.5' }}>
+              This will automatically find and fill missing information (Cover Image, Description, Publication Year) from IGDB for <strong>{displayGames.length}</strong> currently filtered games.
+            </p>
+            <div style={{ marginBottom: '2rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={autoFillOverwrite} onChange={e => setAutoFillOverwrite(e.target.checked)} />
+                Overwrite existing data? (If unchecked, only empty fields will be filled)
+              </label>
+            </div>
+            <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button className="btn btn-ghost" onClick={() => setShowAutoFillModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleAutoFill} disabled={isAutoFilling || displayGames.length === 0}>
+                {isAutoFilling ? 'Starting...' : 'Start Completion'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

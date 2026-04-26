@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import List
 
 class UserCreate(BaseModel):
     username: str
@@ -91,3 +92,7 @@ class SavedFilterResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class AutoFillPayload(BaseModel):
+    game_ids: List[int]
+    overwrite: bool
