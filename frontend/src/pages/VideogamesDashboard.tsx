@@ -65,13 +65,13 @@ export function VideogamesDashboard() {
   const [showImageSelectModal, setShowImageSelectModal] = useState(false);
   const [igdbImages, setIgdbImages] = useState<any[]>([]);
   const [isIgdbImagesLoading, setIsIgdbImagesLoading] = useState(false);
+  const [imageSearchQuery, setImageSearchQuery] = useState('');
 
-  const handleOpenImageSelect = async () => {
-    if (!editingGame) return;
-    setShowImageSelectModal(true);
+  const fetchIGDBImages = async (query: string) => {
+    if (!query) return;
     setIsIgdbImagesLoading(true);
     try {
-      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(editingGame.name)}&limit=15`);
+      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(query)}&limit=15`);
       if (res.ok) {
         const data = await res.json();
         setIgdbImages(data.filter((d: any) => d.cover_url));
@@ -83,6 +83,13 @@ export function VideogamesDashboard() {
     } finally {
       setIsIgdbImagesLoading(false);
     }
+  };
+
+  const handleOpenImageSelect = async () => {
+    if (!editingGame) return;
+    setShowImageSelectModal(true);
+    setImageSearchQuery(editingGame.name);
+    fetchIGDBImages(editingGame.name);
   };
 
   // Filtering System
@@ -696,7 +703,22 @@ export function VideogamesDashboard() {
             </div>
             
             <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0', paddingTop: '1rem' }}>
-              <h3 className="section-title">IGDB Results</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <h3 className="section-title" style={{ margin: 0 }}>IGDB Results</h3>
+                <div style={{ display: 'flex', gap: '0.5rem', width: '300px' }}>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    value={imageSearchQuery} 
+                    onChange={e => setImageSearchQuery(e.target.value)} 
+                    onKeyDown={e => e.key === 'Enter' && fetchIGDBImages(imageSearchQuery)}
+                    placeholder="Search IGDB..."
+                  />
+                  <button className="btn btn-secondary" onClick={() => fetchIGDBImages(imageSearchQuery)}>
+                    Search
+                  </button>
+                </div>
+              </div>
               {isIgdbImagesLoading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
                   <Loader2 className="spinner" size={24} />
@@ -721,7 +743,7 @@ export function VideogamesDashboard() {
                   ))}
                 </div>
               ) : (
-                <p className="text-muted">No images found for "{editingGame.name}".</p>
+                <p className="text-muted">No images found for "{imageSearchQuery}".</p>
               )}
             </div>
             

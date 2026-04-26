@@ -18,6 +18,66 @@ router = APIRouter(prefix="/api/videogames", tags=["videogames"])
 # In-memory progress tracker { user_id: { total, completed, status } }
 auto_fill_progress = {}
 
+from typing import Optional
+
+def _search_igdb(search_query: str, client_id: str, token: str) -> List[dict]:
+    body = (
+        f'search "{search_query}"; '
+        f'fields name, cover.image_id, summary, first_release_date, genres.name; '
+        f'limit 10;'
+    )
+    resp = httpx.post(
+        "https://api.igdb.com/v4/games",
+        headers={
+            "Client-ID": client_id,
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "text/plain",
+        },
+        content=body.encode(),
+        timeout=10,
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    return []
+
+def _evaluate_igdb_results_with_ai(client: OpenAI, original_name: str, results: List[dict]) -> Optional[dict]:
+    if not results:
+        return None
+        
+    candidates_text = ""
+    for idx, r in enumerate(results, 1):
+        summary = r.get('summary', 'No summary available')
+        candidates_text += f"[{idx}] Title: {r.get('name', 'Unknown')}\nSummary: {summary}\n\n"
+        
+    prompt = f"""The user has saved a game in their library with the informal name: '{original_name}'.
+Below are {len(results)} potential matches found on IGDB.
+
+{candidates_text}
+Which of these {len(results)} games is the correct match for the user's game '{original_name}'?
+If one is a match, reply ONLY with its index number (e.g., '1', '2', etc.). Do not include any other text.
+If none of them match the game the user most likely meant, reply ONLY with 'none'."""
+
+    response = client.chat.completions.create(
+        model="moonshot-v1-8k",
+        messages=[
+            {"role": "system", "content": "You are a highly accurate videogame metadata assistant. Respond ONLY with a number or 'none'."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    answer = response.choices[0].message.content.strip().lower()
+    
+    if answer == 'none':
+        return None
+        
+    try:
+        idx = int(answer) - 1
+        if 0 <= idx < len(results):
+            return results[idx]
+    except ValueError:
+        pass
+        
+    return None
+
 def process_auto_fill(game_ids: List[int], overwrite: bool, user_id: int):
     auto_fill_progress[user_id] = {"total": len(game_ids), "completed": 0, "status": "running"}
     from dotenv import load_dotenv
@@ -47,47 +107,33 @@ def process_auto_fill(game_ids: List[int], overwrite: bool, user_id: int):
                     continue
 
             try:
-                response = client.chat.completions.create(
-                    model="moonshot-v1-8k",
-                    messages=[
-                        {"role": "system", "content": "You are a videogame database expert. Return ONLY the standard formal name of the game that would be found in a database like IGDB. Do not output anything else. No <think> tags, no explanation."},
-                        {"role": "user", "content": f"Correct this informal game name: '{game.name}'"}
-                    ]
-                )
-                corrected_name = response.choices[0].message.content.strip()
-                corrected_name = corrected_name.strip("'\"")
-                
                 token = _get_twitch_token()
-                names_to_try = [corrected_name, game.name]
-                raw_games = None
                 
-                for search_name in names_to_try:
-                    if not search_name: continue
-                    body = (
-                        f'search "{search_name}"; '
-                        f'fields name, cover.image_id, summary, first_release_date, genres.name; '
-                        f'limit 1;'
-                    )
-                    
-                    resp = httpx.post(
-                        "https://api.igdb.com/v4/games",
-                        headers={
-                            "Client-ID": client_id,
-                            "Authorization": f"Bearer {token}",
-                            "Content-Type": "text/plain",
-                        },
-                        content=body.encode(),
-                        timeout=10,
-                    )
-                    
-                    if resp.status_code == 200:
-                        results = resp.json()
-                        if results:
-                            raw_games = results
-                            break
+                # 1. Search with original name
+                igdb_results = _search_igdb(game.name, client_id, token)
                 
-                if raw_games:
-                    igdb_game = raw_games[0]
+                # 2. Bulk evaluate with AI
+                matched_game = _evaluate_igdb_results_with_ai(client, game.name, igdb_results)
+                
+                # 3. If no match, ask Kimi for a better search term and retry
+                if not matched_game:
+                    suggestion_prompt = f"What is the official IGDB name for the videogame '{game.name}'? Reply ONLY with the name itself."
+                    suggestion_response = client.chat.completions.create(
+                        model="moonshot-v1-8k",
+                        messages=[
+                            {"role": "system", "content": "You are a videogame database expert. Return ONLY the standard formal name."},
+                            {"role": "user", "content": suggestion_prompt}
+                        ]
+                    )
+                    suggested_name = suggestion_response.choices[0].message.content.strip().strip("'\"")
+                    
+                    if suggested_name and suggested_name.lower() != game.name.lower():
+                        igdb_results_fallback = _search_igdb(suggested_name, client_id, token)
+                        matched_game = _evaluate_igdb_results_with_ai(client, game.name, igdb_results_fallback)
+                
+                # 4. If we finally have a match, apply it
+                if matched_game:
+                    igdb_game = matched_game
                     
                     cover_url = None
                     if igdb_game.get("cover") and igdb_game["cover"].get("image_id"):
