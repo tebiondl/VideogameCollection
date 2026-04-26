@@ -20,6 +20,7 @@ class Videogame(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, index=True, nullable=False)
     description = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     status = Column(String, nullable=False, default="Not Started") # 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'
     time_spent = Column(String, nullable=True)
@@ -54,6 +55,7 @@ class SmartImportItem(Base):
     # Same fields as Videogame
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     status = Column(String, nullable=False, default="Not Started")
     time_spent = Column(String, nullable=True)

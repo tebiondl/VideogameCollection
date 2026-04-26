@@ -2,10 +2,10 @@ import { X } from 'lucide-react';
 import './SimilarGameModal.css';
 
 interface VideogameResponse {
-  id: int;
-  name: str;
-  image_url: str | null;
-  status: str;
+  id: number;
+  name: string;
+  image_url: string | null;
+  status: string;
 }
 
 interface Props {

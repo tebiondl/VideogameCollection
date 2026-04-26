@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -138,6 +138,7 @@ export function VideogamesDashboard() {
       const payload = {
         name: editingGame.name,
         description: editingGame.description || null,
+        comments: editingGame.comments || null,
         image_url: editingGame.image_url || null,
         status: editingGame.status,
         time_spent: editingGame.time_spent || null,
@@ -446,81 +447,109 @@ export function VideogamesDashboard() {
         <div className="modal-overlay">
           <div className="glass-card modal-content">
             <button className="modal-close" onClick={() => setEditingGame(null)}><X size={20}/></button>
-            <h2 style={{ marginBottom: '1.5rem' }}>Edit Game</h2>
-            
-            <div className="form-group">
-               <label className="form-label">Name</label>
-               <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
+            <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '1.5rem', gap: '0.75rem' }}>
+              <h2 style={{ margin: 0 }}>Edit Game</h2>
+              <div className="info-tooltip-container">
+                <HelpCircle size={18} />
+                <div className="tooltip-text">
+                  <strong>Game Data</strong> (Neutral background) contains general info about the game.<br/><br/>
+                  <strong>User Data</strong> (Blue background) contains your personal progress, review, and tags.
+                </div>
+              </div>
             </div>
 
-            <div className="form-group">
-               <label className="form-label">Description / Review</label>
-               <textarea className="form-input" rows={3} value={editingGame.description || ''} onChange={e => setEditingGame({...editingGame, description: e.target.value})} />
-            </div>
-            
-            <div className="form-row">
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Status</label>
-                <select className="form-input" value={editingGame.status} onChange={e => setEditingGame({...editingGame, status: e.target.value})}>
-                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-              </div>
-              {(editingGame.status === 'Stopped' || editingGame.status === 'Finished') && (
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Completion %</label>
-                  <select className="form-input" value={editingGame.completion_percentage ?? ''} onChange={e => setEditingGame({...editingGame, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
-                    <option value="">--</option>
-                    {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
-                  </select>
-                </div>
-              )}
-              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') ? (
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Rating (1-10)</label>
-                  <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
-                </div>
-              ) : (
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Hype (1-10)</label>
-                  <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={editingGame.hype || ''} onChange={e => setEditingGame({...editingGame, hype: e.target.value ? Number(e.target.value) : null})} />
-                </div>
-              )}
-            </div>
+            <div className="data-section-game">
+              <h3 className="section-title">Game Data</h3>
 
-            <div className="form-row">
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Time Spent</label>
-                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={editingGame.time_spent || ''} onChange={e => setEditingGame({...editingGame, time_spent: e.target.value})} />
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ flexShrink: 0, width: '120px', height: '160px', borderRadius: 'var(--radius-md)', overflow: 'hidden', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)' }}>
+                  {editingGame.image_url ? (
+                    <img src={editingGame.image_url} alt="Cover" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No Cover</div>
+                  )}
+                </div>
+                
+                <div style={{ flex: 1, minWidth: '250px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                     <label className="form-label">Name</label>
+                     <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Image Cover URL</label>
+                    <input type="url" className="form-input" placeholder="https://..." value={editingGame.image_url || ''} onChange={e => setEditingGame({...editingGame, image_url: e.target.value})} />
+                  </div>
+                </div>
               </div>
-              <div className="form-group" style={{ flex: 1 }}>
+
+              <div className="form-group">
+                 <label className="form-label">Description</label>
+                 <textarea className="form-input" rows={3} value={editingGame.description || ''} onChange={e => setEditingGame({...editingGame, description: e.target.value})} />
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">Publication Year</label>
                 <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={editingGame.publication_year || ''} onChange={e => setEditingGame({...editingGame, publication_year: e.target.value ? Number(e.target.value) : null})} />
               </div>
+
+              <div className="form-group">
+                <label className="form-label">DLCs</label>
+                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} />
+              </div>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Completion Date</label>
-              <CompletionDatePicker
-                value={editingGame.completion_date || ''}
-                onChange={(val) => setEditingGame({...editingGame, completion_date: val})}
-              />
-            </div>
-            
-            <div className="form-group">
-               <label className="form-label">Tags</label>
-               <TagMultiSelect 
-                  availableTags={availableTags}
-                  selectedTagsString={editingGame.tags || ''}
-                  onChange={(newTags) => setEditingGame({ ...editingGame, tags: newTags })}
-               />
-            </div>
+            <div className="data-section-user">
+              <h3 className="section-title">User Data</h3>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Status</label>
+                  <select className="form-input" value={editingGame.status} onChange={e => setEditingGame({...editingGame, status: e.target.value})}>
+                    {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </div>
+                {(editingGame.status === 'Stopped' || editingGame.status === 'Finished') && (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Completion %</label>
+                    <select className="form-input" value={editingGame.completion_percentage ?? ''} onChange={e => setEditingGame({...editingGame, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
+                      <option value="">--</option>
+                      {[...Array(11)].map((_, i) => <option key={i*10} value={i*10}>{i*10}%</option>)}
+                    </select>
+                  </div>
+                )}
+                {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') ? (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Rating (1-10)</label>
+                    <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
+                  </div>
+                ) : (
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Hype (1-10)</label>
+                    <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={editingGame.hype || ''} onChange={e => setEditingGame({...editingGame, hype: e.target.value ? Number(e.target.value) : null})} />
+                  </div>
+                )}
+              </div>
 
-            <div className="form-group">
-              <label className="form-label">DLCs</label>
-              <DlcEditor
-                value={editingGame.dlcs || ''}
-                onChange={(val) => setEditingGame({...editingGame, dlcs: val})}
-              />
+              <div className="form-group">
+                <label className="form-label">Time Spent</label>
+                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={editingGame.time_spent || ''} onChange={e => setEditingGame({...editingGame, time_spent: e.target.value})} />
+              </div>
+
+              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') && (
+                <div className="form-group">
+                  <label className="form-label">Completion Date</label>
+                  <CompletionDatePicker value={editingGame.completion_date || ''} onChange={(val) => setEditingGame({...editingGame, completion_date: val})} />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label">Comments / Review</label>
+                <textarea className="form-input" rows={3} value={editingGame.comments || ''} onChange={e => setEditingGame({...editingGame, comments: e.target.value})} />
+              </div>
+
+              <div className="form-group">
+                 <label className="form-label">Tags</label>
+                 <TagMultiSelect availableTags={availableTags} selectedTagsString={editingGame.tags || ''} onChange={(newTags) => setEditingGame({ ...editingGame, tags: newTags })} />
+              </div>
             </div>
 
             <div className="modal-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>

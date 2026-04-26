@@ -27,6 +27,7 @@ class TokenData(BaseModel):
 class VideogameBase(BaseModel):
     name: str
     description: str | None = None
+    comments: str | None = None
     image_url: str | None = None
     status: str = "Not Started"
     time_spent: str | None = None

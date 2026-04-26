@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, File as FileIcon, X, Check, Edit2, Search, Gamepad2 } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, X, Check, Edit2, Search, Gamepad2, HelpCircle } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -8,7 +8,6 @@ import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
 import './AddGamePage.css';
 
-const AVAILABLE_TAGS = ['Gacha', 'Online', 'Runs'];
 const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
 
 interface FileConfig {
@@ -30,6 +29,7 @@ export function AddGamePage() {
   // -------------------------
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [comments, setComments] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [status, setStatus] = useState(STATUS_OPTIONS[0]);
   const [timeSpent, setTimeSpent] = useState('');
@@ -41,8 +41,6 @@ export function AddGamePage() {
   const [tags, setTags] = useState<string[]>([]);
   const [dlcs, setDlcs] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const toggleTag = (tag: string) => setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
 
   // -------------------------
   // SEARCH TAB STATE (IGDB)
@@ -61,6 +59,7 @@ export function AddGamePage() {
   const [igdbCompletionPct, setIgdbCompletionPct] = useState<number | ''>('');
   const [igdbTags, setIgdbTags] = useState<string[]>([]);
   const [igdbDlcs, setIgdbDlcs] = useState('');
+  const [igdbComments, setIgdbComments] = useState('');
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -------------------------
@@ -132,6 +131,7 @@ export function AddGamePage() {
     setIgdbCompletionPct('');
     setIgdbTags([]);
     setIgdbDlcs('');
+    setIgdbComments('');
   };
 
   const handleIgdbAddGame = async () => {
@@ -149,6 +149,7 @@ export function AddGamePage() {
       const payload = {
         name: selectedIgdbGame.name,
         description: selectedIgdbGame.summary || null,
+        comments: igdbComments || null,
         image_url: selectedIgdbGame.cover_url || null,
         status: igdbStatus,
         time_spent: igdbTimeSpent || null,
@@ -397,7 +398,7 @@ export function AddGamePage() {
     setIsSubmitting(true);
     try {
       const payload = {
-        name, description: description || null, image_url: imageUrl || null,
+        name, description: description || null, comments: comments || null, image_url: imageUrl || null,
         status, time_spent: timeSpent || null,
         mark: mark !== '' ? mark : null,
         hype: hype !== '' ? hype : null,
@@ -427,7 +428,7 @@ export function AddGamePage() {
     try {
       // If we were editing a SmartItem we apply the editingItem fields. If manual, we apply manual fields.
       const payload = editingItem ? {
-        name: editingItem.name, description: editingItem.description || null, image_url: editingItem.image_url || null,
+        name: editingItem.name, description: editingItem.description || null, comments: editingItem.comments || null, image_url: editingItem.image_url || null,
         status: editingItem.status, time_spent: editingItem.time_spent || null,
         mark: editingItem.mark !== '' ? editingItem.mark : null,
         hype: editingItem.hype !== '' ? editingItem.hype : null,
@@ -436,7 +437,7 @@ export function AddGamePage() {
         tags: editingItem.tags || null,
         dlcs: editingItem.dlcs || null,
       } : {
-        name, description: description || null, image_url: imageUrl || null,
+        name, description: description || null, comments: comments || null, image_url: imageUrl || null,
         status, time_spent: timeSpent || null,
         mark: mark !== '' ? mark : null,
         hype: hype !== '' ? hype : null,
@@ -514,78 +515,112 @@ export function AddGamePage() {
       {/* ------------------------------- */}
       {activeTab === 'manual' && (
         <form onSubmit={handleManualSubmit} className="glass-card add-form">
-          <div className="form-group">
-            <label className="form-label">Game Name *</label>
-            <input type="text" className="form-input" required value={name} onChange={e => setName(e.target.value)} />
-          </div>
-
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label className="form-label">Status</label>
-              <select className="form-input" value={status} onChange={e => setStatus(e.target.value)}>
-                {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
+          <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '1.5rem' }}>
+            <div className="info-tooltip-container">
+              <HelpCircle size={18} />
+              <div className="tooltip-text">
+                <strong>Game Data</strong> (Neutral background) contains general info about the game.<br/><br/>
+                <strong>User Data</strong> (Blue background) contains your personal progress, review, and tags.
+              </div>
             </div>
-            {(status === 'Stopped' || status === 'Finished') && (
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Completion %</label>
-                <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
-                  <option value="">--</option>
-                  {[...Array(11)].map((_, i) => <option key={i * 10} value={i * 10}>{i * 10}%</option>)}
-                </select>
-              </div>
-            )}
-            {(status === 'Finished' || status === 'Stopped') ? (
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Your Rating (1-10)</label>
-                <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
-              </div>
-            ) : (
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Hype (1-10)</label>
-                <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={hype} onChange={e => setHype(e.target.value ? Number(e.target.value) : '')} />
-              </div>
-            )}
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Description / Review</label>
-            <textarea className="form-input" rows={3} value={description} onChange={e => setDescription(e.target.value)} />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Image Cover URL</label>
-            <input type="url" className="form-input" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
-          </div>
-
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label className="form-label">Time Spent</label>
-              <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} />
+          <div className="data-section-game">
+            <h3 className="section-title">Game Data</h3>
+            
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ flexShrink: 0, width: '120px', height: '160px', borderRadius: 'var(--radius-md)', overflow: 'hidden', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)' }}>
+                {imageUrl ? (
+                  <img src={imageUrl} alt="Cover Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No Cover</div>
+                )}
+              </div>
+              
+              <div style={{ flex: 1, minWidth: '250px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Game Name *</label>
+                  <input type="text" className="form-input" required value={name} onChange={e => setName(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Image Cover URL</label>
+                  <input type="url" className="form-input" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+                </div>
+              </div>
             </div>
-            <div className="form-group" style={{ flex: 1 }}>
+
+            <div className="form-group">
+              <label className="form-label">Description</label>
+              <textarea className="form-input" rows={3} value={description} onChange={e => setDescription(e.target.value)} />
+            </div>
+
+            <div className="form-group">
               <label className="form-label">Publication Year</label>
               <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={pubYear} onChange={e => setPubYear(e.target.value ? Number(e.target.value) : '')} />
             </div>
+
+            <div className="form-group">
+              <label className="form-label">DLCs</label>
+              <DlcEditor value={dlcs} onChange={setDlcs} />
+            </div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Completion Date</label>
-            <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
-          </div>
+          <div className="data-section-user">
+            <h3 className="section-title">User Data</h3>
+            <div className="form-row">
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Status</label>
+                <select className="form-input" value={status} onChange={e => setStatus(e.target.value)}>
+                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              </div>
+              {(status === 'Stopped' || status === 'Finished') && (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Completion %</label>
+                  <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
+                    <option value="">--</option>
+                    {[...Array(11)].map((_, i) => <option key={i * 10} value={i * 10}>{i * 10}%</option>)}
+                  </select>
+                </div>
+              )}
+              {(status === 'Finished' || status === 'Stopped') ? (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Your Rating (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
+                </div>
+              ) : (
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Hype (1-10)</label>
+                  <input type="number" min="1" max="10" className="form-input" placeholder="Your anticipation…" value={hype} onChange={e => setHype(e.target.value ? Number(e.target.value) : '')} />
+                </div>
+              )}
+            </div>
 
-          <div className="form-group">
-            <label className="form-label">DLCs</label>
-            <DlcEditor value={dlcs} onChange={setDlcs} />
-          </div>
+            <div className="form-group">
+              <label className="form-label">Time Spent</label>
+              <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} />
+            </div>
 
-          <div className="form-group">
-            <label className="form-label">Tags</label>
-            <TagMultiSelect
-              availableTags={availableTags}
-              selectedTagsString={tags.join(', ')}
-              onChange={(newTagsStr) => setTags(newTagsStr ? newTagsStr.split(',').map(s => s.trim()) : [])}
-            />
+            {(status === 'Finished' || status === 'Stopped') && (
+              <div className="form-group">
+                <label className="form-label">Completion Date</label>
+                <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">Comments / Review</label>
+              <textarea className="form-input" rows={3} value={comments} onChange={e => setComments(e.target.value)} />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Tags</label>
+              <TagMultiSelect
+                availableTags={availableTags}
+                selectedTagsString={tags.join(', ')}
+                onChange={(newTagsStr) => setTags(newTagsStr ? newTagsStr.split(',').map(s => s.trim()) : [])}
+              />
+            </div>
           </div>
 
           <div className="form-actions" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
