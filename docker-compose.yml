@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: videogame-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite:///./data/videogames.db
+    volumes:
+      - ./data:/app/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: videogame-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
