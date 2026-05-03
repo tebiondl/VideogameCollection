@@ -194,6 +194,41 @@ def get_tags(
         
     return global_tags + user_tags
 
+@router.post("/tags/global", response_model=schemas.TagResponse)
+def create_global_tag(
+    tag: schemas.TagCreate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to create global tags")
+        
+    db_tag = models.Tag(name=tag.name, user_id=None)
+    db.add(db_tag)
+    db.commit()
+    db.refresh(db_tag)
+    return db_tag
+
+@router.delete("/tags/{tag_id}")
+def delete_tag(
+    tag_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not db_tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+        
+    # Only admin can delete global tags, and users can only delete their own tags
+    if db_tag.user_id is None and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to delete global tags")
+    elif db_tag.user_id is not None and db_tag.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this tag")
+        
+    db.delete(db_tag)
+    db.commit()
+    return {"status": "ok"}
+
 @router.get("/", response_model=List[schemas.VideogameResponse])
 def get_videogames(
     current_user: Annotated[models.User, Depends(get_current_user)], 

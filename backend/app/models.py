@@ -10,6 +10,7 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     avatar_url = Column(String, nullable=True) # E.g., URL or base64
+    is_admin = Column(Boolean, nullable=False, default=False)
 
     videogames = relationship("Videogame", back_populates="owner")
 

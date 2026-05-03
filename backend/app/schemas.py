@@ -14,6 +14,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     avatar_url: str | None = None
+    is_admin: bool = False
 
     class Config:
         from_attributes = True
@@ -72,6 +73,9 @@ class SmartImportSessionResponse(BaseModel):
 
 class SmartImportItemUpdate(VideogameBase):
     review_status: str
+
+class TagCreate(BaseModel):
+    name: str
 
 class TagResponse(BaseModel):
     id: int

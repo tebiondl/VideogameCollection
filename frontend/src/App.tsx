@@ -6,6 +6,7 @@ import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { VideogamesDashboard } from './pages/VideogamesDashboard';
 import { AddGamePage } from './pages/AddGamePage';
+import { AdminDashboard } from './pages/AdminDashboard';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -52,6 +53,14 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <AddGamePage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/admin" 
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
               </ProtectedRoute>
             } 
           />

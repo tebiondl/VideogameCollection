@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Shield } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -8,6 +8,7 @@ import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/Advance
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
+import { useAuth } from '../context/AuthContext';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -54,6 +55,7 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
 }
 
 export function VideogamesDashboard() {
+  const { user } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
   const [searchQuery, setSearchQuery] = useState('');
   const [games, setGames] = useState<any[]>([]);
@@ -373,6 +375,12 @@ export function VideogamesDashboard() {
           <p className="text-secondary">Track and manage your collection</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
+          {user?.is_admin && (
+            <Link to="/dashboard/admin" className="btn btn-secondary add-btn">
+              <Shield size={20} />
+              Admin Features
+            </Link>
+          )}
           <button className="btn btn-primary add-btn" onClick={() => setShowAutoFillModal(true)}>
             <Sparkles size={20} />
             Completion
