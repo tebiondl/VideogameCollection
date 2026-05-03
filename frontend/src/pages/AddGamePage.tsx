@@ -493,11 +493,11 @@ export function AddGamePage() {
       </div>
 
       <header className="add-game-header">
-        <h1>Add somewhat to your Vault</h1>
+        <h1>Add a new game to your Tracker</h1>
 
         <div className="tabs-container">
           <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>
-            Search API
+            Search Online
           </button>
           <button className={`tab-btn ${activeTab === 'manual' ? 'active' : ''}`} onClick={() => setActiveTab('manual')}>
             Manual Entry
@@ -638,9 +638,9 @@ export function AddGamePage() {
         <div className="smart-import-section">
           {(!smartSession || smartSession.status.startsWith('failed') || smartSession.status === 'completed') && (
             <div className="glass-card add-form">
-              <h2 style={{ marginBottom: '1rem', color: 'var(--text-primary)' }}>AI Smart Importer (Kimi K2.5)</h2>
+              <h2 style={{ marginBottom: '1rem', color: 'var(--text-primary)' }}>AI Smart Importer</h2>
               <p className="text-secondary" style={{ marginBottom: '2rem' }}>
-                Upload your excel spreadsheets, text files, or note summaries. Then instruct Kimi on how to read the data format.
+                Upload your excel spreadsheets, text files, or note summaries. Then instruct the AI on how to read the data format.
               </p>
 
               <div
@@ -776,7 +776,7 @@ export function AddGamePage() {
           {smartSession?.status?.startsWith('processing') && (
             <div className="glass-card text-center" style={{ padding: '3rem 2rem' }}>
               <Loader2 className="spinner" size={48} color="var(--accent-primary)" style={{ margin: '0 auto 1.5rem auto' }} />
-              <h2 className="text-gradient">Kimi is thinking...</h2>
+              <h2 className="text-gradient">AI is thinking...</h2>
 
               {(() => {
                 let chunkText = "";
@@ -822,7 +822,7 @@ export function AddGamePage() {
               <div className="review-header glass-card">
                 <div>
                   <h2>Review Extracted Data</h2>
-                  <p className="text-secondary">Please check the items below. Accept or Reject Kimi's findings.</p>
+                  <p className="text-secondary">Please check the items below. Accept or Reject the AI's findings.</p>
                 </div>
                 <div className="review-global-actions" style={{ display: 'flex', gap: '0.75rem' }}>
                   <button className="btn btn-secondary" onClick={() => setAllItemsStatus('accepted')} >
@@ -832,7 +832,7 @@ export function AddGamePage() {
                     Reject All
                   </button>
                   <button className="btn btn-primary" onClick={commitSmartImport}>
-                    Commit Accepted to Vault
+                    Commit Accepted to Tracker
                   </button>
                 </div>
               </div>
@@ -878,7 +878,7 @@ export function AddGamePage() {
                 id="igdb-search-input"
                 type="text"
                 className="form-input igdb-search-input"
-                placeholder="Search for a game on IGDB…"
+                placeholder="Search for a game online…"
                 value={igdbQuery}
                 onChange={e => setIgdbQuery(e.target.value)}
                 autoFocus
@@ -934,12 +934,12 @@ export function AddGamePage() {
             <div className="igdb-empty-state glass-card">
               <Gamepad2 size={48} color="var(--text-muted)" style={{ marginBottom: '1rem' }} />
               <h3 style={{ color: 'var(--text-muted)' }}>
-                {igdbQuery ? 'No games found' : 'Start typing to search IGDB'}
+                {igdbQuery ? 'No games found' : 'Start typing to search online'}
               </h3>
               <p className="text-secondary" style={{ marginTop: '0.5rem' }}>
                 {igdbQuery
                   ? 'Try a different title or check the spelling'
-                  : 'Powered by the Internet Game Database'}
+                  : 'Powered by online databases'}
               </p>
             </div>
           )}
@@ -1057,7 +1057,7 @@ export function AddGamePage() {
                   onClick={handleIgdbAddGame}
                   disabled={isSubmitting}
                 >
-                  {isSubmitting ? 'Saving…' : `Add "${selectedIgdbGame.name}" to Vault`}
+                  {isSubmitting ? 'Saving…' : `Add "${selectedIgdbGame.name}" to Tracker`}
                 </button>
               </div>
             </div>

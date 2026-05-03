@@ -21,7 +21,7 @@ export function Navbar() {
       <div className="container nav-container">
         <Link to={user ? "/dashboard" : "/"} className="nav-logo">
           <Gamepad2 className="logo-icon" />
-          <span className="logo-text">Vault<span className="text-gradient">Track</span></span>
+          <span className="logo-text">Epici <span className="text-gradient">Tracker</span></span>
         </Link>
         
         <div className="nav-actions">

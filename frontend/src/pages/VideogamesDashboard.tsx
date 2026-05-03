@@ -371,7 +371,7 @@ export function VideogamesDashboard() {
     <div className="container vg-dashboard">
       <header className="vg-header">
         <div>
-          <h1 className="text-gradient">Videogames Vault</h1>
+          <h1 className="text-gradient">Videogames Tracker</h1>
           <p className="text-secondary">Track and manage your collection</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
@@ -712,7 +712,7 @@ export function VideogamesDashboard() {
             
             <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0', paddingTop: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <h3 className="section-title" style={{ margin: 0 }}>IGDB Results</h3>
+                <h3 className="section-title" style={{ margin: 0 }}>Online Search Results</h3>
                 <div style={{ display: 'flex', gap: '0.5rem', width: '300px' }}>
                   <input 
                     type="text" 
@@ -720,7 +720,7 @@ export function VideogamesDashboard() {
                     value={imageSearchQuery} 
                     onChange={e => setImageSearchQuery(e.target.value)} 
                     onKeyDown={e => e.key === 'Enter' && fetchIGDBImages(imageSearchQuery)}
-                    placeholder="Search IGDB..."
+                    placeholder="Search online..."
                   />
                   <button className="btn btn-secondary" onClick={() => fetchIGDBImages(imageSearchQuery)}>
                     Search
@@ -782,7 +782,7 @@ export function VideogamesDashboard() {
             <button className="modal-close" onClick={() => setShowAutoFillModal(false)}><X size={20}/></button>
             <h2 style={{ marginBottom: '1.5rem' }}>Auto-Fill Missing Data</h2>
             <p style={{ marginBottom: '1rem', lineHeight: '1.5' }}>
-              This will automatically find and fill missing information (Cover Image, Description, Publication Year) from IGDB for <strong>{displayGames.length}</strong> currently filtered games.
+              This will automatically find and fill missing information (Cover Image, Description, Publication Year) from the internet for <strong>{displayGames.length}</strong> currently filtered games.
             </p>
             <div style={{ marginBottom: '2rem' }}>
               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>

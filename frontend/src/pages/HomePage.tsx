@@ -8,7 +8,7 @@ export function HomePage() {
       <section className="hero-section text-center">
         <div className="container">
           <h1 className="hero-title">
-            Your Ultimate Media <span className="text-gradient">Vault</span>
+            Your Ultimate Media <span className="text-gradient">Tracker</span>
           </h1>
           <p className="hero-subtitle">
             Keep track of the games you play, the anime you watch, and the manga you read. All in one beautifully designed space.

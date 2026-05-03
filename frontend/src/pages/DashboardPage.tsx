@@ -9,7 +9,7 @@ export function DashboardPage() {
   return (
     <div className="container dashboard-hub">
       <header className="hub-header">
-        <h1>Welcome to your Vault, <span className="text-gradient">{user?.username}</span></h1>
+        <h1>Welcome to your Tracker, <span className="text-gradient">{user?.username}</span></h1>
         <p className="text-secondary">What would you like to track today?</p>
       </header>
 

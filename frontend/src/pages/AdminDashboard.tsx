@@ -94,7 +94,7 @@ export function AdminDashboard() {
       <div style={{ marginBottom: '1.5rem' }}>
         <Link to="/dashboard/videogames" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
           <ArrowLeft size={18} />
-          Back to Vault
+          Back to Tracker
         </Link>
       </div>
 
