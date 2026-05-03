@@ -356,6 +356,15 @@ export function VideogamesDashboard() {
          if (filterState.completionRange.max !== '' && p > filterState.completionRange.max) return false;
      }
 
+     if (filterState.playtimeRange.min !== '' && (g.playtime_hours === null || g.playtime_hours < filterState.playtimeRange.min)) return false;
+     if (filterState.playtimeRange.max !== '' && (g.playtime_hours === null || g.playtime_hours > filterState.playtimeRange.max)) return false;
+
+     if (filterState.dateRange.min !== '' || filterState.dateRange.max !== '') {
+         const year = g.completion_date ? parseInt(g.completion_date, 10) : null;
+         if (filterState.dateRange.min !== '' && (year === null || isNaN(year) || year < filterState.dateRange.min)) return false;
+         if (filterState.dateRange.max !== '' && (year === null || isNaN(year) || year > filterState.dateRange.max)) return false;
+     }
+
      const gTags = g.tags ? g.tags.split(',').map((s:string) => s.trim()) : [];
      if (!evaluateTagGroup(filterState.tagQuery, gTags)) return false;
 

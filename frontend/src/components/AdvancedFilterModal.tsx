@@ -23,13 +23,17 @@ export interface FilterState {
   statusFilter: string[];
   completionRange: { min: number | ''; max: number | ''; includeEmpty: boolean };
   ratingRange: { min: number | ''; max: number | '' };
+  playtimeRange: { min: number | ''; max: number | '' };
+  dateRange: { min: number | ''; max: number | '' };
 }
 
 export const DEFAULT_FILTER_STATE: FilterState = {
   tagQuery: { type: 'group', id: 'root', matchLogic: 'AND', conditions: [] },
   statusFilter: [],
   completionRange: { min: '', max: '', includeEmpty: true },
-  ratingRange: { min: '', max: '' }
+  ratingRange: { min: '', max: '' },
+  playtimeRange: { min: '', max: '' },
+  dateRange: { min: '', max: '' }
 };
 
 interface Props {
@@ -205,7 +209,7 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                  </div>
                </div>
 
-               <div className="filter-row">
+               <div className="filter-row" style={{ flexDirection: 'column' }}>
                  <div className="filter-section" style={{ flex: 1 }}>
                    <h3>Completion Percentage</h3>
                    <div className="range-inputs">
@@ -230,6 +234,28 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                       <span>to</span>
                       <input type="number" placeholder="Max (10)" min="1" max="10" className="form-input" 
                          value={filterState.ratingRange.max} onChange={e => onChange({...filterState, ratingRange: {...filterState.ratingRange, max: e.target.value ? Number(e.target.value) : ''}})} />
+                   </div>
+                 </div>
+
+                 <div className="filter-section" style={{ flex: 1 }}>
+                   <h3>Playtime (Hours)</h3>
+                   <div className="range-inputs">
+                      <input type="number" placeholder="Min hrs" min="0" step="0.1" className="form-input" 
+                         value={filterState.playtimeRange.min} onChange={e => onChange({...filterState, playtimeRange: {...filterState.playtimeRange, min: e.target.value ? Number(e.target.value) : ''}})} />
+                      <span>to</span>
+                      <input type="number" placeholder="Max hrs" min="0" step="0.1" className="form-input" 
+                         value={filterState.playtimeRange.max} onChange={e => onChange({...filterState, playtimeRange: {...filterState.playtimeRange, max: e.target.value ? Number(e.target.value) : ''}})} />
+                   </div>
+                 </div>
+
+                 <div className="filter-section" style={{ flex: 1 }}>
+                   <h3>Completion Year</h3>
+                   <div className="range-inputs">
+                      <input type="number" placeholder="From YYYY" min="1950" className="form-input" 
+                         value={filterState.dateRange.min} onChange={e => onChange({...filterState, dateRange: {...filterState.dateRange, min: e.target.value ? Number(e.target.value) : ''}})} />
+                      <span>to</span>
+                      <input type="number" placeholder="To YYYY" min="1950" className="form-input" 
+                         value={filterState.dateRange.max} onChange={e => onChange({...filterState, dateRange: {...filterState.dateRange, max: e.target.value ? Number(e.target.value) : ''}})} />
                    </div>
                  </div>
                </div>
