@@ -645,7 +645,7 @@ export function VideogamesDashboard() {
 
               <div className="form-group">
                 <label className="form-label">DLCs</label>
-                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} />
+                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} />
               </div>
             </div>
 

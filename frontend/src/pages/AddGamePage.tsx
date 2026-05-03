@@ -561,7 +561,7 @@ export function AddGamePage() {
 
             <div className="form-group">
               <label className="form-label">DLCs</label>
-              <DlcEditor value={dlcs} onChange={setDlcs} />
+              <DlcEditor value={dlcs} onChange={setDlcs} gameName={name} />
             </div>
           </div>
 
@@ -1037,7 +1037,7 @@ export function AddGamePage() {
               {/* DLCs */}
               <div className="form-group">
                 <label className="form-label">DLCs</label>
-                <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} />
+                <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} gameName={igdbName} />
               </div>
 
               {/* Tags */}
@@ -1145,6 +1145,7 @@ export function AddGamePage() {
               <DlcEditor
                 value={editingItem.dlcs || ''}
                 onChange={(val) => setEditingItem({ ...editingItem, dlcs: val })}
+                gameName={editingItem.name}
               />
             </div>
 

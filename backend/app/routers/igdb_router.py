@@ -127,3 +127,75 @@ def search_games(
         )
 
     return results
+
+# ---------------------------------------------------------------------------
+# DLCs endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/dlcs")
+def get_game_dlcs(
+    game_name: str = Query(..., min_length=1, description="Exact or partial game name"),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Search IGDB for a specific game and return its DLCs and Expansions.
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    client_id = os.getenv("TWITCH_SECRET_CLIENT_ID", "").strip()
+    token = _get_twitch_token()
+
+    body = (
+        f'search "{game_name}"; '
+        f'fields name, dlcs.name, dlcs.cover.image_id, expansions.name, expansions.cover.image_id; '
+        f'limit 10;'
+    )
+
+    try:
+        resp = httpx.post(
+            "https://api.igdb.com/v4/games",
+            headers={
+                "Client-ID": client_id,
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "text/plain",
+            },
+            content=body.encode(),
+            timeout=10,
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="IGDB request timed out")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"IGDB API error: {resp.text}")
+
+    raw_games = resp.json()
+    if not raw_games:
+        return []
+
+    combined_dlcs = []
+    seen_dlc_ids = set()
+    
+    for game in raw_games:
+        for section in ["dlcs", "expansions"]:
+            items = game.get(section, [])
+            for item in items:
+                item_id = item.get("id")
+                if item_id in seen_dlc_ids:
+                    continue
+                seen_dlc_ids.add(item_id)
+                
+                cover_url = None
+                if item.get("cover") and item["cover"].get("image_id"):
+                    image_id = item["cover"]["image_id"]
+                    cover_url = f"https://images.igdb.com/igdb/image/upload/t_cover_big/{image_id}.jpg"
+                    
+                combined_dlcs.append({
+                    "name": item.get("name", "Unknown DLC"),
+                    "cover_url": cover_url
+                })
+            
+    # Sort alphabetically
+    combined_dlcs.sort(key=lambda x: x["name"])
+    
+    return combined_dlcs
