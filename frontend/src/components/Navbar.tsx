@@ -21,9 +21,9 @@ export function Navbar() {
       <div className="container nav-container">
         <Link to={user ? "/dashboard" : "/"} className="nav-logo">
           <Gamepad2 className="logo-icon" />
-          <span className="logo-text">Epici <span className="text-gradient">Tracker</span></span>
+          <span className="logo-text">Epic <span className="text-gradient">Tracker</span></span>
         </Link>
-        
+
         <div className="nav-actions">
           {!user ? (
             location.pathname === '/login' ? (
@@ -42,10 +42,10 @@ export function Navbar() {
                   Back to Hub
                 </Link>
               )}
-              
+
               <div className="user-menu-wrapper">
-                <button 
-                  className="user-menu-btn" 
+                <button
+                  className="user-menu-btn"
                   onClick={() => setMenuOpen(!menuOpen)}
                   aria-expanded={menuOpen}
                 >
@@ -56,20 +56,20 @@ export function Navbar() {
                   )}
                   <span className="username">{user.username}</span>
                 </button>
-              
-              {menuOpen && (
-                <div className="dropdown-menu">
-                  <div className="dropdown-header">
-                    <p className="dropdown-name">{user.username}</p>
-                    <p className="dropdown-id">User #{user.id}</p>
+
+                {menuOpen && (
+                  <div className="dropdown-menu">
+                    <div className="dropdown-header">
+                      <p className="dropdown-name">{user.username}</p>
+                      <p className="dropdown-id">User #{user.id}</p>
+                    </div>
+                    <div className="dropdown-divider"></div>
+                    <button className="dropdown-item danger" onClick={handleLogout}>
+                      <LogOut size={16} />
+                      Log out
+                    </button>
                   </div>
-                  <div className="dropdown-divider"></div>
-                  <button className="dropdown-item danger" onClick={handleLogout}>
-                    <LogOut size={16} />
-                    Log out
-                  </button>
-                </div>
-              )}
+                )}
               </div>
             </div>
           )}

@@ -17,6 +17,7 @@ export function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [newTagName, setNewTagName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
 
   useEffect(() => {
     fetchTags();
@@ -84,6 +85,29 @@ export function AdminDashboard() {
     }
   };
 
+  const handleMigratePlaytime = async () => {
+    if (!window.confirm("Are you sure you want to run the AI migration for playtime? This might take a while if there are many games.")) return;
+    
+    setIsMigrating(true);
+    try {
+      const res = await fetchWithAuth('/videogames/admin/migrate-playtime', {
+        method: 'POST'
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message + ". Games migrated: " + data.migrated);
+      } else {
+        alert('Migration failed: ' + data.detail);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error during migration');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
   // Restrict access to admin only
   if (user && !user.is_admin) {
     return <Navigate to="/dashboard" replace />;
@@ -106,7 +130,24 @@ export function AdminDashboard() {
         </div>
       </header>
 
-      <div style={{ maxWidth: '600px', marginTop: '2rem' }}>
+      <div style={{ maxWidth: '600px', marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        <div className="glass-card" style={{ padding: '2rem' }}>
+          <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            Data Management
+          </h2>
+          <p className="text-secondary" style={{ marginBottom: '1.5rem' }}>
+            Use AI to intelligently parse legacy string "time spent" entries into numeric playtime hours.
+          </p>
+          <button 
+            className="btn btn-primary" 
+            onClick={handleMigratePlaytime}
+            disabled={isMigrating}
+            style={{ width: '100%', justifyContent: 'center' }}
+          >
+            {isMigrating ? <><Loader2 size={18} className="spinner" /> Migrating Data...</> : 'Migrate Playtime Data'}
+          </button>
+        </div>
+
         <div className="glass-card" style={{ padding: '2rem' }}>
           <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Global Tags Manager

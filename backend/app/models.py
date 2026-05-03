@@ -24,7 +24,8 @@ class Videogame(Base):
     comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     status = Column(String, nullable=False, default="Not Started") # 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'
-    time_spent = Column(String, nullable=True)
+    time_spent = Column(String, nullable=True) # DEPRECATED
+    playtime_hours = Column(Float, nullable=True)
     mark = Column(Integer, nullable=True)  # 1 to 10 — only for Finished/Stopped
     hype = Column(Integer, nullable=True)  # 1 to 10 — anticipation for not-yet-played
     completion_date = Column(String, nullable=True) # string to support just '2024' or '2024-05'
@@ -59,7 +60,8 @@ class SmartImportItem(Base):
     comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     status = Column(String, nullable=False, default="Not Started")
-    time_spent = Column(String, nullable=True)
+    time_spent = Column(String, nullable=True) # DEPRECATED
+    playtime_hours = Column(Float, nullable=True)
     mark = Column(Integer, nullable=True)
     hype = Column(Integer, nullable=True)
     completion_date = Column(String, nullable=True)

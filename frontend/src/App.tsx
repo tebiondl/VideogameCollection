@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar';
 import { HomePage } from './pages/HomePage';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { AnalyticsDashboard } from './pages/AnalyticsDashboard';
 import { VideogamesDashboard } from './pages/VideogamesDashboard';
 import { AddGamePage } from './pages/AddGamePage';
 import { AdminDashboard } from './pages/AdminDashboard';
@@ -61,6 +62,14 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <AdminDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/videogames/analytics" 
+            element={
+              <ProtectedRoute>
+                <AnalyticsDashboard />
               </ProtectedRoute>
             } 
           />

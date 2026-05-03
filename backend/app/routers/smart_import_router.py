@@ -59,7 +59,7 @@ def process_smart_import(session_id: int, files_payloads: List[dict]):
             "THEN, respond strictly with a valid JSON array of objects wrapped in ```json ... ``` markdown. "
             "Each JSON object MUST contain these exact fields: "
             "'name' (string, required), 'description' (string or null), 'image_url' (string or null), 'status' (string, choices: 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'), "
-            "'time_spent' (string or null), 'mark' (integer 1-10 or null), 'completion_date' (string or null), 'publication_year' (integer or null), 'completion_percentage' (integer 0-100 or null), 'tags' (string or null). "
+            "'playtime_hours' (float or null, extract numeric hours only from time spent, e.g. '50 hrs' -> 50.0), 'mark' (integer 1-10 or null), 'completion_date' (string or null), 'publication_year' (integer or null), 'completion_percentage' (integer 0-100 or null), 'tags' (string or null). "
             "If the user specifies particular tags, use them (Gacha, Online, Runs). Comma separate tags. If status is unknown, default to 'Not Started'."
         )
 
@@ -155,6 +155,7 @@ def process_smart_import(session_id: int, files_payloads: List[dict]):
                 image_url=item.get("image_url"),
                 status=item.get("status") or "Not Started",
                 time_spent=item.get("time_spent"),
+                playtime_hours=item.get("playtime_hours"),
                 mark=item.get("mark"),
                 completion_date=item.get("completion_date"),
                 publication_year=item.get("publication_year"),
@@ -422,6 +423,7 @@ def commit_session(
             image_url=item.image_url,
             status=item.status,
             time_spent=item.time_spent,
+            playtime_hours=item.playtime_hours,
             mark=item.mark,
             completion_date=item.completion_date,
             publication_year=item.publication_year,

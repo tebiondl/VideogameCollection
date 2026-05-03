@@ -229,6 +229,88 @@ def delete_tag(
     db.commit()
     return {"status": "ok"}
 
+@router.post("/admin/migrate-playtime")
+def migrate_playtime(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    games = db.query(models.Videogame).filter(
+        models.Videogame.playtime_hours.is_(None),
+        models.Videogame.time_spent.isnot(None),
+        models.Videogame.time_spent != ""
+    ).all()
+    
+    if not games:
+        return {"message": "No games to migrate", "migrated": 0}
+
+    try:
+        import os
+        import json
+        from openai import OpenAI
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        raw_key = os.getenv("MOONSHOT_API_KEY")
+        if not raw_key:
+            raise Exception("MOONSHOT_API_KEY missing")
+        client = OpenAI(api_key=raw_key.strip(), base_url="https://api.moonshot.ai/v1")
+        
+        system_instruction = (
+            "You are a helpful data extraction assistant. "
+            "You will be given a JSON array of objects with 'id' and 'time_spent' strings. "
+            "Your task is to estimate/extract a numeric float of hours played from the 'time_spent' string. "
+            "For example: '50 hrs' -> 50.0, '2 weeks' -> 336.0, 'about 10 hours' -> 10.0, 'a bit' -> null. "
+            "Return strictly a JSON array of objects with 'id' and 'playtime_hours'. Wrap in ```json ... ```"
+        )
+
+        batch_size = 50
+        migrated_count = 0
+        
+        for i in range(0, len(games), batch_size):
+            batch = games[i:i+batch_size]
+            payload = [{"id": g.id, "time_spent": g.time_spent} for g in batch]
+            
+            response = client.chat.completions.create(
+                model="kimi-k2.5",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": json.dumps(payload)}
+                ]
+            )
+            
+            content = response.choices[0].message.content
+            import re
+            json_str = content
+            json_match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                fallback_match = re.search(r"```(.*?)```", content, re.DOTALL)
+                if fallback_match:
+                    json_str = fallback_match.group(1)
+            
+            try:
+                results = json.loads(json_str.strip())
+                for res in results:
+                    g_id = res.get("id")
+                    hours = res.get("playtime_hours")
+                    if g_id is not None:
+                        game = next((g for g in batch if g.id == g_id), None)
+                        if game:
+                            game.playtime_hours = float(hours) if hours is not None else 0.0
+                            migrated_count += 1
+            except Exception as e:
+                print("Failed to parse chunk", e)
+                
+        db.commit()
+        return {"message": "Migration completed", "migrated": migrated_count}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
+
 @router.get("/", response_model=List[schemas.VideogameResponse])
 def get_videogames(
     current_user: Annotated[models.User, Depends(get_current_user)], 

@@ -33,6 +33,7 @@ class VideogameBase(BaseModel):
     image_url: str | None = None
     status: str = "Not Started"
     time_spent: str | None = None
+    playtime_hours: float | None = None
     mark: int | None = None
     hype: int | None = None
     completion_date: str | None = None

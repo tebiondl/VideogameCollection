@@ -32,7 +32,7 @@ export function AddGamePage() {
   const [comments, setComments] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [status, setStatus] = useState(STATUS_OPTIONS[0]);
-  const [timeSpent, setTimeSpent] = useState('');
+  const [playtimeHours, setPlaytimeHours] = useState<number | ''>('');
   const [mark, setMark] = useState<number | ''>('');
   const [hype, setHype] = useState<number | ''>('');
   const [completionDate, setCompletionDate] = useState('');
@@ -54,7 +54,7 @@ export function AddGamePage() {
   const [igdbStatus, setIgdbStatus] = useState(STATUS_OPTIONS[0]);
   const [igdbMark, setIgdbMark] = useState<number | ''>('');
   const [igdbHype, setIgdbHype] = useState<number | ''>('');
-  const [igdbTimeSpent, setIgdbTimeSpent] = useState('');
+  const [igdbPlaytimeHours, setIgdbPlaytimeHours] = useState<number | ''>('');
   const [igdbCompletionDate, setIgdbCompletionDate] = useState('');
   const [igdbCompletionPct, setIgdbCompletionPct] = useState<number | ''>('');
   const [igdbTags, setIgdbTags] = useState<string[]>([]);
@@ -126,7 +126,7 @@ export function AddGamePage() {
     setIgdbStatus(STATUS_OPTIONS[0]);
     setIgdbMark('');
     setIgdbHype('');
-    setIgdbTimeSpent('');
+    setIgdbPlaytimeHours('');
     setIgdbCompletionDate('');
     setIgdbCompletionPct('');
     setIgdbTags([]);
@@ -152,7 +152,7 @@ export function AddGamePage() {
         comments: igdbComments || null,
         image_url: selectedIgdbGame.cover_url || null,
         status: igdbStatus,
-        time_spent: igdbTimeSpent || null,
+        playtime_hours: igdbPlaytimeHours !== '' ? igdbPlaytimeHours : null,
         mark: igdbMark !== '' ? igdbMark : null,
         hype: igdbHype !== '' ? igdbHype : null,
         completion_date: igdbCompletionDate || null,
@@ -399,7 +399,7 @@ export function AddGamePage() {
     try {
       const payload = {
         name, description: description || null, comments: comments || null, image_url: imageUrl || null,
-        status, time_spent: timeSpent || null,
+        status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
         mark: mark !== '' ? mark : null,
         hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
@@ -429,7 +429,7 @@ export function AddGamePage() {
       // If we were editing a SmartItem we apply the editingItem fields. If manual, we apply manual fields.
       const payload = editingItem ? {
         name: editingItem.name, description: editingItem.description || null, comments: editingItem.comments || null, image_url: editingItem.image_url || null,
-        status: editingItem.status, time_spent: editingItem.time_spent || null,
+        status: editingItem.status, playtime_hours: editingItem.playtime_hours !== '' ? editingItem.playtime_hours : null,
         mark: editingItem.mark !== '' ? editingItem.mark : null,
         hype: editingItem.hype !== '' ? editingItem.hype : null,
         completion_date: editingItem.completion_date || null, publication_year: editingItem.publication_year !== '' ? editingItem.publication_year : null,
@@ -438,7 +438,7 @@ export function AddGamePage() {
         dlcs: editingItem.dlcs || null,
       } : {
         name, description: description || null, comments: comments || null, image_url: imageUrl || null,
-        status, time_spent: timeSpent || null,
+        status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
         mark: mark !== '' ? mark : null,
         hype: hype !== '' ? hype : null,
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
@@ -597,8 +597,8 @@ export function AddGamePage() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Time Spent</label>
-              <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} />
+              <label className="form-label">Playtime (Hours)</label>
+              <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={playtimeHours} onChange={e => setPlaytimeHours(e.target.value ? Number(e.target.value) : '')} />
             </div>
 
             {(status === 'Finished' || status === 'Stopped') && (
@@ -1024,8 +1024,8 @@ export function AddGamePage() {
 
               {/* Time Spent */}
               <div className="form-group">
-                <label className="form-label">Time Spent</label>
-                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={igdbTimeSpent} onChange={e => setIgdbTimeSpent(e.target.value)} />
+                <label className="form-label">Playtime (Hours)</label>
+                <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={igdbPlaytimeHours} onChange={e => setIgdbPlaytimeHours(e.target.value ? Number(e.target.value) : '')} />
               </div>
 
               {/* Completion Date */}

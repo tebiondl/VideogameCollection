@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Shield } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Shield, BarChart3 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -224,7 +224,7 @@ export function VideogamesDashboard() {
         comments: editingGame.comments || null,
         image_url: editingGame.image_url || null,
         status: editingGame.status,
-        time_spent: editingGame.time_spent || null,
+        playtime_hours: editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : null,
         mark: editingGame.mark || null,
         hype: editingGame.hype || null,
         completion_date: editingGame.completion_date || null,
@@ -381,6 +381,10 @@ export function VideogamesDashboard() {
               Admin Features
             </Link>
           )}
+          <Link to="/dashboard/videogames/analytics" className="btn btn-secondary add-btn">
+            <BarChart3 size={20} />
+            Analytics
+          </Link>
           <button className="btn btn-primary add-btn" onClick={() => setShowAutoFillModal(true)}>
             <Sparkles size={20} />
             Completion
@@ -668,8 +672,8 @@ export function VideogamesDashboard() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Time Spent</label>
-                <input type="text" className="form-input" placeholder="e.g. 50 hrs" value={editingGame.time_spent || ''} onChange={e => setEditingGame({...editingGame, time_spent: e.target.value})} />
+                <label className="form-label">Playtime (Hours)</label>
+                <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={editingGame.playtime_hours !== null && editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : ''} onChange={e => setEditingGame({...editingGame, playtime_hours: e.target.value ? Number(e.target.value) : null})} />
               </div>
 
               {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') && (
