@@ -1037,7 +1037,7 @@ export function AddGamePage() {
               {/* DLCs */}
               <div className="form-group">
                 <label className="form-label">DLCs</label>
-                <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} gameName={igdbName} />
+                <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} gameName={selectedIgdbGame?.name} />
               </div>
 
               {/* Tags */}
