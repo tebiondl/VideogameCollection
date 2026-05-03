@@ -12,6 +12,8 @@ def _run_migrations():
     migrations = [
         "ALTER TABLE videogames ADD COLUMN dlcs TEXT",
         "ALTER TABLE smart_import_items ADD COLUMN dlcs TEXT",
+        "ALTER TABLE videogames ADD COLUMN playtime_hours FLOAT",
+        "ALTER TABLE smart_import_items ADD COLUMN playtime_hours FLOAT",
     ]
     with engine.connect() as conn:
         for stmt in migrations:
