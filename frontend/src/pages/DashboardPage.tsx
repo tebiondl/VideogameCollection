@@ -30,13 +30,13 @@ export function DashboardPage() {
           <p className="text-secondary">Track seasons, episodes, and your watch history.</p>
         </div>
 
-        <div className="glass-card hub-card disabled-card">
+        <Link to="/dashboard/boardgames" className="glass-card hub-card active-card">
           <div className="hub-icon-wrapper pg-boardgames">
             <Library size={48} />
           </div>
-          <h2>Board Games <span className="badge">Soon</span></h2>
+          <h2>Board Games</h2>
           <p className="text-secondary">Catalog your physical board games and game nights.</p>
-        </div>
+        </Link>
 
         <div className="glass-card hub-card disabled-card">
           <div className="hub-icon-wrapper pg-manga">

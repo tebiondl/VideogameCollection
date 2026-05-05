@@ -40,6 +40,7 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
       newTags = [...selectedTags, tagName];
     }
     onChange(newTags.join(', '));
+    setFilter('');
     // Focus back on input after click
     inputRef.current?.focus();
   };

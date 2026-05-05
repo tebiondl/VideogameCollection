@@ -6,15 +6,15 @@ import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
-import { CompletionDatePicker } from '../components/CompletionDatePicker';
-import { DlcEditor } from '../components/DlcEditor';
+
+
 import { useAuth } from '../context/AuthContext';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
 
 // ─── Sort types ────────────────────────────────────────────────────────────────
-type SortField = 'mark' | 'hype' | 'completion_percentage';
+type SortField = 'mark' | 'hype';
 type SortDir = 'asc' | 'desc';
 
 interface SortCriterion {
@@ -29,7 +29,7 @@ const SORT_FIELD_LABELS: Record<SortField, string> = {
   completion_percentage: 'Completion %',
 };
 
-const SORT_FIELDS: SortField[] = ['mark', 'hype', 'completion_percentage'];
+const SORT_FIELDS: SortField[] = ['mark', 'hype'];
 
 let _sortIdCounter = 0;
 const newSortId = () => ++_sortIdCounter;
@@ -54,15 +54,15 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
   });
 }
 
-export function VideogamesDashboard() {
+export function BoardgamesDashboard() {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
   const [searchQuery, setSearchQuery] = useState(() => {
-    return sessionStorage.getItem('vg_searchQuery') || '';
+    return sessionStorage.getItem('bg_searchQuery') || '';
   });
 
   useEffect(() => {
-    sessionStorage.setItem('vg_searchQuery', searchQuery);
+    sessionStorage.setItem('bg_searchQuery', searchQuery);
   }, [searchQuery]);
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -103,7 +103,7 @@ export function VideogamesDashboard() {
   // Filtering System
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filterState, setFilterState] = useState<FilterState>(() => {
-    const saved = sessionStorage.getItem('vg_filterState');
+    const saved = sessionStorage.getItem('bg_filterState');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) {}
     }
@@ -111,7 +111,7 @@ export function VideogamesDashboard() {
   });
 
   useEffect(() => {
-    sessionStorage.setItem('vg_filterState', JSON.stringify(filterState));
+    sessionStorage.setItem('bg_filterState', JSON.stringify(filterState));
   }, [filterState]);
   const [savedFilters, setSavedFilters] = useState<any[]>([]);
 
@@ -125,7 +125,7 @@ export function VideogamesDashboard() {
   useEffect(() => {
     const checkActiveAutoFill = async () => {
       try {
-        const res = await fetchWithAuth('/videogames/auto-fill/status');
+        const res = await fetchWithAuth('/boardgames/auto-fill/status');
         if (res.ok) {
           const data = await res.json();
           if (data && data.status === 'running') {
@@ -143,7 +143,7 @@ export function VideogamesDashboard() {
     if (isAutoFilling) {
       interval = setInterval(async () => {
         try {
-          const res = await fetchWithAuth('/videogames/auto-fill/status');
+          const res = await fetchWithAuth('/boardgames/auto-fill/status');
           if (res.ok) {
             const data = await res.json();
             if (data && data.status) {
@@ -151,7 +151,7 @@ export function VideogamesDashboard() {
               if (data.status === 'done' || data.status === 'error') {
                 setIsAutoFilling(false);
                 clearInterval(interval);
-                const gamesRes = await fetchWithAuth('/videogames/');
+                const gamesRes = await fetchWithAuth('/boardgames/');
                 if (gamesRes.ok) setGames(await gamesRes.json());
                 setTimeout(() => setAutoFillProgress(null), 3000);
               }
@@ -167,7 +167,7 @@ export function VideogamesDashboard() {
 
   // Sort System
   const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>(() => {
-    const saved = sessionStorage.getItem('vg_sortCriteria');
+    const saved = sessionStorage.getItem('bg_sortCriteria');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) {}
     }
@@ -175,7 +175,7 @@ export function VideogamesDashboard() {
   });
 
   useEffect(() => {
-    sessionStorage.setItem('vg_sortCriteria', JSON.stringify(sortCriteria));
+    sessionStorage.setItem('bg_sortCriteria', JSON.stringify(sortCriteria));
   }, [sortCriteria]);
   const [showSortPanel, setShowSortPanel] = useState(false);
   const sortBtnRef = useRef<HTMLButtonElement>(null);
@@ -213,8 +213,8 @@ export function VideogamesDashboard() {
     const fetchGamesAndTags = async () => {
       try {
         const [gamesRes, tagsRes, filtersRes] = await Promise.all([
-           fetchWithAuth('/videogames/'),
-           fetchWithAuth('/videogames/tags'),
+           fetchWithAuth('/boardgames/'),
+           fetchWithAuth('/boardgames/tags'),
            fetchWithAuth('/filters/')
         ]);
         if (gamesRes.ok) setGames(await gamesRes.json());
@@ -232,7 +232,7 @@ export function VideogamesDashboard() {
   const handleDelete = async (gameId: number) => {
     if (!window.confirm("Are you sure you want to delete this game?")) return;
     try {
-      const res = await fetchWithAuth(`/videogames/${gameId}`, { method: 'DELETE' });
+      const res = await fetchWithAuth(`/boardgames/${gameId}`, { method: 'DELETE' });
       if (res.ok) {
         setGames(games.filter(g => g.id !== gameId));
       }
@@ -250,16 +250,11 @@ export function VideogamesDashboard() {
         comments: editingGame.comments || null,
         image_url: editingGame.image_url || null,
         status: editingGame.status,
-        playtime_hours: editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : null,
-        mark: editingGame.mark || null,
-        hype: editingGame.hype || null,
-        completion_date: editingGame.completion_date || null,
-        publication_year: editingGame.publication_year || null,
-        completion_percentage: editingGame.completion_percentage ?? null,
         tags: editingGame.tags || null,
-        dlcs: editingGame.dlcs || null,
+        game_type: editingGame.game_type || null,
+        bgg_link: editingGame.bgg_link || null,
       };
-      const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
+      const res = await fetchWithAuth(`/boardgames/${editingGame.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -307,7 +302,7 @@ export function VideogamesDashboard() {
         game_ids: displayGames.map(g => g.id),
         overwrite: autoFillOverwrite
       };
-      const res = await fetchWithAuth('/videogames/auto-fill', {
+      const res = await fetchWithAuth('/boardgames/auto-fill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -373,23 +368,11 @@ export function VideogamesDashboard() {
      if (filterState.ratingRange.min !== '' && (g.mark === null || g.mark < filterState.ratingRange.min)) return false;
      if (filterState.ratingRange.max !== '' && (g.mark === null || g.mark > filterState.ratingRange.max)) return false;
 
-     const hasPercentage = g.completion_percentage !== null && g.completion_percentage !== undefined;
-     if (!hasPercentage || (g.status !== 'Stopped' && g.status !== 'Finished')) {
-         if (!filterState.completionRange.includeEmpty) return false;
-     } else {
-         const p = g.completion_percentage;
-         if (filterState.completionRange.min !== '' && p < filterState.completionRange.min) return false;
-         if (filterState.completionRange.max !== '' && p > filterState.completionRange.max) return false;
-     }
+     
 
-     if (filterState.playtimeRange.min !== '' && (g.playtime_hours === null || g.playtime_hours < filterState.playtimeRange.min)) return false;
-     if (filterState.playtimeRange.max !== '' && (g.playtime_hours === null || g.playtime_hours > filterState.playtimeRange.max)) return false;
+     
 
-     if (filterState.dateRange.min !== '' || filterState.dateRange.max !== '') {
-         const year = g.completion_date ? parseInt(g.completion_date, 10) : null;
-         if (filterState.dateRange.min !== '' && (year === null || isNaN(year) || year < filterState.dateRange.min)) return false;
-         if (filterState.dateRange.max !== '' && (year === null || isNaN(year) || year > filterState.dateRange.max)) return false;
-     }
+     
 
      const gTags = g.tags ? g.tags.split(',').map((s:string) => s.trim()) : [];
      if (!evaluateTagGroup(filterState.tagQuery, gTags)) return false;
@@ -406,25 +389,22 @@ export function VideogamesDashboard() {
     <div className="container vg-dashboard">
       <header className="vg-header">
         <div>
-          <h1 className="text-gradient">Videogames Tracker</h1>
+          <h1 className="text-gradient">Board Games Vault</h1>
           <p className="text-secondary">Track and manage your collection</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
           {user?.is_admin && (
-            <Link to="/dashboard/admin" className="btn btn-secondary add-btn">
+            <Link to="/dashboard/boardgames/admin" className="btn btn-secondary add-btn">
               <Shield size={20} />
               Admin Features
             </Link>
           )}
-          <Link to="/dashboard/videogames/analytics" className="btn btn-secondary add-btn">
+          <Link to="/dashboard/boardgames/analytics" className="btn btn-secondary add-btn">
             <BarChart3 size={20} />
             Analytics
           </Link>
-          <button className="btn btn-primary add-btn" onClick={() => setShowAutoFillModal(true)}>
-            <Sparkles size={20} />
-            Completion
-          </button>
-          <Link to="/dashboard/videogames/add" className="btn btn-primary add-btn">
+          
+          <Link to="/dashboard/boardgames/add" className="btn btn-primary add-btn">
             <Plus size={20} />
             Add Game
           </Link>

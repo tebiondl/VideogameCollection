@@ -8,6 +8,10 @@ import { AnalyticsDashboard } from './pages/AnalyticsDashboard';
 import { VideogamesDashboard } from './pages/VideogamesDashboard';
 import { AddGamePage } from './pages/AddGamePage';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { BoardgamesDashboard } from './pages/BoardgamesDashboard';
+import { AddBoardgamePage } from './pages/AddBoardgamePage';
+import { BoardgameAnalyticsDashboard } from './pages/BoardgameAnalyticsDashboard';
+import { AdminBoardgamesDashboard } from './pages/AdminBoardgamesDashboard';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -54,6 +58,38 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <AddGamePage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/boardgames" 
+            element={
+              <ProtectedRoute>
+                <BoardgamesDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/boardgames/add" 
+            element={
+              <ProtectedRoute>
+                <AddBoardgamePage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/boardgames/admin" 
+            element={
+              <ProtectedRoute>
+                <AdminBoardgamesDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dashboard/boardgames/analytics" 
+            element={
+              <ProtectedRoute>
+                <BoardgameAnalyticsDashboard />
               </ProtectedRoute>
             } 
           />
