@@ -4,6 +4,7 @@ import { ArrowLeft, Upload, Loader2, X, Check, Edit2, Search, Gamepad2, HelpCirc
 import { fetchWithAuth } from '../lib/api';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { CompletionDatePicker } from '../components/CompletionDatePicker';
 
 
 import './AddGamePage.css';
@@ -39,7 +40,8 @@ export function AddBoardgamePage() {
   const [pubYear, setPubYear] = useState<number | ''>('');
   const [completionPercentage, setCompletionPercentage] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
-  const [dlcs, setDlcs] = useState('');
+  const [gameType, setGameType] = useState('');
+  const [bggLink, setBggLink] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // -------------------------
@@ -58,7 +60,8 @@ export function AddBoardgamePage() {
   const [igdbCompletionDate, setIgdbCompletionDate] = useState('');
   const [igdbCompletionPct, setIgdbCompletionPct] = useState<number | ''>('');
   const [igdbTags, setIgdbTags] = useState<string[]>([]);
-  const [igdbDlcs, setIgdbDlcs] = useState('');
+  const [igdbGameType, setIgdbGameType] = useState('');
+  const [igdbBggLink, setIgdbBggLink] = useState('');
   const [igdbComments, setIgdbComments] = useState('');
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -130,7 +133,8 @@ export function AddBoardgamePage() {
     setIgdbCompletionDate('');
     setIgdbCompletionPct('');
     setIgdbTags([]);
-    setIgdbDlcs('');
+    setIgdbGameType('');
+    setIgdbBggLink('');
     setIgdbComments('');
   };
 
@@ -159,7 +163,8 @@ export function AddBoardgamePage() {
         publication_year: selectedIgdbGame.release_year || null,
         completion_percentage: igdbCompletionPct !== '' ? igdbCompletionPct : null,
         tags: igdbTags.length > 0 ? igdbTags.join(',') : null,
-        dlcs: igdbDlcs || null,
+        game_type: igdbGameType || null,
+        bgg_link: igdbBggLink || null,
       };
       const res = await fetchWithAuth('/boardgames/', {
         method: 'POST',
@@ -405,7 +410,8 @@ export function AddBoardgamePage() {
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null,
-        dlcs: dlcs || null,
+        game_type: gameType || null,
+        bgg_link: bggLink || null,
       };
 
       const res = await fetchWithAuth('/boardgames/', {
@@ -435,7 +441,8 @@ export function AddBoardgamePage() {
         completion_date: editingItem.completion_date || null, publication_year: editingItem.publication_year !== '' ? editingItem.publication_year : null,
         completion_percentage: editingItem.completion_percentage ?? null,
         tags: editingItem.tags || null,
-        dlcs: editingItem.dlcs || null,
+        game_type: editingItem.game_type || null,
+        bgg_link: editingItem.bgg_link || null,
       } : {
         name, description: description || null, comments: comments || null, image_url: imageUrl || null,
         status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
@@ -444,7 +451,8 @@ export function AddBoardgamePage() {
         completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null,
-        dlcs: dlcs || null,
+        game_type: gameType || null,
+        bgg_link: bggLink || null,
       };
 
       const res = await fetchWithAuth(`/boardgames/${gameId}`, {
@@ -567,12 +575,12 @@ export function AddBoardgamePage() {
                 <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                     <input 
                         type="checkbox" 
-                        checked={(formData.game_type || '').includes(type)}
+                        checked={(gameType || '').includes(type)}
                         onChange={(e) => {
-                            let types = (formData.game_type || '').split(',').map(s=>s.trim()).filter(Boolean);
+                            let types = (gameType || '').split(',').map((s: string)=>s.trim()).filter(Boolean);
                             if (e.target.checked) types.push(type);
-                            else types = types.filter(t => t !== type);
-                            setFormData({...formData, game_type: types.join(', ')});
+                            else types = types.filter((t: string) => t !== type);
+                            setGameType(types.join(', '));
                         }}
                     />
                     {type}
@@ -582,7 +590,7 @@ export function AddBoardgamePage() {
     </div>
     <div className="form-group">
         <label className="form-label">BGG Link</label>
-        <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={formData.bgg_link || ''} onChange={e => setFormData({...formData, bgg_link: e.target.value})} />
+        <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={bggLink || ''} onChange={e => setBggLink(e.target.value)} />
     </div>
     
           </div>
@@ -1065,12 +1073,12 @@ export function AddBoardgamePage() {
                 <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                     <input 
                         type="checkbox" 
-                        checked={(formData.game_type || '').includes(type)}
+                        checked={(gameType || '').includes(type)}
                         onChange={(e) => {
-                            let types = (formData.game_type || '').split(',').map(s=>s.trim()).filter(Boolean);
+                            let types = (gameType || '').split(',').map((s: string)=>s.trim()).filter(Boolean);
                             if (e.target.checked) types.push(type);
-                            else types = types.filter(t => t !== type);
-                            setFormData({...formData, game_type: types.join(', ')});
+                            else types = types.filter((t: string) => t !== type);
+                            setGameType(types.join(', '));
                         }}
                     />
                     {type}
@@ -1080,7 +1088,7 @@ export function AddBoardgamePage() {
     </div>
     <div className="form-group">
         <label className="form-label">BGG Link</label>
-        <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={formData.bgg_link || ''} onChange={e => setFormData({...formData, bgg_link: e.target.value})} />
+        <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={bggLink || ''} onChange={e => setBggLink(e.target.value)} />
     </div>
     
 
@@ -1185,12 +1193,28 @@ export function AddBoardgamePage() {
             </div>
 
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-              <label className="form-label">DLCs</label>
-              <DlcEditor
-                value={editingItem.dlcs || ''}
-                onChange={(val) => setEditingItem({ ...editingItem, dlcs: val })}
-                gameName={editingItem.name}
-              />
+              <label className="form-label">Game Type</label>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                  {['Competitive', 'Cooperative', 'Solo'].map(type => (
+                      <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                          <input 
+                              type="checkbox" 
+                              checked={(editingItem.game_type || '').includes(type)}
+                              onChange={(e) => {
+                                  let types = (editingItem.game_type || '').split(',').map((s: string)=>s.trim()).filter(Boolean);
+                                  if (e.target.checked) types.push(type);
+                                  else types = types.filter((t: string) => t !== type);
+                                  setEditingItem({...editingItem, game_type: types.join(', ')});
+                              }}
+                          />
+                          {type}
+                      </label>
+                  ))}
+              </div>
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">BGG Link</label>
+              <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={editingItem.bgg_link || ''} onChange={e => setEditingItem({...editingItem, bgg_link: e.target.value})} />
             </div>
 
             <div className="modal-actions" style={{ marginTop: '2rem' }}>

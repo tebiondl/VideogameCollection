@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Shield, BarChart3 } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle,  Shield, BarChart3 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
 
@@ -26,7 +27,7 @@ interface SortCriterion {
 const SORT_FIELD_LABELS: Record<SortField, string> = {
   mark: 'Rating',
   hype: 'Hype',
-  completion_percentage: 'Completion %',
+  
 };
 
 const SORT_FIELDS: SortField[] = ['mark', 'hype'];
@@ -650,8 +651,28 @@ export function BoardgamesDashboard() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">DLCs</label>
-                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} />
+                <label className="form-label">Game Type</label>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                    {['Competitive', 'Cooperative', 'Solo'].map(type => (
+                        <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                            <input 
+                                type="checkbox" 
+                                checked={(editingGame.game_type || '').includes(type)}
+                                onChange={(e) => {
+                                    let types = (editingGame.game_type || '').split(',').map((s: string)=>s.trim()).filter(Boolean);
+                                    if (e.target.checked) types.push(type);
+                                    else types = types.filter((t: string) => t !== type);
+                                    setEditingGame({...editingGame, game_type: types.join(', ')});
+                                }}
+                            />
+                            {type}
+                        </label>
+                    ))}
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">BGG Link</label>
+                <input type="url" className="form-input" placeholder="https://boardgamegeek.com/boardgame/..." value={editingGame.bgg_link || ''} onChange={e => setEditingGame({...editingGame, bgg_link: e.target.value})} />
               </div>
             </div>
 

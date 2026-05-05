@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchWithAuth } from '../lib/api';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, Target, Clock, Trophy, Gamepad2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Target,  Trophy, Gamepad2 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
