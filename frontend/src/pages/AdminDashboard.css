@@ -1,0 +1,104 @@
+.admin-tag-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.admin-icon-button,
+.admin-modal-close {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.admin-icon-button:hover { color: white; border-color: #6b7280; }
+.admin-icon-button.success:hover { color: #4ade80; border-color: #4ade80; }
+.admin-icon-button.danger:hover { color: #f87171; border-color: #ef4444; }
+.admin-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-tag-edit-input { max-width: 480px; }
+
+.admin-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(3, 5, 10, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.admin-tag-modal {
+  width: min(680px, 100%);
+  max-height: min(820px, 92vh);
+  overflow: auto;
+  padding: 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: #171a21;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+
+.admin-modal-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1rem;
+  align-items: start;
+}
+
+.admin-modal-header h2 { font-size: 1.45rem; margin: 0.15rem 0 0.45rem; }
+.admin-warning-icon { padding: 0.7rem; color: #fbbf24; background: rgba(251, 191, 36, 0.12); border-radius: 12px; }
+.admin-eyebrow { color: #fbbf24; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.admin-modal-close { background: transparent; }
+
+.admin-affected-games {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  max-height: 240px;
+  overflow: auto;
+  margin: 1.4rem 0;
+  padding-right: 0.25rem;
+}
+
+.admin-affected-game {
+  display: flex;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.admin-affected-game img,
+.admin-game-placeholder { width: 42px; height: 52px; flex: 0 0 auto; border-radius: 6px; object-fit: cover; }
+.admin-game-placeholder { display: flex; align-items: center; justify-content: center; color: var(--text-muted); background: var(--bg-tertiary); }
+.admin-affected-game div:last-child { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.admin-affected-game strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-affected-game span { color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.admin-replacement-panel { padding: 1rem; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(37, 42, 51, 0.45); }
+.admin-mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.9rem; }
+.admin-mode-toggle button { display: flex; align-items: center; justify-content: center; gap: 0.45rem; padding: 0.65rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; }
+.admin-mode-toggle button.active { color: white; border-color: var(--accent-primary); background: rgba(99, 102, 241, 0.16); }
+.admin-mode-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
+.admin-atomic-note { margin-top: 0.7rem; color: var(--text-muted); font-size: 0.82rem; }
+.admin-modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.4rem; }
+
+@media (max-width: 620px) {
+  .admin-affected-games { grid-template-columns: 1fr; }
+  .admin-modal-header { grid-template-columns: auto 1fr; }
+  .admin-modal-close { position: absolute; right: 2rem; }
+  .admin-modal-actions { flex-direction: column-reverse; }
+  .admin-modal-actions .btn { width: 100%; }
+}

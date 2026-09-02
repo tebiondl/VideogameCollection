@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Annotated
 import difflib
+import json
 import os
 import logging
 import httpx
@@ -17,6 +18,59 @@ router = APIRouter(prefix="/api/videogames", tags=["videogames"])
 
 # In-memory progress tracker { user_id: { total, completed, status } }
 auto_fill_progress = {}
+
+
+def _read_tag_names(raw_tags: str | None) -> tuple[list[str], bool]:
+    """Return normalized tag values and whether the source used JSON storage."""
+    if not raw_tags:
+        return [], False
+    try:
+        decoded = json.loads(raw_tags)
+        if isinstance(decoded, list) and all(isinstance(value, str) for value in decoded):
+            return [value.strip() for value in decoded if value.strip()], True
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [value.strip() for value in raw_tags.split(",") if value.strip()], False
+
+
+def _write_tag_names(tag_names: list[str], as_json: bool) -> str | None:
+    if not tag_names:
+        return None
+    return json.dumps(tag_names) if as_json else ",".join(tag_names)
+
+
+def _game_has_tag(game: models.Videogame, tag_name: str) -> bool:
+    names, _ = _read_tag_names(game.tags)
+    target = tag_name.casefold()
+    return any(name.casefold() == target for name in names)
+
+
+def _replace_game_tag(game: models.Videogame, old_name: str, new_name: str) -> bool:
+    names, as_json = _read_tag_names(game.tags)
+    old_key = old_name.casefold()
+    new_key = new_name.casefold()
+    replaced = False
+    updated: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        value = new_name if name.casefold() == old_key else name
+        if name.casefold() == old_key:
+            replaced = True
+        if value.casefold() not in seen:
+            updated.append(value)
+            seen.add(value.casefold())
+    if replaced:
+        game.tags = _write_tag_names(updated, as_json)
+    return replaced
+
+
+def _clean_tag_name(name: str) -> str:
+    cleaned = name.strip()
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="Tag name cannot be empty")
+    if "," in cleaned:
+        raise HTTPException(status_code=422, detail="Tag names cannot contain commas")
+    return cleaned
 
 from typing import Optional
 
@@ -203,11 +257,137 @@ def create_global_tag(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized to create global tags")
         
-    db_tag = models.Tag(name=tag.name, user_id=None)
+    tag_name = _clean_tag_name(tag.name)
+    existing = db.query(models.Tag).filter(models.Tag.user_id == None).all()
+    if any(item.name.casefold() == tag_name.casefold() for item in existing):
+        raise HTTPException(status_code=409, detail="A global tag with this name already exists")
+
+    db_tag = models.Tag(name=tag_name, user_id=None)
     db.add(db_tag)
     db.commit()
     db.refresh(db_tag)
     return db_tag
+
+
+@router.put("/tags/{tag_id}", response_model=schemas.TagResponse)
+def update_tag(
+    tag_id: int,
+    tag_update: schemas.TagUpdate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not db_tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if db_tag.user_id is None and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to edit global tags")
+    if db_tag.user_id is not None and db_tag.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to edit this tag")
+
+    new_name = _clean_tag_name(tag_update.name)
+    sibling_tags = db.query(models.Tag).filter(
+        models.Tag.id != tag_id,
+        models.Tag.user_id == db_tag.user_id,
+    ).all()
+    if any(item.name.casefold() == new_name.casefold() for item in sibling_tags):
+        raise HTTPException(status_code=409, detail="A tag with this name already exists")
+
+    old_name = db_tag.name
+    if old_name.casefold() != new_name.casefold() or old_name != new_name:
+        games_query = db.query(models.Videogame)
+        imports_query = db.query(models.SmartImportItem)
+        if db_tag.user_id is not None:
+            games_query = games_query.filter(models.Videogame.user_id == db_tag.user_id)
+            imports_query = imports_query.join(models.SmartImportSession).filter(
+                models.SmartImportSession.user_id == db_tag.user_id
+            )
+        for game in games_query.all():
+            _replace_game_tag(game, old_name, new_name)
+        for item in imports_query.all():
+            names, as_json = _read_tag_names(item.tags)
+            old_key = old_name.casefold()
+            if any(name.casefold() == old_key for name in names):
+                updated = [new_name if name.casefold() == old_key else name for name in names]
+                item.tags = _write_tag_names(list(dict.fromkeys(updated)), as_json)
+        db_tag.name = new_name
+
+    db.commit()
+    db.refresh(db_tag)
+    return db_tag
+
+
+@router.get("/tags/{tag_id}/usage", response_model=schemas.TagUsageResponse)
+def get_tag_usage(
+    tag_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not db_tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if db_tag.user_id is None and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to inspect this global tag")
+    if db_tag.user_id is not None and db_tag.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to inspect this tag")
+
+    query = db.query(models.Videogame, models.User.username).join(
+        models.User, models.User.id == models.Videogame.user_id
+    )
+    if db_tag.user_id is not None:
+        query = query.filter(models.Videogame.user_id == db_tag.user_id)
+    games = [
+        {
+            "id": game.id,
+            "name": game.name,
+            "user_id": game.user_id,
+            "username": username,
+            "image_url": game.image_url,
+            "status": game.status,
+        }
+        for game, username in query.all()
+        if _game_has_tag(game, db_tag.name)
+    ]
+    return {"tag": db_tag, "games": games}
+
+
+@router.post("/tags/{tag_id}/reassign", response_model=schemas.TagResponse)
+def reassign_and_delete_tag(
+    tag_id: int,
+    reassignment: schemas.TagReassignment,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db)
+):
+    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not db_tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if db_tag.user_id is None and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized to delete global tags")
+    if db_tag.user_id is not None and db_tag.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this tag")
+
+    replacement_name = _clean_tag_name(reassignment.replacement_name)
+    if replacement_name.casefold() == db_tag.name.casefold():
+        raise HTTPException(status_code=422, detail="Choose a different replacement tag")
+
+    replacement_tag = next((
+        item for item in db.query(models.Tag).filter(models.Tag.user_id == db_tag.user_id).all()
+        if item.id != tag_id and item.name.casefold() == replacement_name.casefold()
+    ), None)
+    if replacement_tag is None:
+        replacement_tag = models.Tag(name=replacement_name, user_id=db_tag.user_id)
+        db.add(replacement_tag)
+        db.flush()
+
+    games_query = db.query(models.Videogame)
+    if db_tag.user_id is not None:
+        games_query = games_query.filter(models.Videogame.user_id == db_tag.user_id)
+    for game in games_query.all():
+        _replace_game_tag(game, db_tag.name, replacement_tag.name)
+
+    db.delete(db_tag)
+    db.commit()
+    db.refresh(replacement_tag)
+    return replacement_tag
 
 @router.delete("/tags/{tag_id}")
 def delete_tag(
@@ -225,6 +405,15 @@ def delete_tag(
     elif db_tag.user_id is not None and db_tag.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this tag")
         
+    games_query = db.query(models.Videogame)
+    if db_tag.user_id is not None:
+        games_query = games_query.filter(models.Videogame.user_id == db_tag.user_id)
+    if any(_game_has_tag(game, db_tag.name) for game in games_query.all()):
+        raise HTTPException(
+            status_code=409,
+            detail="This tag is still assigned to games. Reassign those games before deleting it."
+        )
+
     db.delete(db_tag)
     db.commit()
     return {"status": "ok"}

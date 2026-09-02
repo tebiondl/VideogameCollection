@@ -14,6 +14,7 @@ class User(Base):
 
     videogames = relationship("Videogame", back_populates="owner")
     boardgames = relationship("Boardgame", back_populates="owner")
+    boardgame_matches = relationship("BoardgameMatch", back_populates="owner", cascade="all, delete-orphan")
 
 class Videogame(Base):
     __tablename__ = "videogames"
@@ -104,8 +105,35 @@ class Boardgame(Base):
     tags = Column(String, nullable=True)
     game_type = Column(String, nullable=True) # competitive, cooperative, solo (comma separated)
     bgg_link = Column(String, nullable=True)
+    library_section = Column(String, nullable=False, default="owned") # wishlist | owned
+    bgg_id = Column(Integer, nullable=True)
+    bgg_rank = Column(Integer, nullable=True)
+    price = Column(Float, nullable=True)
+    expansions = Column(String, nullable=True) # JSON array of manually entered expansion names
+    is_expansion = Column(Boolean, nullable=False, default=False)
+    parent_game_name = Column(String, nullable=True)
 
     owner = relationship("User", back_populates="boardgames")
+    matches = relationship("BoardgameMatch", back_populates="boardgame", cascade="all, delete-orphan")
+
+
+class BoardgameMatch(Base):
+    __tablename__ = "boardgame_matches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    boardgame_id = Column(Integer, ForeignKey("boardgames.id"), nullable=False)
+    played_with = Column(String, nullable=True) # JSON array of player names
+    mode = Column(String, nullable=False) # cooperative | competitive | solo
+    result = Column(String, nullable=True) # victory | defeat | winner | incomplete
+    winner_name = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
+    played_date = Column(String, nullable=True) # YYYY-MM-DD; legacy imports use an empty value when unknown
+    import_key = Column(String, nullable=True, index=True) # Stable workbook row key for idempotent imports
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("User", back_populates="boardgame_matches")
+    boardgame = relationship("Boardgame", back_populates="matches")
 
 class BoardgameSmartImportSession(Base):
     __tablename__ = "boardgame_smart_import_sessions"

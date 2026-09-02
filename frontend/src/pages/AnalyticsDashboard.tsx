@@ -1,15 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchWithAuth } from '../lib/api';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, Target, Clock, Trophy, Gamepad2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Target, Clock, Trophy, Gamepad2, Sparkles } from 'lucide-react';
+import { YearlyRewind, type RewindGame } from '../components/YearlyRewind';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 
 export function AnalyticsDashboard() {
-  const [games, setGames] = useState<any[]>([]);
+  const [games, setGames] = useState<RewindGame[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showRewind, setShowRewind] = useState(false);
 
   useEffect(() => {
     const loadGames = async () => {
@@ -26,7 +28,7 @@ export function AnalyticsDashboard() {
   }, []);
 
   const stats = useMemo(() => {
-    let totalGames = games.length;
+    const totalGames = games.length;
     let totalPlaytime = 0;
     let totalScore = 0;
     let scoredGamesCount = 0;
@@ -69,6 +71,10 @@ export function AnalyticsDashboard() {
 
   const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#d0ed57'];
 
+  if (showRewind && !isLoading) {
+    return <YearlyRewind games={games} onClose={() => setShowRewind(false)} />;
+  }
+
   return (
     <div className="container dashboard-hub">
       <div style={{ marginBottom: '1.5rem' }}>
@@ -81,6 +87,15 @@ export function AnalyticsDashboard() {
       <header className="hub-header" style={{ marginBottom: '2rem' }}>
         <h1 className="text-gradient">Analytics Dashboard</h1>
         <p className="text-secondary">Visualize your tracking data</p>
+        <button
+          className="btn btn-primary"
+          onClick={() => setShowRewind(true)}
+          disabled={isLoading}
+          style={{ marginTop: '1.25rem', padding: '0.85rem 1.35rem', background: 'linear-gradient(115deg, #7c3aed, #2563eb)' }}
+        >
+          <Sparkles size={19} />
+          Open Yearly Rewind
+        </button>
       </header>
 
       {isLoading ? (
@@ -113,7 +128,7 @@ export function AnalyticsDashboard() {
               <h3 style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Status Breakdown</h3>
               <div style={{ width: '100%', height: 300 }}>
                 {stats.statusData.length > 0 ? (
-                  <ResponsiveContainer>
+                  <ResponsiveContainer minWidth={0}>
                     <PieChart>
                       <Pie data={stats.statusData} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name} ${percent ? (percent * 100).toFixed(0) : 0}%`} outerRadius={100} fill="#8884d8" dataKey="value">
                         {stats.statusData.map((_, index) => (
@@ -131,7 +146,7 @@ export function AnalyticsDashboard() {
             <div className="glass-card" style={{ padding: '1.5rem' }}>
               <h3 style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Rating Distribution</h3>
               <div style={{ width: '100%', height: 300 }}>
-                <ResponsiveContainer>
+                <ResponsiveContainer minWidth={0}>
                   <BarChart data={stats.ratingData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
                     <XAxis dataKey="rating" stroke="var(--text-muted)" />

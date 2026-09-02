@@ -78,6 +78,24 @@ class SmartImportItemUpdate(VideogameBase):
 class TagCreate(BaseModel):
     name: str
 
+class TagUpdate(BaseModel):
+    name: str
+
+class TagReassignment(BaseModel):
+    replacement_name: str
+
+class TagGameUsage(BaseModel):
+    id: int
+    name: str
+    user_id: int
+    username: str
+    image_url: str | None = None
+    status: str
+
+class TagUsageResponse(BaseModel):
+    tag: "TagResponse"
+    games: list[TagGameUsage]
+
 class TagResponse(BaseModel):
     id: int
     name: str
@@ -114,12 +132,23 @@ class BoardgameBase(BaseModel):
     tags: str | None = None
     game_type: str | None = None
     bgg_link: str | None = None
+    library_section: str = "owned"
+    bgg_id: int | None = None
+    bgg_rank: int | None = None
+    price: float | None = None
+    expansions: str | None = None
+    is_expansion: bool = False
+    parent_game_name: str | None = None
 
 class BoardgameCreate(BoardgameBase):
     pass
 
 class BoardgameUpdate(BoardgameBase):
     id: int
+
+
+class BoardgameExpansionAttach(BaseModel):
+    parent_game_id: int
 
 class BoardgameResponse(BoardgameBase):
     id: int
@@ -150,6 +179,24 @@ class BoardgameSmartImportItemUpdate(BoardgameBase):
 class BoardgameTagCreate(BaseModel):
     name: str
 
+class BoardgameTagUpdate(BaseModel):
+    name: str
+
+class BoardgameTagReassignment(BaseModel):
+    replacement_name: str
+
+class BoardgameTagGameUsage(BaseModel):
+    id: int
+    name: str
+    user_id: int
+    username: str
+    image_url: str | None = None
+    status: str
+
+class BoardgameTagUsageResponse(BaseModel):
+    tag: "BoardgameTagResponse"
+    games: list[BoardgameTagGameUsage]
+
 class BoardgameTagResponse(BaseModel):
     id: int
     name: str
@@ -169,3 +216,47 @@ class BoardgameSavedFilterResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class BoardgameMatchBase(BaseModel):
+    boardgame_id: int
+    played_with: str | None = None
+    mode: str
+    result: str | None = None
+    winner_name: str | None = None
+    comments: str | None = None
+    played_date: str | None = None
+
+
+class BoardgameMatchCreate(BoardgameMatchBase):
+    pass
+
+
+class BoardgameMatchResponse(BoardgameMatchBase):
+    id: int
+    user_id: int
+    game_name: str
+    game_image_url: str | None = None
+    game_tags: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class BggSearchResult(BaseModel):
+    id: int
+    name: str
+    year_published: int | None = None
+    item_type: str | None = None
+
+
+class BggGameMetadata(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    image_url: str | None = None
+    thumbnail_url: str | None = None
+    year_published: int | None = None
+    rank: int | None = None
+    bgg_link: str
+    is_expansion: bool = False
