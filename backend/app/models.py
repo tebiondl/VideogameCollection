@@ -13,6 +13,8 @@ class User(Base):
     is_admin = Column(Boolean, nullable=False, default=False)
 
     videogames = relationship("Videogame", back_populates="owner")
+    boardgames = relationship("Boardgame", back_populates="owner")
+    boardgame_matches = relationship("BoardgameMatch", back_populates="owner", cascade="all, delete-orphan")
 
 class Videogame(Base):
     __tablename__ = "videogames"
@@ -86,3 +88,97 @@ class SavedFilter(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
     filter_data = Column(String, nullable=False) # JSON blob of the filter state
+
+class Boardgame(Base):
+    __tablename__ = "boardgames"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, index=True, nullable=False)
+    description = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="Not Started")
+    mark = Column(Integer, nullable=True)  # 1 to 10
+    hype = Column(Integer, nullable=True)  # 1 to 10
+    publication_year = Column(Integer, nullable=True)
+    tags = Column(String, nullable=True)
+    game_type = Column(String, nullable=True) # competitive, cooperative, solo (comma separated)
+    bgg_link = Column(String, nullable=True)
+    library_section = Column(String, nullable=False, default="owned") # wishlist | owned
+    bgg_id = Column(Integer, nullable=True)
+    bgg_rank = Column(Integer, nullable=True)
+    price = Column(Float, nullable=True)
+    expansions = Column(String, nullable=True) # JSON array of manually entered expansion names
+    is_expansion = Column(Boolean, nullable=False, default=False)
+    parent_game_name = Column(String, nullable=True)
+
+    owner = relationship("User", back_populates="boardgames")
+    matches = relationship("BoardgameMatch", back_populates="boardgame", cascade="all, delete-orphan")
+
+
+class BoardgameMatch(Base):
+    __tablename__ = "boardgame_matches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    boardgame_id = Column(Integer, ForeignKey("boardgames.id"), nullable=False)
+    played_with = Column(String, nullable=True) # JSON array of player names
+    mode = Column(String, nullable=False) # cooperative | competitive | solo
+    result = Column(String, nullable=True) # victory | defeat | winner | incomplete
+    winner_name = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
+    played_date = Column(String, nullable=True) # YYYY-MM-DD; legacy imports use an empty value when unknown
+    import_key = Column(String, nullable=True, index=True) # Stable workbook row key for idempotent imports
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("User", back_populates="boardgame_matches")
+    boardgame = relationship("Boardgame", back_populates="matches")
+
+class BoardgameSmartImportSession(Base):
+    __tablename__ = "boardgame_smart_import_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String, nullable=False, default="processing")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    raw_ai_response = Column(String, nullable=True)
+    
+    items = relationship("BoardgameSmartImportItem", back_populates="session", cascade="all, delete-orphan")
+
+class BoardgameSmartImportItem(Base):
+    __tablename__ = "boardgame_smart_import_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("boardgame_smart_import_sessions.id"), nullable=False)
+    review_status = Column(String, nullable=False, default="pending")
+    
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    comments = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="Not Started")
+    mark = Column(Integer, nullable=True)
+    hype = Column(Integer, nullable=True)
+    publication_year = Column(Integer, nullable=True)
+    tags = Column(String, nullable=True)
+    game_type = Column(String, nullable=True)
+    bgg_link = Column(String, nullable=True)
+
+    session = relationship("BoardgameSmartImportSession", back_populates="items")
+
+class BoardgameTag(Base):
+    __tablename__ = "boardgame_tags"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+class BoardgameSavedFilter(Base):
+    __tablename__ = "boardgame_saved_filters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    filter_data = Column(String, nullable=False)
+

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Navigate, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Gamepad2, Tag as TagIcon } from 'lucide-react';
+import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Dices, Tag as TagIcon } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
@@ -27,13 +27,12 @@ interface TagUsage {
   games: TagUsageGame[];
 }
 
-export function AdminDashboard() {
+export function AdminBoardgamesDashboard() {
   const { user } = useAuth();
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newTagName, setNewTagName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isMigrating, setIsMigrating] = useState(false);
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [editingTagName, setEditingTagName] = useState('');
   const [isSavingTag, setIsSavingTag] = useState(false);
@@ -43,6 +42,7 @@ export function AdminDashboard() {
   const [replacementTagName, setReplacementTagName] = useState('');
   const [newReplacementTagName, setNewReplacementTagName] = useState('');
   const [isReassigning, setIsReassigning] = useState(false);
+  
 
   useEffect(() => {
     fetchTags();
@@ -51,7 +51,7 @@ export function AdminDashboard() {
   async function fetchTags() {
     setIsLoading(true);
     try {
-      const res = await fetchWithAuth('/videogames/tags');
+      const res = await fetchWithAuth('/boardgames/tags');
       if (res.ok) {
         const data: Tag[] = await res.json();
         // Filter only global tags
@@ -62,7 +62,7 @@ export function AdminDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }
+  };
 
   const handleAddTag = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +70,7 @@ export function AdminDashboard() {
 
     setIsSubmitting(true);
     try {
-      const res = await fetchWithAuth('/videogames/tags/global', {
+      const res = await fetchWithAuth('/boardgames/tags/global', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newTagName.trim() })
@@ -95,7 +95,7 @@ export function AdminDashboard() {
   const startEditingTag = (tag: Tag) => {
     setEditingTagId(tag.id);
     setEditingTagName(tag.name);
-  };
+  }
 
   const handleSaveTag = async (tag: Tag) => {
     const nextName = editingTagName.trim();
@@ -105,7 +105,7 @@ export function AdminDashboard() {
     }
     setIsSavingTag(true);
     try {
-      const res = await fetchWithAuth(`/videogames/tags/${tag.id}`, {
+      const res = await fetchWithAuth(`/boardgames/tags/${tag.id}`, {
         method: 'PUT',
         body: JSON.stringify({ name: nextName })
       });
@@ -128,10 +128,9 @@ export function AdminDashboard() {
   const deleteUnusedTag = async (tag: Tag) => {
     if (!window.confirm(`Delete the unused “${tag.name}” tag?`)) return;
     try {
-      const res = await fetchWithAuth(`/videogames/tags/${tag.id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setTags(current => current.filter(item => item.id !== tag.id));
-      } else {
+      const res = await fetchWithAuth(`/boardgames/tags/${tag.id}`, { method: 'DELETE' });
+      if (res.ok) setTags(current => current.filter(item => item.id !== tag.id));
+      else {
         const data = await res.json().catch(() => null);
         alert(data?.detail || 'Failed to delete tag.');
       }
@@ -144,7 +143,7 @@ export function AdminDashboard() {
   const handleDeleteTag = async (tag: Tag) => {
     setIsCheckingUsage(tag.id);
     try {
-      const res = await fetchWithAuth(`/videogames/tags/${tag.id}/usage`);
+      const res = await fetchWithAuth(`/boardgames/tags/${tag.id}/usage`);
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         alert(data?.detail || 'Could not check where this tag is used.');
@@ -170,16 +169,12 @@ export function AdminDashboard() {
 
   const handleReassignAndDelete = async () => {
     if (!tagUsage) return;
-    const replacementName = replacementMode === 'existing'
-      ? replacementTagName
-      : newReplacementTagName.trim();
+    const replacementName = replacementMode === 'existing' ? replacementTagName : newReplacementTagName.trim();
     if (!replacementName) return;
-
     setIsReassigning(true);
     try {
-      const res = await fetchWithAuth(`/videogames/tags/${tagUsage.tag.id}/reassign`, {
-        method: 'POST',
-        body: JSON.stringify({ replacement_name: replacementName })
+      const res = await fetchWithAuth(`/boardgames/tags/${tagUsage.tag.id}/reassign`, {
+        method: 'POST', body: JSON.stringify({ replacement_name: replacementName })
       });
       if (res.ok) {
         await fetchTags();
@@ -196,28 +191,7 @@ export function AdminDashboard() {
     }
   };
 
-  const handleMigratePlaytime = async () => {
-    if (!window.confirm("Are you sure you want to run the AI migration for playtime? This might take a while if there are many games.")) return;
-    
-    setIsMigrating(true);
-    try {
-      const res = await fetchWithAuth('/videogames/admin/migrate-playtime', {
-        method: 'POST'
-      });
-      
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.message + ". Games migrated: " + data.migrated);
-      } else {
-        alert('Migration failed: ' + data.detail);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error during migration');
-    } finally {
-      setIsMigrating(false);
-    }
-  };
+  
 
   // Restrict access to admin only
   if (user && !user.is_admin) {
@@ -227,7 +201,7 @@ export function AdminDashboard() {
   return (
     <div className="container dashboard-hub">
       <div style={{ marginBottom: '1.5rem' }}>
-        <Link to="/dashboard/videogames" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
+        <Link to="/dashboard/boardgames" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
           <ArrowLeft size={18} />
           Back to Tracker
         </Link>
@@ -242,22 +216,7 @@ export function AdminDashboard() {
       </header>
 
       <div style={{ maxWidth: '760px', margin: '2rem auto 0', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <div className="glass-card" style={{ padding: '2rem' }}>
-          <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Data Management
-          </h2>
-          <p className="text-secondary" style={{ marginBottom: '1.5rem' }}>
-            Use AI to intelligently parse legacy string "time spent" entries into numeric playtime hours.
-          </p>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleMigratePlaytime}
-            disabled={isMigrating}
-            style={{ width: '100%', justifyContent: 'center' }}
-          >
-            {isMigrating ? <><Loader2 size={18} className="spinner" /> Migrating Data...</> : 'Migrate Playtime Data'}
-          </button>
-        </div>
+        
 
         <div className="glass-card" style={{ padding: '2rem' }}>
           <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -300,37 +259,19 @@ export function AdminDashboard() {
                   border: '1px solid var(--border-color)'
                 }}>
                   {editingTagId === tag.id ? (
-                    <input
-                      className="form-input admin-tag-edit-input"
-                      value={editingTagName}
-                      onChange={event => setEditingTagName(event.target.value)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') handleSaveTag(tag);
-                        if (event.key === 'Escape') setEditingTagId(null);
-                      }}
-                      autoFocus
-                    />
+                    <input className="form-input admin-tag-edit-input" value={editingTagName} onChange={event => setEditingTagName(event.target.value)} onKeyDown={event => {
+                      if (event.key === 'Enter') handleSaveTag(tag);
+                      if (event.key === 'Escape') setEditingTagId(null);
+                    }} autoFocus />
                   ) : <span style={{ fontWeight: 500 }}>{tag.name}</span>}
                   <div className="admin-tag-actions">
-                    {editingTagId === tag.id ? (
-                      <>
-                        <button className="admin-icon-button success" onClick={() => handleSaveTag(tag)} disabled={isSavingTag || !editingTagName.trim()} title="Save tag name">
-                          {isSavingTag ? <Loader2 size={18} className="spinner" /> : <Check size={18} />}
-                        </button>
-                        <button className="admin-icon-button" onClick={() => setEditingTagId(null)} disabled={isSavingTag} title="Cancel editing">
-                          <X size={18} />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button className="admin-icon-button" onClick={() => startEditingTag(tag)} title="Edit global tag">
-                          <Edit2 size={18} />
-                        </button>
-                        <button className="admin-icon-button danger" onClick={() => handleDeleteTag(tag)} disabled={isCheckingUsage === tag.id} title="Delete global tag">
-                          {isCheckingUsage === tag.id ? <Loader2 size={18} className="spinner" /> : <Trash2 size={18} />}
-                        </button>
-                      </>
-                    )}
+                    {editingTagId === tag.id ? <>
+                      <button className="admin-icon-button success" onClick={() => handleSaveTag(tag)} disabled={isSavingTag || !editingTagName.trim()} title="Save tag name">{isSavingTag ? <Loader2 size={18} className="spinner" /> : <Check size={18} />}</button>
+                      <button className="admin-icon-button" onClick={() => setEditingTagId(null)} disabled={isSavingTag} title="Cancel editing"><X size={18} /></button>
+                    </> : <>
+                      <button className="admin-icon-button" onClick={() => startEditingTag(tag)} title="Edit global tag"><Edit2 size={18} /></button>
+                      <button className="admin-icon-button danger" onClick={() => handleDeleteTag(tag)} disabled={isCheckingUsage === tag.id} title="Delete global tag">{isCheckingUsage === tag.id ? <Loader2 size={18} className="spinner" /> : <Trash2 size={18} />}</button>
+                    </>}
                   </div>
                 </div>
               ))}
@@ -340,61 +281,42 @@ export function AdminDashboard() {
           )}
         </div>
       </div>
-
       {tagUsage && createPortal(
         <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => !isReassigning && setTagUsage(null)}>
-          <section className="admin-tag-modal" role="dialog" aria-modal="true" aria-labelledby="delete-tag-title" onMouseDown={event => event.stopPropagation()}>
+          <section className="admin-tag-modal" role="dialog" aria-modal="true" aria-labelledby="delete-boardgame-tag-title" onMouseDown={event => event.stopPropagation()}>
             <div className="admin-modal-header">
               <div className="admin-warning-icon"><AlertTriangle size={24} /></div>
               <div>
                 <p className="admin-eyebrow">Tag in use</p>
-                <h2 id="delete-tag-title">Replace “{tagUsage.tag.name}” before deleting</h2>
-                <p className="text-secondary">This tag is assigned to {tagUsage.games.length} {tagUsage.games.length === 1 ? 'game' : 'games'}. Choose one replacement for all of them.</p>
+                <h2 id="delete-boardgame-tag-title">Replace “{tagUsage.tag.name}” before deleting</h2>
+                <p className="text-secondary">This tag is assigned to {tagUsage.games.length} {tagUsage.games.length === 1 ? 'board game' : 'board games'}. Choose one replacement for all of them.</p>
               </div>
               <button className="admin-modal-close" onClick={() => setTagUsage(null)} disabled={isReassigning} aria-label="Close"><X size={20} /></button>
             </div>
-
             <div className="admin-affected-games">
-              {tagUsage.games.map(game => (
-                <div className="admin-affected-game" key={`${game.user_id}-${game.id}`}>
-                  {game.image_url ? <img src={game.image_url} alt="" /> : <div className="admin-game-placeholder"><Gamepad2 size={20} /></div>}
-                  <div>
-                    <strong>{game.name}</strong>
-                    <span>{game.username} · {game.status}</span>
-                  </div>
-                </div>
-              ))}
+              {tagUsage.games.map(game => <div className="admin-affected-game" key={`${game.user_id}-${game.id}`}>
+                {game.image_url ? <img src={game.image_url} alt="" /> : <div className="admin-game-placeholder"><Dices size={20} /></div>}
+                <div><strong>{game.name}</strong><span>{game.username} · {game.status}</span></div>
+              </div>)}
             </div>
-
             <div className="admin-replacement-panel">
               <div className="admin-mode-toggle">
-                <button className={replacementMode === 'existing' ? 'active' : ''} onClick={() => setReplacementMode('existing')} disabled={tags.length <= 1}>
-                  <TagIcon size={17} /> Existing tag
-                </button>
-                <button className={replacementMode === 'new' ? 'active' : ''} onClick={() => setReplacementMode('new')}>
-                  <Plus size={17} /> Create new
-                </button>
+                <button className={replacementMode === 'existing' ? 'active' : ''} onClick={() => setReplacementMode('existing')} disabled={tags.length <= 1}><TagIcon size={17} /> Existing tag</button>
+                <button className={replacementMode === 'new' ? 'active' : ''} onClick={() => setReplacementMode('new')}><Plus size={17} /> Create new</button>
               </div>
-              {replacementMode === 'existing' ? (
-                <select className="form-input" value={replacementTagName} onChange={event => setReplacementTagName(event.target.value)}>
-                  {tags.filter(item => item.id !== tagUsage.tag.id).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
-                </select>
-              ) : (
-                <input className="form-input" value={newReplacementTagName} onChange={event => setNewReplacementTagName(event.target.value)} placeholder="New replacement tag name" autoFocus />
-              )}
+              {replacementMode === 'existing' ? <select className="form-input" value={replacementTagName} onChange={event => setReplacementTagName(event.target.value)}>
+                {tags.filter(item => item.id !== tagUsage.tag.id).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
+              </select> : <input className="form-input" value={newReplacementTagName} onChange={event => setNewReplacementTagName(event.target.value)} placeholder="New replacement tag name" autoFocus />}
               <p className="admin-atomic-note">All affected games will be updated first, then the old tag will be deleted.</p>
             </div>
-
             <div className="admin-modal-actions">
               <button className="btn btn-secondary" onClick={() => setTagUsage(null)} disabled={isReassigning}>Cancel</button>
               <button className="btn btn-primary" onClick={handleReassignAndDelete} disabled={isReassigning || !(replacementMode === 'existing' ? replacementTagName : newReplacementTagName.trim())}>
-                {isReassigning ? <Loader2 size={18} className="spinner" /> : <Check size={18} />}
-                Reassign {tagUsage.games.length} and delete
+                {isReassigning ? <Loader2 size={18} className="spinner" /> : <Check size={18} />} Reassign {tagUsage.games.length} and delete
               </button>
             </div>
           </section>
-        </div>,
-        document.body
+        </div>, document.body
       )}
     </div>
   );

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from .database import engine, Base
-from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router
+from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router
 
 # Create db tables (new tables only)
 Base.metadata.create_all(bind=engine)
@@ -15,6 +15,14 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN playtime_hours FLOAT",
         "ALTER TABLE smart_import_items ADD COLUMN playtime_hours FLOAT",
         "ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE boardgames ADD COLUMN library_section VARCHAR NOT NULL DEFAULT 'owned'",
+        "ALTER TABLE boardgames ADD COLUMN bgg_id INTEGER",
+        "ALTER TABLE boardgames ADD COLUMN bgg_rank INTEGER",
+        "ALTER TABLE boardgames ADD COLUMN price FLOAT",
+        "ALTER TABLE boardgames ADD COLUMN expansions TEXT",
+        "ALTER TABLE boardgames ADD COLUMN is_expansion BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE boardgames ADD COLUMN parent_game_name VARCHAR",
+        "ALTER TABLE boardgame_matches ADD COLUMN import_key VARCHAR",
     ]
     with engine.connect() as conn:
         for stmt in migrations:
@@ -51,6 +59,7 @@ app.include_router(videogames_router.router)
 app.include_router(smart_import_router.router)
 app.include_router(filters_router.router)
 app.include_router(igdb_router.router)
+app.include_router(boardgames_router.router)
 
 @app.get("/")
 def read_root():

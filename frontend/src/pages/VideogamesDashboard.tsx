@@ -57,7 +57,13 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
 export function VideogamesDashboard() {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    return sessionStorage.getItem('vg_searchQuery') || '';
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('vg_searchQuery', searchQuery);
+  }, [searchQuery]);
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
@@ -96,7 +102,17 @@ export function VideogamesDashboard() {
 
   // Filtering System
   const [showFilterModal, setShowFilterModal] = useState(false);
-  const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
+  const [filterState, setFilterState] = useState<FilterState>(() => {
+    const saved = sessionStorage.getItem('vg_filterState');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return DEFAULT_FILTER_STATE;
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('vg_filterState', JSON.stringify(filterState));
+  }, [filterState]);
   const [savedFilters, setSavedFilters] = useState<any[]>([]);
 
   // Auto-Fill
@@ -150,7 +166,17 @@ export function VideogamesDashboard() {
   }, [isAutoFilling]);
 
   // Sort System
-  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([]);
+  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>(() => {
+    const saved = sessionStorage.getItem('vg_sortCriteria');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('vg_sortCriteria', JSON.stringify(sortCriteria));
+  }, [sortCriteria]);
   const [showSortPanel, setShowSortPanel] = useState(false);
   const sortBtnRef = useRef<HTMLButtonElement>(null);
   const sortPanelRef = useRef<HTMLDivElement>(null);
@@ -658,7 +684,7 @@ export function VideogamesDashboard() {
                     {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 </div>
-                {(editingGame.status === 'Stopped' || editingGame.status === 'Finished') && (
+                {(editingGame.status === 'Stopped' || editingGame.status === 'Finished' || editingGame.status === 'Infinite') && (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Completion %</label>
                     <select className="form-input" value={editingGame.completion_percentage ?? ''} onChange={e => setEditingGame({...editingGame, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
@@ -667,7 +693,7 @@ export function VideogamesDashboard() {
                     </select>
                   </div>
                 )}
-                {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') ? (
+                {(editingGame.status === 'Finished' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') ? (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Rating (1-10)</label>
                     <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
@@ -685,7 +711,7 @@ export function VideogamesDashboard() {
                 <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={editingGame.playtime_hours !== null && editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : ''} onChange={e => setEditingGame({...editingGame, playtime_hours: e.target.value ? Number(e.target.value) : null})} />
               </div>
 
-              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped') && (
+              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') && (
                 <div className="form-group">
                   <label className="form-label">Completion Date</label>
                   <CompletionDatePicker value={editingGame.completion_date || ''} onChange={(val) => setEditingGame({...editingGame, completion_date: val})} />
