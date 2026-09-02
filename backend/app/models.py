@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Table, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
@@ -15,6 +15,7 @@ class User(Base):
     videogames = relationship("Videogame", back_populates="owner")
     boardgames = relationship("Boardgame", back_populates="owner")
     boardgame_matches = relationship("BoardgameMatch", back_populates="owner", cascade="all, delete-orphan")
+    boardgame_players = relationship("BoardgamePlayer", back_populates="owner", cascade="all, delete-orphan")
 
 class Videogame(Base):
     __tablename__ = "videogames"
@@ -105,7 +106,7 @@ class Boardgame(Base):
     tags = Column(String, nullable=True)
     game_type = Column(String, nullable=True) # competitive, cooperative, solo (comma separated)
     bgg_link = Column(String, nullable=True)
-    library_section = Column(String, nullable=False, default="owned") # wishlist | owned
+    library_section = Column(String, nullable=False, default="owned") # wishlist | owned | external (played, not owned)
     bgg_id = Column(Integer, nullable=True)
     bgg_rank = Column(Integer, nullable=True)
     price = Column(Float, nullable=True)
@@ -115,6 +116,28 @@ class Boardgame(Base):
 
     owner = relationship("User", back_populates="boardgames")
     matches = relationship("BoardgameMatch", back_populates="boardgame", cascade="all, delete-orphan")
+
+
+boardgame_match_players = Table(
+    "boardgame_match_players",
+    Base.metadata,
+    Column("match_id", Integer, ForeignKey("boardgame_matches.id", ondelete="CASCADE"), primary_key=True),
+    Column("player_id", Integer, ForeignKey("boardgame_players.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class BoardgamePlayer(Base):
+    __tablename__ = "boardgame_players"
+    __table_args__ = (UniqueConstraint("user_id", "normalized_name", name="uq_boardgame_player_user_name"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    normalized_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("User", back_populates="boardgame_players")
+    matches = relationship("BoardgameMatch", secondary=boardgame_match_players, back_populates="players")
 
 
 class BoardgameMatch(Base):
@@ -134,6 +157,7 @@ class BoardgameMatch(Base):
 
     owner = relationship("User", back_populates="boardgame_matches")
     boardgame = relationship("Boardgame", back_populates="matches")
+    players = relationship("BoardgamePlayer", secondary=boardgame_match_players, back_populates="matches")
 
 class BoardgameSmartImportSession(Base):
     __tablename__ = "boardgame_smart_import_sessions"

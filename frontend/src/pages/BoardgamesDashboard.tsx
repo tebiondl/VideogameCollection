@@ -15,12 +15,13 @@ import { useAuth } from '../context/AuthContext';
 import './BoardgamesDashboard.css';
 
 type BoardgameTab = 'wishlist' | 'owned' | 'matches';
-type LibrarySection = 'wishlist' | 'owned';
+type LibrarySection = 'wishlist' | 'owned' | 'external';
 type LibraryView = 'grid' | 'list';
 type MatchView = 'list' | 'games';
 type MatchMode = 'cooperative' | 'competitive' | 'solo';
 
 interface Tag { id: number; name: string; }
+interface BoardgamePlayer { id: number; name: string; normalized_name: string; }
 
 interface Boardgame {
   id: number;
@@ -51,6 +52,8 @@ interface BoardgameMatch {
   game_image_url: string | null;
   game_tags: string | null;
   played_with: string | null;
+  player_ids: number[];
+  players: BoardgamePlayer[];
   mode: MatchMode;
   result: 'victory' | 'defeat' | 'winner' | 'incomplete' | null;
   winner_name: string | null;
@@ -64,7 +67,7 @@ type GameDraft = Omit<Boardgame, 'id'>;
 
 interface MatchDraft {
   boardgame_id: number | null;
-  played_with: string;
+  player_ids: number[];
   mode: MatchMode;
   result: 'victory' | 'defeat';
   winner_name: string;
@@ -80,7 +83,7 @@ const newGameDraft = (section: LibrarySection): GameDraft => ({
   is_expansion: false, parent_game_name: null,
 });
 const newMatchDraft = (gameId?: number): MatchDraft => ({
-  boardgame_id: gameId || null, played_with: '', mode: 'competitive', result: 'victory',
+  boardgame_id: gameId || null, player_ids: [], mode: 'competitive', result: 'victory',
   winner_name: '', comments: '', played_date: today(),
 });
 
@@ -99,6 +102,36 @@ function formatPrice(value: number | null): string {
 function normalizedGameName(value: string | null | undefined): string {
   return (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+function fuzzyNameScore(value: string, rawQuery: string): number | null {
+  const candidate = normalizedGameName(value);
+  const query = normalizedGameName(rawQuery);
+  if (!query) return 0;
+  if (candidate === query) return 0;
+  if (candidate.startsWith(query)) return 1;
+  if (candidate.includes(query)) return 2;
+  if (query.includes(candidate)) return 3;
+  if (query.split(' ').every(word => candidate.includes(word))) return 4;
+  const distance = editDistance(candidate, query);
+  return distance <= Math.max(1, Math.floor(query.length * .25)) ? 5 + distance : null;
+}
+function matchPlayerNames(match: BoardgameMatch): string[] {
+  return match.players?.length ? match.players.map(player => player.name) : parseStringList(match.played_with);
+}
 function modeLabel(mode: MatchMode): string { return mode === 'cooperative' ? 'Co-op' : mode.charAt(0).toUpperCase() + mode.slice(1); }
 function resultLabel(match: BoardgameMatch): string {
   if (match.result === 'incomplete') return 'Not finished';
@@ -106,6 +139,11 @@ function resultLabel(match: BoardgameMatch): string {
   return match.result === 'victory' ? 'Victory' : 'Defeat';
 }
 function matchDateLabel(value: string | null): string { return value || 'Date unknown'; }
+function gameTitleClass(name: string): string {
+  if (name.length >= 42) return 'very-long';
+  if (name.length >= 29) return 'long';
+  return '';
+}
 function GameArtwork({ game, compact = false }: { game: Pick<Boardgame, 'name' | 'image_url'>; compact?: boolean }) {
   return game.image_url ? <img className={compact ? 'bg-artwork compact' : 'bg-artwork'} src={game.image_url} alt={`${game.name} cover`} /> : <div className={compact ? 'bg-artwork-placeholder compact' : 'bg-artwork-placeholder'}><Dices size={compact ? 22 : 36} /></div>;
 }
@@ -115,6 +153,7 @@ export function BoardgamesDashboard() {
   const [activeTab, setActiveTab] = useState<BoardgameTab>(() => (sessionStorage.getItem('bg_active_tab') as BoardgameTab) || 'owned');
   const [games, setGames] = useState<Boardgame[]>([]);
   const [matches, setMatches] = useState<BoardgameMatch[]>([]);
+  const [players, setPlayers] = useState<BoardgamePlayer[]>([]);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -149,6 +188,11 @@ export function BoardgamesDashboard() {
   const [matchDraft, setMatchDraft] = useState<MatchDraft | null>(null);
   const [editingMatchId, setEditingMatchId] = useState<number | null>(null);
   const [isSavingMatch, setIsSavingMatch] = useState(false);
+  const [matchGameQuery, setMatchGameQuery] = useState('');
+  const [showGameSuggestions, setShowGameSuggestions] = useState(false);
+  const [playerQuery, setPlayerQuery] = useState('');
+  const [showPlayerSuggestions, setShowPlayerSuggestions] = useState(false);
+  const [isCreatingPlayer, setIsCreatingPlayer] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [movingExpansion, setMovingExpansion] = useState<Boardgame | null>(null);
   const [selectedParentGameId, setSelectedParentGameId] = useState<number | null>(null);
@@ -167,11 +211,11 @@ export function BoardgamesDashboard() {
   async function loadDashboard(showLoader = true) {
     if (showLoader) setIsLoading(true); setLoadError('');
     try {
-      const [gamesResponse, matchesResponse, tagsResponse] = await Promise.all([
-        fetchWithAuth('/boardgames/'), fetchWithAuth('/boardgames/matches'), fetchWithAuth('/boardgames/tags')
+      const [gamesResponse, matchesResponse, tagsResponse, playersResponse] = await Promise.all([
+        fetchWithAuth('/boardgames/'), fetchWithAuth('/boardgames/matches'), fetchWithAuth('/boardgames/tags'), fetchWithAuth('/boardgames/players')
       ]);
-      if (!gamesResponse.ok || !matchesResponse.ok || !tagsResponse.ok) throw new Error('The board-game data could not be loaded.');
-      setGames(await gamesResponse.json()); setMatches(await matchesResponse.json()); setAvailableTags(await tagsResponse.json());
+      if (!gamesResponse.ok || !matchesResponse.ok || !tagsResponse.ok || !playersResponse.ok) throw new Error('The board-game data could not be loaded.');
+      setGames(await gamesResponse.json()); setMatches(await matchesResponse.json()); setAvailableTags(await tagsResponse.json()); setPlayers(await playersResponse.json());
     } catch (error) {
       console.error(error); setLoadError('Could not load the board-game vault. Please try again.');
     } finally { if (showLoader) setIsLoading(false); }
@@ -182,7 +226,22 @@ export function BoardgamesDashboard() {
   }, []);
 
   const wishlistGames = useMemo(() => games.filter(game => game.library_section === 'wishlist'), [games]);
-  const ownedGames = useMemo(() => games.filter(game => game.library_section !== 'wishlist'), [games]);
+  const ownedGames = useMemo(() => games.filter(game => game.library_section === 'owned'), [games]);
+  const externalGames = useMemo(() => games.filter(game => game.library_section === 'external'), [games]);
+  const matchGameSuggestions = useMemo(() => {
+    if (!normalizedGameName(matchGameQuery)) return [];
+    return ownedGames
+      .filter(game => fuzzyNameScore(game.name, matchGameQuery) !== null)
+      .sort((a, b) => (fuzzyNameScore(a.name, matchGameQuery) ?? 99) - (fuzzyNameScore(b.name, matchGameQuery) ?? 99) || a.name.localeCompare(b.name))
+      .slice(0, 8);
+  }, [matchGameQuery, ownedGames]);
+  const playerSuggestions = useMemo(() => {
+    return players
+      .filter(player => !matchDraft?.player_ids.includes(player.id) && fuzzyNameScore(player.name, playerQuery) !== null)
+      .sort((a, b) => (fuzzyNameScore(a.name, playerQuery) ?? 99) - (fuzzyNameScore(b.name, playerQuery) ?? 99) || a.name.localeCompare(b.name));
+  }, [matchDraft?.player_ids, playerQuery, players]);
+  const selectedMatchGame = matchDraft ? games.find(game => game.id === matchDraft.boardgame_id) : undefined;
+  const exactPlayerSuggestion = players.find(player => normalizedGameName(player.name) === normalizedGameName(playerQuery));
   const expansionParentGames = useMemo(() => {
     const query = normalizedGameName(parentGameSearch);
     return ownedGames
@@ -219,7 +278,7 @@ export function BoardgamesDashboard() {
 
   const friendOptions = useMemo(() => {
     const friends = new Map<string, { name: string; plays: number }>();
-    matches.forEach(match => parseStringList(match.played_with).forEach(friend => {
+    matches.forEach(match => matchPlayerNames(match).forEach(friend => {
       const key = normalizedGameName(friend);
       const entry = friends.get(key) || { name: friend, plays: 0 };
       entry.plays += 1;
@@ -231,7 +290,7 @@ export function BoardgamesDashboard() {
   const filteredMatches = useMemo(() => {
     const query = matchSearch.trim().toLocaleLowerCase();
     return matches.filter(match => {
-      const players = parseStringList(match.played_with), tags = parseStringList(match.game_tags);
+      const players = matchPlayerNames(match), tags = parseStringList(match.game_tags);
       if (query && ![match.game_name, match.comments, match.winner_name, ...players].some(value => value?.toLocaleLowerCase().includes(query))) return false;
       if (matchFriendFilter && !players.some(player => normalizedGameName(player) === matchFriendFilter)) return false;
       if (matchModeFilter && match.mode !== matchModeFilter) return false;
@@ -276,9 +335,11 @@ export function BoardgamesDashboard() {
   const saveGame = async () => {
     if (!gameDraft?.name.trim()) return; setIsSavingGame(true);
     try {
-      const response = await fetchWithAuth(editingGameId ? `/boardgames/${editingGameId}` : '/boardgames/', { method: editingGameId ? 'PUT' : 'POST', body: JSON.stringify({ ...gameDraft, name: gameDraft.name.trim() }) });
+      const existingExternal = !editingGameId ? games.find(game => game.library_section === 'external' && normalizedGameName(game.name) === normalizedGameName(gameDraft.name)) : undefined;
+      const targetId = editingGameId || existingExternal?.id;
+      const response = await fetchWithAuth(targetId ? `/boardgames/${targetId}` : '/boardgames/', { method: targetId ? 'PUT' : 'POST', body: JSON.stringify({ ...gameDraft, name: gameDraft.name.trim() }) });
       if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not save this game.'); }
-      const saved: Boardgame = await response.json(); setGames(current => editingGameId ? current.map(game => game.id === saved.id ? saved : game) : [...current, saved]); setGameDraft(null);
+      const saved: Boardgame = await response.json(); setGames(current => targetId ? current.map(game => game.id === saved.id ? saved : game) : [...current, saved]); setGameDraft(null);
     } catch (error) { alert(error instanceof Error ? error.message : 'Could not save this game.'); } finally { setIsSavingGame(false); }
   };
   const deleteGame = async (game: Boardgame) => {
@@ -342,15 +403,48 @@ export function BoardgamesDashboard() {
     setExpansionName('');
   };
   const removeExpansion = (name: string) => { if (!gameDraft) return; const expansions = parseStringList(gameDraft.expansions).filter(item => item !== name); setGameDraft({ ...gameDraft, expansions: expansions.length ? JSON.stringify(expansions) : null }); };
-  const openNewMatch = (gameId?: number) => { setEditingMatchId(null); setMatchDraft(newMatchDraft(gameId || (ownedGames.length === 1 ? ownedGames[0].id : undefined))); };
+  const openNewMatch = (gameId?: number) => {
+    const initialId = gameId || (ownedGames.length === 1 && !externalGames.length ? ownedGames[0].id : undefined);
+    setEditingMatchId(null); setPlayerQuery(''); setShowPlayerSuggestions(false); setShowGameSuggestions(false); setMatchGameQuery(games.find(game => game.id === initialId)?.name || ''); setMatchDraft(newMatchDraft(initialId));
+  };
   const openEditMatch = (match: BoardgameMatch) => {
-    setEditingMatchId(match.id); setMatchDraft({ boardgame_id: match.boardgame_id, played_with: parseStringList(match.played_with).join(', '), mode: match.mode, result: match.result === 'defeat' ? 'defeat' : 'victory', winner_name: match.winner_name || '', comments: match.comments || '', played_date: match.played_date || '' });
+    const legacyPlayerIds = match.player_ids?.length ? match.player_ids : players.filter(player => matchPlayerNames(match).some(name => normalizedGameName(name) === normalizedGameName(player.name))).map(player => player.id);
+    setPlayerQuery(''); setShowPlayerSuggestions(false); setShowGameSuggestions(false); setMatchGameQuery(match.game_name);
+    setEditingMatchId(match.id); setMatchDraft({ boardgame_id: match.boardgame_id, player_ids: legacyPlayerIds, mode: match.mode, result: match.result === 'defeat' ? 'defeat' : 'victory', winner_name: match.winner_name || '', comments: match.comments || '', played_date: match.played_date || '' });
+  };
+  const ensureExternalGame = async (name: string): Promise<Boardgame> => {
+    const existing = externalGames.find(game => normalizedGameName(game.name) === normalizedGameName(name));
+    if (existing) return existing;
+    const response = await fetchWithAuth('/boardgames/', { method: 'POST', body: JSON.stringify({ ...newGameDraft('external'), name: name.trim() }) });
+    if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not add this game.'); }
+    const saved: Boardgame = await response.json(); setGames(current => [...current, saved]); return saved;
+  };
+  const toggleDraftPlayer = (playerId: number) => {
+    if (!matchDraft) return;
+    const selected = matchDraft.player_ids.includes(playerId);
+    setMatchDraft({ ...matchDraft, player_ids: selected ? matchDraft.player_ids.filter(id => id !== playerId) : [...matchDraft.player_ids, playerId] });
+    setPlayerQuery(''); setShowPlayerSuggestions(false);
+  };
+  const createPlayer = async () => {
+    if (!matchDraft || !playerQuery.trim()) return;
+    const existing = players.find(player => normalizedGameName(player.name) === normalizedGameName(playerQuery));
+    if (existing) { toggleDraftPlayer(existing.id); return; }
+    setIsCreatingPlayer(true);
+    try {
+      const response = await fetchWithAuth('/boardgames/players', { method: 'POST', body: JSON.stringify({ name: playerQuery.trim() }) });
+      if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not add this player.'); }
+      const saved: BoardgamePlayer = await response.json();
+      setPlayers(current => current.some(player => player.id === saved.id) ? current : [...current, saved]);
+      setMatchDraft(current => current ? { ...current, player_ids: current.player_ids.includes(saved.id) ? current.player_ids : [...current.player_ids, saved.id] } : null); setPlayerQuery(''); setShowPlayerSuggestions(false);
+    } catch (error) { alert(error instanceof Error ? error.message : 'Could not add this player.'); } finally { setIsCreatingPlayer(false); }
   };
   const saveMatch = async () => {
-    if (!matchDraft?.boardgame_id || !matchDraft.played_date || (matchDraft.mode === 'competitive' && !matchDraft.winner_name.trim())) return;
-    setIsSavingMatch(true); const players = matchDraft.played_with.split(',').map(player => player.trim()).filter(Boolean);
-    const payload = { ...matchDraft, played_with: players.length ? JSON.stringify(players) : null, result: matchDraft.mode === 'competitive' ? 'winner' : matchDraft.result, winner_name: matchDraft.mode === 'competitive' ? matchDraft.winner_name.trim() : null, comments: matchDraft.comments.trim() || null };
+    if (!matchDraft || (!matchDraft.boardgame_id && !matchGameQuery.trim()) || !matchDraft.played_date || (matchDraft.mode === 'competitive' && !matchDraft.winner_name.trim())) return;
+    setIsSavingMatch(true);
     try {
+      const game = matchDraft.boardgame_id ? games.find(item => item.id === matchDraft.boardgame_id) : await ensureExternalGame(matchGameQuery);
+      if (!game) throw new Error('Choose a matching game or enter a new game name.');
+      const payload = { ...matchDraft, boardgame_id: game.id, played_with: null, result: matchDraft.mode === 'competitive' ? 'winner' : matchDraft.result, winner_name: matchDraft.mode === 'competitive' ? matchDraft.winner_name.trim() : null, comments: matchDraft.comments.trim() || null };
       const response = await fetchWithAuth(editingMatchId ? `/boardgames/matches/${editingMatchId}` : '/boardgames/matches', { method: editingMatchId ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not save this match.'); }
       const saved: BoardgameMatch = await response.json(); setMatches(current => editingMatchId ? current.map(match => match.id === saved.id ? saved : match) : [saved, ...current]); setMatchDraft(null);
@@ -378,21 +472,21 @@ export function BoardgamesDashboard() {
       <div className="bg-results-line"><span>{visibleGames.length} {visibleGames.length === 1 ? 'game' : 'games'}</span>{(searchQuery || selectedTag || maxRank || maxPrice || minHype || minRating || expansionFilter !== 'all') && <button onClick={clearLibraryFilters}>Reset all</button>}</div>
       {visibleGames.length ? <section className={`bg-library ${libraryView}`}>{visibleGames.map(game => {
         const expansions = parseStringList(game.expansions), tags = parseStringList(game.tags);
-        return <article className="bg-game-card" key={game.id}><div className="bg-card-art"><GameArtwork game={game} /><div className="bg-card-badges">{game.is_expansion && <span className="expansion">Expansion</span>}{game.bgg_rank ? <span className="rank"><Medal size={13} /> #{game.bgg_rank}</span> : <span className="unranked">Unranked</span>}</div><div className="bg-card-actions"><button onClick={() => openEditGame(game)} aria-label={`Edit ${game.name}`}><Edit2 size={16} /></button><button onClick={() => deleteGame(game)} aria-label={`Delete ${game.name}`}><Trash2 size={16} /></button></div></div><div className="bg-card-body"><div className="bg-card-title"><div><h3>{game.name}</h3>{game.publication_year && <small>{game.publication_year}</small>}</div>{game.bgg_link && <a href={game.bgg_link} target="_blank" rel="noreferrer" title="Open on BoardGameGeek"><ExternalLink size={16} /></a>}</div>{game.is_expansion && game.parent_game_name && <p className="bg-parent-game">For {game.parent_game_name}</p>}{activeTab === 'wishlist' ? <><div className="bg-wishlist-metrics"><div><CircleDollarSign /><span>{formatPrice(game.price)}</span></div><div><Sparkles /><span>{game.hype ? `${game.hype}/10` : 'No anticipation'}</span></div></div><button className="bg-owned-action" onClick={() => markAsOwned(game)}><PackageCheck size={16} /> Move to collection</button></> : <><div className="bg-owned-metrics"><div><Trophy /><span>{game.mark ? `${game.mark}/10` : 'Not rated'}</span></div><div><Gamepad2 /><span>{game.bgg_id ? `BGG ${game.bgg_id}` : 'No BGG ID'}</span></div></div><div className="bg-expansion-summary"><PackageCheck size={16} /><span>{expansions.length ? `${expansions.length} expansion${expansions.length === 1 ? '' : 's'}` : 'No expansions added'}</span></div>{expansions.length > 0 && <div className="bg-expansion-chips">{expansions.slice(0, 3).map(item => <span key={item}>{item}</span>)}{expansions.length > 3 && <span>+{expansions.length - 3}</span>}</div>}</>}{tags.length > 0 && <div className="bg-tag-row">{tags.slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}</div>}</div></article>;
+        return <article className="bg-game-card" key={game.id}><div className="bg-card-art"><GameArtwork game={game} /><div className="bg-card-badges">{game.is_expansion && <span className="expansion">Expansion</span>}{game.bgg_rank ? <span className="rank"><Medal size={13} /> #{game.bgg_rank}</span> : <span className="unranked">Unranked</span>}</div><div className="bg-card-actions"><button onClick={() => openEditGame(game)} aria-label={`Edit ${game.name}`}><Edit2 size={16} /></button><button onClick={() => deleteGame(game)} aria-label={`Delete ${game.name}`}><Trash2 size={16} /></button></div></div><div className="bg-card-body"><div className="bg-card-title"><div><h3 className={gameTitleClass(game.name)} title={game.name}>{game.name}</h3>{game.publication_year && <small>{game.publication_year}</small>}</div>{game.bgg_link && <a href={game.bgg_link} target="_blank" rel="noreferrer" title="Open on BoardGameGeek"><ExternalLink size={16} /></a>}</div>{game.is_expansion && game.parent_game_name && <p className="bg-parent-game">For {game.parent_game_name}</p>}{activeTab === 'wishlist' ? <><div className="bg-wishlist-metrics"><div><CircleDollarSign /><span>{formatPrice(game.price)}</span></div><div><Sparkles /><span>{game.hype ? `${game.hype}/10` : 'No anticipation'}</span></div></div><button className="bg-owned-action" onClick={() => markAsOwned(game)}><PackageCheck size={16} /> Move to collection</button></> : <><div className="bg-owned-metrics"><div><Trophy /><span>{game.mark ? `${game.mark}/10` : 'Not rated'}</span></div><div><Gamepad2 /><span>{game.bgg_id ? `BGG ${game.bgg_id}` : 'No BGG ID'}</span></div></div><div className="bg-expansion-summary"><PackageCheck size={16} /><span>{expansions.length ? `${expansions.length} expansion${expansions.length === 1 ? '' : 's'}` : 'No expansions added'}</span></div>{expansions.length > 0 && <div className="bg-expansion-chips">{expansions.slice(0, 3).map(item => <span key={item}>{item}</span>)}{expansions.length > 3 && <span>+{expansions.length - 3}</span>}</div>}</>}{tags.length > 0 && <div className="bg-tag-row">{tags.slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}</div>}</div></article>;
       })}</section> : <section className="bg-empty-state"><div>{activeTab === 'wishlist' ? <ShoppingBag /> : <Archive />}</div><h2>{searchQuery || selectedTag ? 'No games match these filters' : activeTab === 'wishlist' ? 'Your wishlist is ready for its first game' : 'Your collection is waiting'}</h2><p>{searchQuery || selectedTag ? 'Try clearing one or more filters.' : 'Add a game to start building this section.'}</p><button className="btn btn-primary" onClick={() => openNewGame(activeTab)}><Plus size={18} /> Add a game</button></section>}
     </> : <>
-      <section className="bg-section-intro matches"><div className="bg-intro-icon matches"><History /></div><div><h2>Your table, remembered</h2><p>Log every group, mode, result and story from game night.</p></div><button className="btn btn-primary" onClick={() => openNewMatch()} disabled={!ownedGames.length}><Plus size={18} /> Log a match</button></section>
+      <section className="bg-section-intro matches"><div className="bg-intro-icon matches"><History /></div><div><h2>Your table, remembered</h2><p>Log every group, mode, result and story from game night—even when the game belongs to someone else.</p></div><button className="btn btn-primary" onClick={() => openNewMatch()}><Plus size={18} /> Log a match</button></section>
       <section className="bg-toolbar match-toolbar"><div className="bg-search"><Search size={18} /><input value={matchSearch} onChange={event => setMatchSearch(event.target.value)} placeholder="Search games, players or comments…" /></div><div className="bg-friend-dropdown" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsFriendMenuOpen(false); }}><button type="button" className={matchFriendFilter ? 'bg-friend-trigger active' : 'bg-friend-trigger'} onClick={() => setIsFriendMenuOpen(value => !value)} aria-label="Filter by friend" aria-haspopup="listbox" aria-expanded={isFriendMenuOpen}><UserRound size={16} /><span>{selectedFriend ? `${selectedFriend.name} · ${selectedFriend.plays}` : `All friends (${friendOptions.length})`}</span><ChevronDown size={15} /></button>{isFriendMenuOpen && <div className="bg-friend-menu" role="listbox" aria-label="Friends"><button type="button" role="option" aria-selected={!matchFriendFilter} className={!matchFriendFilter ? 'selected' : ''} onClick={() => { setMatchFriendFilter(''); setIsFriendMenuOpen(false); }}><span>All friends</span><small>{friendOptions.length}</small></button>{friendOptions.map(friend => { const key = normalizedGameName(friend.name); return <button type="button" role="option" aria-selected={matchFriendFilter === key} className={matchFriendFilter === key ? 'selected' : ''} key={key} onClick={() => { setMatchFriendFilter(key); setIsFriendMenuOpen(false); }}><span>{friend.name}</span><small>{friend.plays} {friend.plays === 1 ? 'play' : 'plays'}</small></button>; })}</div>}</div><select value={matchModeFilter} onChange={event => setMatchModeFilter(event.target.value)} aria-label="Filter by match mode"><option value="">All modes</option><option value="competitive">Competitive</option><option value="cooperative">Co-op</option><option value="solo">Solo</option></select><select value={matchResultFilter} onChange={event => setMatchResultFilter(event.target.value)} aria-label="Filter by result"><option value="">All outcomes</option><option value="victory">Victories</option><option value="defeat">Defeats</option><option value="incomplete">Not finished</option><option value="competitive">Competitive winners</option></select><button className={showFilters ? 'bg-tool-button active' : 'bg-tool-button'} onClick={() => setShowFilters(value => !value)}><Filter size={17} /> More</button><div className="bg-view-toggle"><button className={matchView === 'list' ? 'active' : ''} onClick={() => { setMatchView('list'); setSelectedMatchGameId(null); }} aria-label="Match list view"><LayoutList size={18} /></button><button className={matchView === 'games' ? 'active' : ''} onClick={() => setMatchView('games')} aria-label="Matches by game"><Grid2X2 size={17} /></button></div></section>
       {showFilters && <section className="bg-filter-drawer match-filters"><label>From<input type="date" value={matchDateFrom} onChange={event => setMatchDateFrom(event.target.value)} /></label><label>To<input type="date" value={matchDateTo} onChange={event => setMatchDateTo(event.target.value)} /></label><label>Game tag<select value={matchTagFilter} onChange={event => setMatchTagFilter(event.target.value)}><option value="">Any tag</option>{availableTags.map(tag => <option key={tag.id} value={tag.name}>{tag.name}</option>)}</select></label><button onClick={clearMatchFilters}><X size={16} /> Clear filters</button></section>}
       {selectedFriendStats && <section className="bg-friend-summary"><div className="bg-friend-summary-avatar">{selectedFriendStats.name.charAt(0).toUpperCase()}</div><div className="bg-friend-summary-name"><small>Games with</small><strong>{selectedFriendStats.name}</strong></div><div><strong>{selectedFriendStats.plays}</strong><span>shared plays</span></div><div><strong>{selectedFriendStats.games}</strong><span>different games</span></div><div className="favorite"><strong>{selectedFriendStats.favoriteGame}</strong><span>most played together</span></div><div><strong>{selectedFriendStats.cooperativeWins}</strong><span>co-op victories</span></div><button onClick={() => setMatchFriendFilter('')} aria-label="Clear friend filter"><X size={16} /></button></section>}
-      <div className="bg-match-summary-bar"><div><strong>{filteredMatches.length}</strong><span>matches</span></div><div><strong>{new Set(filteredMatches.map(match => match.boardgame_id)).size}</strong><span>games played</span></div><div><strong>{filteredMatches.filter(match => match.result === 'victory').length}</strong><span>co-op / solo wins</span></div><div><strong>{new Set(filteredMatches.flatMap(match => parseStringList(match.played_with))).size}</strong><span>tablemates</span></div></div>
+      <div className="bg-match-summary-bar"><div><strong>{filteredMatches.length}</strong><span>matches</span></div><div><strong>{new Set(filteredMatches.map(match => match.boardgame_id)).size}</strong><span>games played</span></div><div><strong>{filteredMatches.filter(match => match.result === 'victory').length}</strong><span>co-op / solo wins</span></div><div><strong>{new Set(filteredMatches.flatMap(match => matchPlayerNames(match))).size}</strong><span>tablemates</span></div></div>
       {matchView === 'games' && !selectedMatchGameId ? (matchGameGroups.length ? <section className="bg-match-game-grid">{matchGameGroups.map(group => {
-        const latest = group.matches[0], players = [...new Set(group.matches.flatMap(match => parseStringList(match.played_with)))];
+        const latest = group.matches[0], players = [...new Set(group.matches.flatMap(match => matchPlayerNames(match)))];
         return <button key={group.gameId} className="bg-match-game-card" onClick={() => setSelectedMatchGameId(group.gameId)}><div className="bg-match-game-art">{group.game ? <GameArtwork game={group.game} /> : <div className="bg-artwork-placeholder"><Dices /></div>}<span>{group.matches.length} {group.matches.length === 1 ? 'play' : 'plays'}</span></div><div><h3>{latest.game_name}</h3><p><CalendarDays size={15} /> Last played {matchDateLabel(latest.played_date)}</p><p><UsersRound size={15} /> {players.length ? players.slice(0, 3).join(', ') : 'Solo table'}</p><span className="bg-open-history">Open history <ChevronRight size={16} /></span></div></button>;
-      })}</section> : <section className="bg-empty-state"><div><History /></div><h2>No matches found</h2><p>Log your first game night or clear the active filters.</p><button className="btn btn-primary" onClick={() => openNewMatch()} disabled={!ownedGames.length}><Plus size={18} /> Log a match</button></section>) : <section className="bg-match-list-section">{selectedMatchGameId && <div className="bg-selected-game-header"><button onClick={() => setSelectedMatchGameId(null)}><ArrowLeft size={17} /> All games</button><div><h2>{games.find(game => game.id === selectedMatchGameId)?.name}</h2><p>{filteredMatches.length} recorded matches</p></div><button className="btn btn-primary" onClick={() => openNewMatch(selectedMatchGameId)}><Plus size={17} /> Add match</button></div>}{filteredMatches.length ? <div className="bg-match-list">{filteredMatches.map(match => {
-        const players = parseStringList(match.played_with);
-        return <article key={match.id} className="bg-match-row"><div className={`bg-match-date ${match.played_date ? '' : 'unknown'}`}>{match.played_date ? <><strong>{new Date(`${match.played_date}T12:00:00`).toLocaleDateString(undefined, { day: '2-digit' })}</strong><span>{new Date(`${match.played_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</span></> : <><strong>?</strong><span>Unknown</span></>}</div><div className="bg-match-cover">{match.game_image_url ? <img src={match.game_image_url} alt="" /> : <Dices />}</div><div className="bg-match-main"><h3>{match.game_name}</h3><div><span className={`mode ${match.mode}`}>{match.mode === 'competitive' ? <Swords /> : match.mode === 'cooperative' ? <UsersRound /> : <UserRound />}{modeLabel(match.mode)}</span><span className={`result ${match.result}`}>{match.result === 'victory' ? <Trophy /> : match.result === 'defeat' ? <X /> : match.result === 'incomplete' ? <AlertTriangle /> : <Crown />}{resultLabel(match)}</span></div></div><div className="bg-match-players"><small>Played with</small><span>{players.length ? players.join(', ') : match.mode === 'solo' ? 'Solo' : 'Not recorded'}</span></div><div className="bg-match-comment"><small>Memory</small><span>{match.comments || 'No comments'}</span></div><div className="bg-match-actions"><button onClick={() => openEditMatch(match)} aria-label={`Edit ${match.game_name} match`}><Edit2 size={16} /></button><button onClick={() => deleteMatch(match)} aria-label={`Delete ${match.game_name} match`}><Trash2 size={16} /></button></div></article>;
-      })}</div> : <section className="bg-empty-state compact"><div><History /></div><h2>No matches found</h2><p>Try clearing filters or log a new match.</p><button className="btn btn-primary" onClick={() => openNewMatch(selectedMatchGameId || undefined)} disabled={!ownedGames.length}><Plus size={18} /> Log a match</button></section>}</section>}
+      })}</section> : <section className="bg-empty-state"><div><History /></div><h2>No matches found</h2><p>Log your first game night or clear the active filters.</p><button className="btn btn-primary" onClick={() => openNewMatch()}><Plus size={18} /> Log a match</button></section>) : <section className="bg-match-list-section">{selectedMatchGameId && <div className="bg-selected-game-header"><button onClick={() => setSelectedMatchGameId(null)}><ArrowLeft size={17} /> All games</button><div><h2>{games.find(game => game.id === selectedMatchGameId)?.name}</h2><p>{filteredMatches.length} recorded matches</p></div><button className="btn btn-primary" onClick={() => openNewMatch(selectedMatchGameId)}><Plus size={17} /> Add match</button></div>}{filteredMatches.length ? <div className="bg-match-list">{filteredMatches.map(match => {
+        const playerNames = matchPlayerNames(match), isUnownedGame = games.find(game => game.id === match.boardgame_id)?.library_section !== 'owned';
+        return <article key={match.id} className="bg-match-row"><div className={`bg-match-date ${match.played_date ? '' : 'unknown'}`}>{match.played_date ? <><strong>{new Date(`${match.played_date}T12:00:00`).toLocaleDateString(undefined, { day: '2-digit' })}</strong><span>{new Date(`${match.played_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</span></> : <><strong>?</strong><span>Unknown</span></>}</div><div className="bg-match-cover">{match.game_image_url ? <img src={match.game_image_url} alt="" /> : <Dices />}</div><div className="bg-match-main"><h3>{match.game_name}{isUnownedGame && <small className="bg-external-game-badge">Not in collection</small>}</h3><div><span className={`mode ${match.mode}`}>{match.mode === 'competitive' ? <Swords /> : match.mode === 'cooperative' ? <UsersRound /> : <UserRound />}{modeLabel(match.mode)}</span><span className={`result ${match.result}`}>{match.result === 'victory' ? <Trophy /> : match.result === 'defeat' ? <X /> : match.result === 'incomplete' ? <AlertTriangle /> : <Crown />}{resultLabel(match)}</span></div></div><div className="bg-match-players"><small>Played with</small><span>{playerNames.length ? playerNames.join(', ') : match.mode === 'solo' ? 'Solo' : 'Not recorded'}</span></div><div className="bg-match-comment"><small>Memory</small><span>{match.comments || 'No comments'}</span></div><div className="bg-match-actions"><button onClick={() => openEditMatch(match)} aria-label={`Edit ${match.game_name} match`}><Edit2 size={16} /></button><button onClick={() => deleteMatch(match)} aria-label={`Delete ${match.game_name} match`}><Trash2 size={16} /></button></div></article>;
+      })}</div> : <section className="bg-empty-state compact"><div><History /></div><h2>No matches found</h2><p>Try clearing filters or log a new match.</p><button className="btn btn-primary" onClick={() => openNewMatch(selectedMatchGameId || undefined)}><Plus size={18} /> Log a match</button></section>}</section>}
     </>}
 
     {showExcelImport && <BoardgameExcelImportModal onClose={() => setShowExcelImport(false)} onImported={() => loadDashboard(false)} />}
@@ -406,6 +500,34 @@ export function BoardgamesDashboard() {
       <section className="bg-form-section"><h3><TagIcon /> Tags and notes</h3><label className="bg-field-label">Tags<TagMultiSelect availableTags={availableTags} selectedTagsString={gameDraft.tags || ''} onChange={tags => setGameDraft({ ...gameDraft, tags: tags || null })} /></label><label className="bg-field-label">Private notes<textarea value={gameDraft.comments ?? ''} onChange={event => setGameDraft({ ...gameDraft, comments: event.target.value || null })} rows={3} placeholder="Edition, shop, language, reminders…" /></label></section>
     </div><footer><button className="btn btn-secondary" onClick={() => setGameDraft(null)} disabled={isSavingGame}>Cancel</button><button className="btn btn-primary" onClick={saveGame} disabled={isSavingGame || !gameDraft.name.trim()}>{isSavingGame ? <Loader2 className="spinner" /> : <Check />} {editingGameId ? 'Save changes' : 'Add game'}</button></footer></section></div>, document.body)}
 
-    {matchDraft && createPortal(<div className="bg-modal-backdrop" onMouseDown={() => !isSavingMatch && setMatchDraft(null)}><section className="bg-modal bg-match-modal" role="dialog" aria-modal="true" aria-labelledby="match-modal-title" onMouseDown={event => event.stopPropagation()}><header><div className="matches"><History /></div><div><span>{editingMatchId ? 'Edit match' : 'New game night'}</span><h2 id="match-modal-title">{editingMatchId ? 'Update match details' : 'Log a match'}</h2></div><button onClick={() => setMatchDraft(null)} aria-label="Close"><X /></button></header><div className="bg-modal-scroll"><div className="bg-form-grid"><label className="wide">Board game<select value={matchDraft.boardgame_id ?? ''} onChange={event => setMatchDraft({ ...matchDraft, boardgame_id: event.target.value ? Number(event.target.value) : null })}><option value="">Choose a game…</option>{[...ownedGames].sort((a,b) => a.name.localeCompare(b.name)).map(game => <option key={game.id} value={game.id}>{game.name}</option>)}</select></label><label>Date<input type="date" value={matchDraft.played_date} onChange={event => setMatchDraft({ ...matchDraft, played_date: event.target.value })} /></label><label>Played with<input value={matchDraft.played_with} onChange={event => setMatchDraft({ ...matchDraft, played_with: event.target.value })} placeholder="Alex, Maria, Sam…" /></label></div><section className="bg-form-section"><h3><Swords /> Match type</h3><div className="bg-mode-picker">{(['competitive', 'cooperative', 'solo'] as MatchMode[]).map(mode => <button key={mode} className={matchDraft.mode === mode ? `active ${mode}` : ''} onClick={() => setMatchDraft({ ...matchDraft, mode })}>{mode === 'competitive' ? <Swords /> : mode === 'cooperative' ? <UsersRound /> : <UserRound />}<strong>{modeLabel(mode)}</strong><small>{mode === 'competitive' ? 'One named winner' : mode === 'cooperative' ? 'Win or lose together' : 'A solo challenge'}</small></button>)}</div></section><section className="bg-form-section"><h3><Trophy /> Outcome</h3>{matchDraft.mode === 'competitive' ? <label className="bg-field-label">Who won?<input value={matchDraft.winner_name} onChange={event => setMatchDraft({ ...matchDraft, winner_name: event.target.value })} placeholder="Winner's name" /></label> : <div className="bg-result-picker"><button className={matchDraft.result === 'victory' ? 'active victory' : ''} onClick={() => setMatchDraft({ ...matchDraft, result: 'victory' })}><Trophy /> Victory</button><button className={matchDraft.result === 'defeat' ? 'active defeat' : ''} onClick={() => setMatchDraft({ ...matchDraft, result: 'defeat' })}><X /> Defeat</button></div>}</section><label className="bg-field-label">Comments<textarea rows={4} value={matchDraft.comments} onChange={event => setMatchDraft({ ...matchDraft, comments: event.target.value })} placeholder="Memorable moments, close calls, strategies…" /></label></div><footer><button className="btn btn-secondary" onClick={() => setMatchDraft(null)} disabled={isSavingMatch}>Cancel</button><button className="btn btn-primary" onClick={saveMatch} disabled={isSavingMatch || !matchDraft.boardgame_id || !matchDraft.played_date || (matchDraft.mode === 'competitive' && !matchDraft.winner_name.trim())}>{isSavingMatch ? <Loader2 className="spinner" /> : <Check />} {editingMatchId ? 'Save changes' : 'Log match'}</button></footer></section></div>, document.body)}
+    {matchDraft && createPortal(
+      <div className="bg-modal-backdrop" onMouseDown={() => !isSavingMatch && !isCreatingPlayer && setMatchDraft(null)}>
+        <section className="bg-modal bg-match-modal" role="dialog" aria-modal="true" aria-labelledby="match-modal-title" onMouseDown={event => event.stopPropagation()}>
+          <header><div className="matches"><History /></div><div><span>{editingMatchId ? 'Edit match' : 'New game night'}</span><h2 id="match-modal-title">{editingMatchId ? 'Update match details' : 'Log a match'}</h2></div><button onClick={() => setMatchDraft(null)} aria-label="Close"><X /></button></header>
+          <div className="bg-modal-scroll">
+            <div className="bg-form-grid">
+              <div className="wide bg-match-game-field">
+                <label>Board game</label>
+                <div className="bg-game-combobox" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setShowGameSuggestions(false); }}>
+                  <div className={selectedMatchGame ? 'bg-game-query selected' : 'bg-game-query'}><Search size={17} /><input value={matchGameQuery} onFocus={() => setShowGameSuggestions(true)} onChange={event => { setMatchGameQuery(event.target.value); setMatchDraft({ ...matchDraft, boardgame_id: null }); setShowGameSuggestions(true); }} placeholder="Type a board game name…" autoFocus={!editingMatchId} />{selectedMatchGame && <Check size={17} />}</div>
+                  {showGameSuggestions && matchGameQuery.trim() && <div className="bg-game-suggestions" role="listbox" aria-label="Matching board games">
+                    {matchGameSuggestions.map(game => <button type="button" role="option" aria-selected={matchDraft.boardgame_id === game.id} key={game.id} onClick={() => { setMatchDraft({ ...matchDraft, boardgame_id: game.id }); setMatchGameQuery(game.name); setShowGameSuggestions(false); }}><GameArtwork game={game} compact /><span><strong>{game.name}</strong><small>In my collection</small></span><Check size={16} /></button>)}
+                    {matchGameSuggestions.length === 0 && <p>No similar games in your collection.</p>}
+                    <div className="bg-game-new-hint"><Plus size={15} /><span>Don’t select a result to log <strong>{matchGameQuery.trim()}</strong> as a game you do not own.</span></div>
+                  </div>}
+                </div>
+                <p className={selectedMatchGame ? 'bg-game-choice selected' : 'bg-game-choice'}>{selectedMatchGame ? <><Check size={14} /> Using {selectedMatchGame.name} · {selectedMatchGame.library_section === 'owned' ? 'your collection copy' : 'not owned'}</> : matchGameQuery.trim() ? <><Plus size={14} /> Will create a non-owned game when this match is saved</> : 'Start typing to find a saved game or enter a new one.'}</p>
+              </div>
+              <label>Date<input type="date" value={matchDraft.played_date} onChange={event => setMatchDraft({ ...matchDraft, played_date: event.target.value })} /></label>
+              <div className="bg-player-field"><label>Played with</label><div className="bg-player-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setShowPlayerSuggestions(false); }}>{matchDraft.player_ids.length > 0 && <div className="bg-selected-players">{matchDraft.player_ids.map(playerId => { const player = players.find(item => item.id === playerId); return player && <span key={player.id}>{player.name}<button type="button" onClick={() => toggleDraftPlayer(player.id)} aria-label={`Remove ${player.name}`}><X size={12} /></button></span>; })}</div>}<div className="bg-player-query"><Search size={16} /><input value={playerQuery} onFocus={() => setShowPlayerSuggestions(true)} onChange={event => { setPlayerQuery(event.target.value); setShowPlayerSuggestions(true); }} onKeyDown={event => { if (event.key === 'Enter' && playerQuery.trim()) { event.preventDefault(); createPlayer(); } }} placeholder="Search or add a player…" /></div>{showPlayerSuggestions && <div className="bg-player-suggestions" role="listbox" aria-label="Saved players">{playerSuggestions.map(player => <button type="button" role="option" aria-selected={false} key={player.id} onClick={() => toggleDraftPlayer(player.id)}><span className="bg-player-option-avatar">{player.name.charAt(0).toUpperCase()}</span><strong>{player.name}</strong><Plus size={14} /></button>)}{playerQuery.trim() && !exactPlayerSuggestion && <button type="button" className="create" onClick={createPlayer} disabled={isCreatingPlayer}>{isCreatingPlayer ? <Loader2 className="spinner" /> : <Plus size={14} />}<span>Create player</span><strong>{playerQuery.trim()}</strong></button>}{playerSuggestions.length === 0 && (!playerQuery.trim() || exactPlayerSuggestion) && <p>No more matching players.</p>}</div>}</div></div>
+            </div>
+            <section className="bg-form-section"><h3><Swords /> Match type</h3><div className="bg-mode-picker">{(['competitive', 'cooperative', 'solo'] as MatchMode[]).map(mode => <button key={mode} className={matchDraft.mode === mode ? `active ${mode}` : ''} onClick={() => setMatchDraft({ ...matchDraft, mode })}>{mode === 'competitive' ? <Swords /> : mode === 'cooperative' ? <UsersRound /> : <UserRound />}<strong>{modeLabel(mode)}</strong><small>{mode === 'competitive' ? 'One named winner' : mode === 'cooperative' ? 'Win or lose together' : 'A solo challenge'}</small></button>)}</div></section>
+            <section className="bg-form-section"><h3><Trophy /> Outcome</h3>{matchDraft.mode === 'competitive' ? <label className="bg-field-label">Who won?<select value={matchDraft.winner_name} onChange={event => setMatchDraft({ ...matchDraft, winner_name: event.target.value })}><option value="">Choose the winner…</option><option value="Yo">Me</option>{matchDraft.player_ids.map(playerId => players.find(player => player.id === playerId)).filter((player): player is BoardgamePlayer => Boolean(player) && normalizedGameName(player?.name) !== 'yo').map(player => <option key={player.id} value={player.name}>{player.name}</option>)}{matchDraft.winner_name && matchDraft.winner_name !== 'Yo' && !matchDraft.player_ids.some(playerId => players.find(player => player.id === playerId)?.name === matchDraft.winner_name) && <option value={matchDraft.winner_name}>{matchDraft.winner_name} (legacy)</option>}</select></label> : <div className="bg-result-picker"><button className={matchDraft.result === 'victory' ? 'active victory' : ''} onClick={() => setMatchDraft({ ...matchDraft, result: 'victory' })}><Trophy /> Victory</button><button className={matchDraft.result === 'defeat' ? 'active defeat' : ''} onClick={() => setMatchDraft({ ...matchDraft, result: 'defeat' })}><X /> Defeat</button></div>}</section>
+            <label className="bg-field-label">Comments<textarea rows={4} value={matchDraft.comments} onChange={event => setMatchDraft({ ...matchDraft, comments: event.target.value })} placeholder="Memorable moments, close calls, strategies…" /></label>
+          </div>
+          <footer><button className="btn btn-secondary" onClick={() => setMatchDraft(null)} disabled={isSavingMatch || isCreatingPlayer}>Cancel</button><button className="btn btn-primary" onClick={saveMatch} disabled={isSavingMatch || isCreatingPlayer || (!matchDraft.boardgame_id && !matchGameQuery.trim()) || !matchDraft.played_date || (matchDraft.mode === 'competitive' && !matchDraft.winner_name.trim())}>{isSavingMatch ? <Loader2 className="spinner" /> : <Check />} {editingMatchId ? 'Save changes' : 'Log match'}</button></footer>
+        </section>
+      </div>, document.body
+    )}
   </div>;
 }

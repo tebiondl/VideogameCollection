@@ -2,7 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from .database import engine, Base
+from .database import SessionLocal
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router
+from .services.boardgame_player_migration import migrate_legacy_match_players
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Create db tables (new tables only)
 Base.metadata.create_all(bind=engine)
@@ -33,6 +38,20 @@ def _run_migrations():
                 pass  # Column already exists — silently skip
 
 _run_migrations()
+
+# Idempotently convert legacy played_with JSON/text into canonical player rows.
+def _migrate_boardgame_players():
+    db = SessionLocal()
+    try:
+        result = migrate_legacy_match_players(db)
+        logger.info("Board-game player migration complete: %s", result)
+    except Exception:
+        db.rollback()
+        logger.exception("Board-game player migration failed; legacy played_with data remains intact")
+    finally:
+        db.close()
+
+_migrate_boardgame_players()
 
 app = FastAPI(title="Videogame Collection API")
 

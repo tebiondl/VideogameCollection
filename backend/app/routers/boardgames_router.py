@@ -17,6 +17,12 @@ from ..services.boardgame_excel_import import (
     build_import_preview,
     commit_boardgame_import,
 )
+from ..services.boardgame_player_migration import (
+    clean_player_name,
+    get_or_create_player,
+    normalize_player_name,
+    parse_legacy_players,
+)
 from .auth_router import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -73,8 +79,8 @@ def _clean_tag_name(name: str) -> str:
 
 
 def _validate_library_section(section: str) -> str:
-    if section not in {"wishlist", "owned"}:
-        raise HTTPException(status_code=422, detail="library_section must be 'wishlist' or 'owned'")
+    if section not in {"wishlist", "owned", "external"}:
+        raise HTTPException(status_code=422, detail="library_section must be 'wishlist', 'owned', or 'external'")
     return section
 
 
@@ -98,6 +104,7 @@ def _match_response(match: models.BoardgameMatch) -> dict:
         "id": match.id,
         "user_id": match.user_id,
         "boardgame_id": match.boardgame_id,
+        "player_ids": [player.id for player in match.players],
         "played_with": match.played_with,
         "mode": match.mode,
         "result": match.result,
@@ -107,7 +114,31 @@ def _match_response(match: models.BoardgameMatch) -> dict:
         "game_name": match.boardgame.name,
         "game_image_url": match.boardgame.image_url,
         "game_tags": match.boardgame.tags,
+        "players": match.players,
     }
+
+
+def _resolve_match_players(
+    payload: schemas.BoardgameMatchBase,
+    user_id: int,
+    db: Session,
+) -> list[models.BoardgamePlayer]:
+    requested_ids = list(dict.fromkeys(payload.player_ids))
+    if requested_ids:
+        players = db.query(models.BoardgamePlayer).filter(
+            models.BoardgamePlayer.user_id == user_id,
+            models.BoardgamePlayer.id.in_(requested_ids),
+        ).all()
+        if len(players) != len(requested_ids):
+            raise HTTPException(status_code=422, detail="One or more selected players are invalid")
+        by_id = {player.id: player for player in players}
+        return [by_id[player_id] for player_id in requested_ids]
+    return [get_or_create_player(db, user_id, name) for name in parse_legacy_players(payload.played_with)]
+
+
+def _write_match_players(match: models.BoardgameMatch, players: list[models.BoardgamePlayer]) -> None:
+    match.players = players
+    match.played_with = json.dumps([player.name for player in players], ensure_ascii=False) if players else None
 
 
 def _bgg_request(path: str, params: dict) -> ElementTree.Element:
@@ -363,6 +394,151 @@ def get_bgg_game(
     }
 
 
+@router.get("/players", response_model=List[schemas.BoardgamePlayerResponse])
+def get_players(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    players = db.query(models.BoardgamePlayer).filter(
+        models.BoardgamePlayer.user_id == current_user.id,
+    ).order_by(models.BoardgamePlayer.name.asc()).all()
+    return [_player_response(player) for player in players]
+
+
+def _player_response(player: models.BoardgamePlayer) -> dict:
+    return {
+        "id": player.id,
+        "user_id": player.user_id,
+        "name": player.name,
+        "normalized_name": player.normalized_name,
+        "match_count": len(player.matches),
+    }
+
+
+def _get_owned_player(player_id: int, user_id: int, db: Session) -> models.BoardgamePlayer:
+    player = db.query(models.BoardgamePlayer).filter(
+        models.BoardgamePlayer.id == player_id,
+        models.BoardgamePlayer.user_id == user_id,
+    ).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    return player
+
+
+@router.post("/players", response_model=schemas.BoardgamePlayerResponse)
+def create_player(
+    payload: schemas.BoardgamePlayerCreate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    name = clean_player_name(payload.name)
+    if not name:
+        raise HTTPException(status_code=422, detail="Player name cannot be empty")
+    player = get_or_create_player(db, current_user.id, name)
+    db.commit()
+    db.refresh(player)
+    return _player_response(player)
+
+
+@router.put("/players/{player_id}", response_model=schemas.BoardgamePlayerResponse)
+def update_player(
+    player_id: int,
+    payload: schemas.BoardgamePlayerCreate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    player = _get_owned_player(player_id, current_user.id, db)
+    name = clean_player_name(payload.name)
+    normalized = normalize_player_name(name)
+    if not normalized:
+        raise HTTPException(status_code=422, detail="Player name cannot be empty")
+    duplicate = db.query(models.BoardgamePlayer).filter(
+        models.BoardgamePlayer.user_id == current_user.id,
+        models.BoardgamePlayer.normalized_name == normalized,
+        models.BoardgamePlayer.id != player_id,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail=f'A player named "{duplicate.name}" already exists')
+    old_name = player.name
+    player.name = name
+    player.normalized_name = normalized
+    for match in player.matches:
+        match.played_with = json.dumps([entry.name if entry.id != player.id else name for entry in match.players], ensure_ascii=False)
+        if match.winner_name and normalize_player_name(match.winner_name) == normalize_player_name(old_name):
+            match.winner_name = name
+    db.commit()
+    db.refresh(player)
+    return _player_response(player)
+
+
+@router.get("/players/{player_id}/usage", response_model=schemas.BoardgamePlayerUsageResponse)
+def get_player_usage(
+    player_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    player = _get_owned_player(player_id, current_user.id, db)
+    matches = sorted(player.matches, key=lambda match: (match.played_date or "", match.id), reverse=True)
+    return {
+        "player": _player_response(player),
+        "matches": [{
+            "id": match.id,
+            "boardgame_id": match.boardgame_id,
+            "game_name": match.boardgame.name,
+            "played_date": match.played_date,
+            "mode": match.mode,
+            "winner_name": match.winner_name,
+        } for match in matches],
+    }
+
+
+@router.post("/players/{player_id}/merge", response_model=schemas.BoardgamePlayerMergeResponse)
+def merge_and_delete_player(
+    player_id: int,
+    merge: schemas.BoardgamePlayerMerge,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    source = _get_owned_player(player_id, current_user.id, db)
+    replacement = _get_owned_player(merge.replacement_player_id, current_user.id, db)
+    if source.id == replacement.id:
+        raise HTTPException(status_code=422, detail="Choose a different replacement player")
+
+    affected_matches = list(source.matches)
+    source_name = source.name
+    for match in affected_matches:
+        merged_players: list[models.BoardgamePlayer] = []
+        seen_ids: set[int] = set()
+        for existing_player in match.players:
+            next_player = replacement if existing_player.id == source.id else existing_player
+            if next_player.id not in seen_ids:
+                merged_players.append(next_player)
+                seen_ids.add(next_player.id)
+        match.players = merged_players
+        match.played_with = json.dumps([player.name for player in merged_players], ensure_ascii=False) if merged_players else None
+        if match.winner_name and normalize_player_name(match.winner_name) == normalize_player_name(source_name):
+            match.winner_name = replacement.name
+
+    db.delete(source)
+    db.commit()
+    db.refresh(replacement)
+    return {"player": _player_response(replacement), "matches_transferred": len(affected_matches)}
+
+
+@router.delete("/players/{player_id}")
+def delete_player(
+    player_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    player = _get_owned_player(player_id, current_user.id, db)
+    if player.matches:
+        raise HTTPException(status_code=409, detail="This player is used in matches. Merge them into another player before deleting.")
+    db.delete(player)
+    db.commit()
+    return {"status": "ok"}
+
+
 @router.get("/matches", response_model=List[schemas.BoardgameMatchResponse])
 def get_matches(
     current_user: Annotated[models.User, Depends(get_current_user)],
@@ -387,7 +563,9 @@ def create_match(
     ).first()
     if not game:
         raise HTTPException(status_code=404, detail="Board game not found")
-    match = models.BoardgameMatch(**payload.model_dump(), user_id=current_user.id)
+    players = _resolve_match_players(payload, current_user.id, db)
+    match = models.BoardgameMatch(**payload.model_dump(exclude={"player_ids", "played_with"}), user_id=current_user.id)
+    _write_match_players(match, players)
     if payload.mode != "competitive":
         match.winner_name = None
     else:
@@ -419,8 +597,10 @@ def update_match(
     ).first()
     if not game:
         raise HTTPException(status_code=404, detail="Board game not found")
-    for key, value in payload.model_dump().items():
+    players = _resolve_match_players(payload, current_user.id, db)
+    for key, value in payload.model_dump(exclude={"player_ids", "played_with"}).items():
         setattr(match, key, value)
+    _write_match_players(match, players)
     if payload.mode != "competitive":
         match.winner_name = None
     else:

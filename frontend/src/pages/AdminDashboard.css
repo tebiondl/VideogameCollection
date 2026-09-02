@@ -25,6 +25,20 @@
 .admin-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
 .admin-tag-edit-input { max-width: 480px; }
 
+.admin-player-card { padding: 2rem; }
+.admin-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.admin-section-heading h2 { display: flex; align-items: center; gap: .55rem; margin-bottom: .25rem; }
+.admin-section-heading h2 svg { color: #a78bfa; }
+.admin-section-heading > span { flex: 0 0 auto; padding: .3rem .55rem; border-radius: 99px; color: #ddd6fe; background: rgba(139, 92, 246, .13); font-size: .75rem; font-weight: 700; }
+.admin-list-loading { display: flex; justify-content: center; padding: 2rem; }
+.admin-player-list { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; padding-right: .25rem; scrollbar-color: #4c456e transparent; scrollbar-width: thin; }
+.admin-player-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .75rem; padding: .75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.admin-player-avatar { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: #ede9fe; background: rgba(139, 92, 246, .22); font-weight: 800; }
+.admin-player-name { min-width: 0; display: flex; flex-direction: column; }
+.admin-player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-player-name small { color: var(--text-muted); font-size: .76rem; }
+.admin-player-edit-input { width: min(420px, 100%); }
+
 .admin-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -86,6 +100,7 @@
 .admin-affected-game div:last-child { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .admin-affected-game strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-affected-game span { color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-affected-game span svg { vertical-align: -2px; }
 
 .admin-replacement-panel { padding: 1rem; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(37, 42, 51, 0.45); }
 .admin-mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.9rem; }
@@ -93,6 +108,8 @@
 .admin-mode-toggle button.active { color: white; border-color: var(--accent-primary); background: rgba(99, 102, 241, 0.16); }
 .admin-mode-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
 .admin-atomic-note { margin-top: 0.7rem; color: var(--text-muted); font-size: 0.82rem; }
+.admin-player-replacement-label { display: block; margin-bottom: .45rem; color: var(--text-secondary); font-size: .8rem; }
+.admin-player-blocked-note { margin-top: .65rem; color: #fca5a5; font-size: .82rem; }
 .admin-modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.4rem; }
 
 @media (max-width: 620px) {
@@ -101,4 +118,7 @@
   .admin-modal-close { position: absolute; right: 2rem; }
   .admin-modal-actions { flex-direction: column-reverse; }
   .admin-modal-actions .btn { width: 100%; }
+  .admin-player-card { padding: 1.25rem; }
+  .admin-section-heading { align-items: stretch; flex-direction: column; }
+  .admin-section-heading > span { align-self: flex-start; }
 }

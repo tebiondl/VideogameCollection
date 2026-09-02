@@ -16,6 +16,7 @@ from openpyxl.utils.datetime import from_excel
 from sqlalchemy.orm import Session
 
 from .. import models
+from .boardgame_player_migration import sync_match_players_from_legacy
 
 
 MAX_WORKBOOK_BYTES = 10 * 1024 * 1024
@@ -420,7 +421,7 @@ def commit_boardgame_import(content: bytes, filename: str, db: Session, user_id:
             game = game_map.get(game_key)
             if not game:
                 raise ValueError(f"Could not resolve imported game: {payload['resolved_game_name']}")
-            db.add(models.BoardgameMatch(
+            match = models.BoardgameMatch(
                 user_id=user_id,
                 boardgame_id=game.id,
                 played_with=payload["played_with"],
@@ -432,7 +433,10 @@ def commit_boardgame_import(content: bytes, filename: str, db: Session, user_id:
                 # An empty string preserves an unknown legacy date without inventing one.
                 played_date=payload["played_date"] or "",
                 import_key=payload["import_key"],
-            ))
+            )
+            db.add(match)
+            db.flush()
+            sync_match_players_from_legacy(db, match)
             existing_import_keys.add(payload["import_key"])
             created_matches += 1
         db.commit()

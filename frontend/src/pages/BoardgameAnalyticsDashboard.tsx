@@ -20,7 +20,7 @@ interface Boardgame {
   image_url: string | null;
   mark: number | null;
   tags: string | null;
-  library_section: 'wishlist' | 'owned';
+  library_section: 'wishlist' | 'owned' | 'external';
   price: number | null;
   expansions: string | null;
   is_expansion: boolean;
@@ -33,10 +33,15 @@ interface BoardgameMatch {
   game_image_url: string | null;
   game_tags: string | null;
   played_with: string | null;
+  players: { id: number; name: string }[];
   mode: MatchMode;
   result: 'victory' | 'defeat' | 'winner' | 'incomplete' | null;
   winner_name: string | null;
   played_date: string | null;
+}
+
+function matchPlayerNames(match: BoardgameMatch): string[] {
+  return match.players?.length ? match.players.map(player => player.name) : parseList(match.played_with);
 }
 
 const MODE_COLORS: Record<MatchMode, string> = {
@@ -157,7 +162,7 @@ export function BoardgameAnalyticsDashboard() {
       gameCounts.set(match.boardgame_id, currentGame);
 
       if (match.mode in modeCounts) modeCounts[match.mode] += 1;
-      parseList(match.played_with).forEach(player => {
+      matchPlayerNames(match).forEach(player => {
         const key = normalizedName(player);
         const entry = playerCounts.get(key) || { name: player, plays: 0, wins: 0 };
         entry.plays += 1;
@@ -363,7 +368,7 @@ export function BoardgameAnalyticsDashboard() {
               {stats.rankedWinners.length > 0 && <article className="bga-panel"><div className="bga-panel-heading"><div><p className="bga-kicker">Competitive hall of fame</p><h2>Names on the trophy</h2></div></div><div className="bga-honour-list">{stats.rankedWinners.slice(0, 5).map((winner, index) => <div key={normalizedName(winner.name)}><b>{index + 1}</b><span className="bga-trophy-mark"><Trophy size={18} /></span><span><strong>{winner.name}</strong><small>Recorded competitive winner</small></span><em>{plural(winner.wins, 'win')}</em></div>)}</div></article>}
             </section>}
 
-            <footer className="bga-footnote"><CheckCircle2 size={17} /><p>Calculated from {games.length} collection entries and {matches.length} logged matches. Unknown dates are included only in All time.</p></footer>
+            <footer className="bga-footnote"><CheckCircle2 size={17} /><p>Calculated from {games.length} tracked game records and {matches.length} logged matches. Friend-owned games affect play analytics, but never your collection totals.</p></footer>
           </>
         )}
       </main>

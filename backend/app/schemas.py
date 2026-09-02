@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 
 class UserCreate(BaseModel):
@@ -218,8 +218,47 @@ class BoardgameSavedFilterResponse(BaseModel):
         from_attributes = True
 
 
+class BoardgamePlayerCreate(BaseModel):
+    name: str
+
+
+class BoardgamePlayerMerge(BaseModel):
+    replacement_player_id: int
+
+
+class BoardgamePlayerResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    normalized_name: str
+    match_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class BoardgamePlayerMatchUsage(BaseModel):
+    id: int
+    boardgame_id: int
+    game_name: str
+    played_date: str | None = None
+    mode: str
+    winner_name: str | None = None
+
+
+class BoardgamePlayerUsageResponse(BaseModel):
+    player: BoardgamePlayerResponse
+    matches: list[BoardgamePlayerMatchUsage]
+
+
+class BoardgamePlayerMergeResponse(BaseModel):
+    player: BoardgamePlayerResponse
+    matches_transferred: int
+
+
 class BoardgameMatchBase(BaseModel):
     boardgame_id: int
+    player_ids: list[int] = Field(default_factory=list)
     played_with: str | None = None
     mode: str
     result: str | None = None
@@ -238,6 +277,7 @@ class BoardgameMatchResponse(BoardgameMatchBase):
     game_name: str
     game_image_url: str | None = None
     game_tags: str | None = None
+    players: list[BoardgamePlayerResponse] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

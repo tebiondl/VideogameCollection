@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Navigate, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Dices, Tag as TagIcon } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, CalendarDays, Check, Dices, Edit2, Loader2, Plus, Shield, Tag as TagIcon, Trash2, UsersRound, X, AlertTriangle } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
@@ -27,6 +27,27 @@ interface TagUsage {
   games: TagUsageGame[];
 }
 
+interface Player {
+  id: number;
+  name: string;
+  normalized_name: string;
+  match_count: number;
+}
+
+interface PlayerUsageMatch {
+  id: number;
+  boardgame_id: number;
+  game_name: string;
+  played_date: string | null;
+  mode: string;
+  winner_name: string | null;
+}
+
+interface PlayerUsage {
+  player: Player;
+  matches: PlayerUsageMatch[];
+}
+
 export function AdminBoardgamesDashboard() {
   const { user } = useAuth();
   const [tags, setTags] = useState<Tag[]>([]);
@@ -42,10 +63,20 @@ export function AdminBoardgamesDashboard() {
   const [replacementTagName, setReplacementTagName] = useState('');
   const [newReplacementTagName, setNewReplacementTagName] = useState('');
   const [isReassigning, setIsReassigning] = useState(false);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [isLoadingPlayers, setIsLoadingPlayers] = useState(true);
+  const [editingPlayerId, setEditingPlayerId] = useState<number | null>(null);
+  const [editingPlayerName, setEditingPlayerName] = useState('');
+  const [isSavingPlayer, setIsSavingPlayer] = useState(false);
+  const [isCheckingPlayer, setIsCheckingPlayer] = useState<number | null>(null);
+  const [playerUsage, setPlayerUsage] = useState<PlayerUsage | null>(null);
+  const [replacementPlayerId, setReplacementPlayerId] = useState<number | null>(null);
+  const [isMergingPlayers, setIsMergingPlayers] = useState(false);
   
 
   useEffect(() => {
     fetchTags();
+    fetchPlayers();
   }, []);
 
   async function fetchTags() {
@@ -125,6 +156,19 @@ export function AdminBoardgamesDashboard() {
     }
   };
 
+  async function fetchPlayers() {
+    setIsLoadingPlayers(true);
+    try {
+      const res = await fetchWithAuth('/boardgames/players');
+      if (!res.ok) throw new Error('Failed to fetch players');
+      setPlayers(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch players', err);
+    } finally {
+      setIsLoadingPlayers(false);
+    }
+  }
+
   const deleteUnusedTag = async (tag: Tag) => {
     if (!window.confirm(`Delete the unused “${tag.name}” tag?`)) return;
     try {
@@ -191,7 +235,91 @@ export function AdminBoardgamesDashboard() {
     }
   };
 
-  
+  const startEditingPlayer = (player: Player) => {
+    setEditingPlayerId(player.id);
+    setEditingPlayerName(player.name);
+  };
+
+  const handleSavePlayer = async (player: Player) => {
+    const nextName = editingPlayerName.trim();
+    if (!nextName || nextName === player.name) {
+      setEditingPlayerId(null);
+      return;
+    }
+    setIsSavingPlayer(true);
+    try {
+      const res = await fetchWithAuth(`/boardgames/players/${player.id}`, {
+        method: 'PUT', body: JSON.stringify({ name: nextName })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Failed to update player.');
+      }
+      const updated: Player = await res.json();
+      setPlayers(current => current.map(item => item.id === updated.id ? updated : item).sort((a, b) => a.name.localeCompare(b.name)));
+      setEditingPlayerId(null);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Error updating player');
+    } finally {
+      setIsSavingPlayer(false);
+    }
+  };
+
+  const deleteUnusedPlayer = async (player: Player) => {
+    if (!window.confirm(`Delete the unused player “${player.name}”?`)) return;
+    const res = await fetchWithAuth(`/boardgames/players/${player.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.detail || 'Failed to delete player.');
+    }
+    setPlayers(current => current.filter(item => item.id !== player.id));
+  };
+
+  const handleDeletePlayer = async (player: Player) => {
+    setIsCheckingPlayer(player.id);
+    try {
+      const res = await fetchWithAuth(`/boardgames/players/${player.id}/usage`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Could not check this player’s matches.');
+      }
+      const usage: PlayerUsage = await res.json();
+      if (usage.matches.length === 0) {
+        await deleteUnusedPlayer(player);
+        return;
+      }
+      setReplacementPlayerId(null);
+      setPlayerUsage(usage);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Error checking player usage');
+    } finally {
+      setIsCheckingPlayer(null);
+    }
+  };
+
+  const handleMergePlayer = async () => {
+    if (!playerUsage || !replacementPlayerId) return;
+    setIsMergingPlayers(true);
+    try {
+      const res = await fetchWithAuth(`/boardgames/players/${playerUsage.player.id}/merge`, {
+        method: 'POST', body: JSON.stringify({ replacement_player_id: replacementPlayerId })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Failed to merge these players.');
+      }
+      await fetchPlayers();
+      setPlayerUsage(null);
+      setReplacementPlayerId(null);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Error merging players');
+    } finally {
+      setIsMergingPlayers(false);
+    }
+  };
 
   // Restrict access to admin only
   if (user && !user.is_admin) {
@@ -280,6 +408,33 @@ export function AdminBoardgamesDashboard() {
             <p className="text-muted">No global tags found.</p>
           )}
         </div>
+
+        <div className="glass-card admin-player-card">
+          <div className="admin-section-heading">
+            <div><h2><UsersRound size={22} /> Saved Players</h2><p className="text-secondary">Edit player names or merge duplicates without losing their match history.</p></div>
+            <span>{players.length} players</span>
+          </div>
+          {isLoadingPlayers ? <div className="admin-list-loading"><Loader2 className="spinner" size={24} /></div> : players.length > 0 ? <div className="admin-player-list">
+            {players.map(player => <div className="admin-player-row" key={player.id}>
+              <div className="admin-player-avatar">{player.name.charAt(0).toUpperCase()}</div>
+              <div className="admin-player-name">
+                {editingPlayerId === player.id ? <input className="form-input admin-player-edit-input" value={editingPlayerName} onChange={event => setEditingPlayerName(event.target.value)} onKeyDown={event => {
+                  if (event.key === 'Enter') handleSavePlayer(player);
+                  if (event.key === 'Escape') setEditingPlayerId(null);
+                }} autoFocus /> : <><strong>{player.name}</strong><small>{player.match_count} {player.match_count === 1 ? 'match' : 'matches'}</small></>}
+              </div>
+              <div className="admin-tag-actions">
+                {editingPlayerId === player.id ? <>
+                  <button className="admin-icon-button success" onClick={() => handleSavePlayer(player)} disabled={isSavingPlayer || !editingPlayerName.trim()} title="Save player name">{isSavingPlayer ? <Loader2 size={18} className="spinner" /> : <Check size={18} />}</button>
+                  <button className="admin-icon-button" onClick={() => setEditingPlayerId(null)} disabled={isSavingPlayer} title="Cancel editing"><X size={18} /></button>
+                </> : <>
+                  <button className="admin-icon-button" onClick={() => startEditingPlayer(player)} title={`Edit ${player.name}`}><Edit2 size={18} /></button>
+                  <button className="admin-icon-button danger" onClick={() => handleDeletePlayer(player)} disabled={isCheckingPlayer === player.id} title={`Delete or merge ${player.name}`}>{isCheckingPlayer === player.id ? <Loader2 size={18} className="spinner" /> : <Trash2 size={18} />}</button>
+                </>}
+              </div>
+            </div>)}
+          </div> : <p className="text-muted">No saved players yet. They will appear here after you add them to a match.</p>}
+        </div>
       </div>
       {tagUsage && createPortal(
         <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => !isReassigning && setTagUsage(null)}>
@@ -313,6 +468,42 @@ export function AdminBoardgamesDashboard() {
               <button className="btn btn-secondary" onClick={() => setTagUsage(null)} disabled={isReassigning}>Cancel</button>
               <button className="btn btn-primary" onClick={handleReassignAndDelete} disabled={isReassigning || !(replacementMode === 'existing' ? replacementTagName : newReplacementTagName.trim())}>
                 {isReassigning ? <Loader2 size={18} className="spinner" /> : <Check size={18} />} Reassign {tagUsage.games.length} and delete
+              </button>
+            </div>
+          </section>
+        </div>, document.body
+      )}
+      {playerUsage && createPortal(
+        <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => !isMergingPlayers && setPlayerUsage(null)}>
+          <section className="admin-tag-modal admin-player-modal" role="dialog" aria-modal="true" aria-labelledby="merge-boardgame-player-title" onMouseDown={event => event.stopPropagation()}>
+            <div className="admin-modal-header">
+              <div className="admin-warning-icon"><ArrowRightLeft size={24} /></div>
+              <div>
+                <p className="admin-eyebrow">Player has match history</p>
+                <h2 id="merge-boardgame-player-title">Merge “{playerUsage.player.name}” before deleting</h2>
+                <p className="text-secondary">Choose the player who should inherit all {playerUsage.matches.length} {playerUsage.matches.length === 1 ? 'match' : 'matches'}.</p>
+              </div>
+              <button className="admin-modal-close" onClick={() => setPlayerUsage(null)} disabled={isMergingPlayers} aria-label="Close"><X size={20} /></button>
+            </div>
+            <div className="admin-affected-games admin-affected-matches">
+              {playerUsage.matches.map(match => <div className="admin-affected-game" key={match.id}>
+                <div className="admin-game-placeholder"><Dices size={20} /></div>
+                <div><strong>{match.game_name}</strong><span><CalendarDays size={13} /> {match.played_date || 'Unknown date'} · {match.mode}</span></div>
+              </div>)}
+            </div>
+            <div className="admin-replacement-panel">
+              <label className="admin-player-replacement-label">Transfer matches to</label>
+              <select className="form-input" value={replacementPlayerId ?? ''} onChange={event => setReplacementPlayerId(event.target.value ? Number(event.target.value) : null)}>
+                <option value="">Choose another player…</option>
+                {players.filter(player => player.id !== playerUsage.player.id).map(player => <option key={player.id} value={player.id}>{player.name} · {player.match_count} {player.match_count === 1 ? 'match' : 'matches'}</option>)}
+              </select>
+              <p className="admin-atomic-note">Every match will use the replacement player, duplicate links will be removed, and competitive wins will follow the replacement name.</p>
+              {players.length <= 1 && <p className="admin-player-blocked-note">There is no other player to receive these matches yet.</p>}
+            </div>
+            <div className="admin-modal-actions">
+              <button className="btn btn-secondary" onClick={() => setPlayerUsage(null)} disabled={isMergingPlayers}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleMergePlayer} disabled={isMergingPlayers || !replacementPlayerId}>
+                {isMergingPlayers ? <Loader2 size={18} className="spinner" /> : <ArrowRightLeft size={18} />} Transfer matches and delete
               </button>
             </div>
           </section>
