@@ -650,6 +650,83 @@ def create_boardgame(
     return new_game
 
 
+def _transfer_external_game_matches(
+    target: models.Boardgame,
+    source_game_ids: list[int],
+    user_id: int,
+    db: Session,
+) -> tuple[int, int]:
+    requested_ids = list(dict.fromkeys(source_game_ids))
+    if not requested_ids:
+        return 0, 0
+    if target.id in requested_ids:
+        raise HTTPException(status_code=422, detail="The collection game cannot also be a match source")
+    sources = db.query(models.Boardgame).filter(
+        models.Boardgame.id.in_(requested_ids),
+        models.Boardgame.user_id == user_id,
+        models.Boardgame.library_section == "external",
+    ).all()
+    if len(sources) != len(requested_ids):
+        raise HTTPException(status_code=422, detail="One or more selected match sources are invalid")
+
+    matches_linked = 0
+    for source in sources:
+        for match in list(source.matches):
+            match.boardgame = target
+            matches_linked += 1
+    db.flush()
+    for source in sources:
+        db.delete(source)
+    return matches_linked, len(sources)
+
+
+@router.post("/collection", response_model=schemas.BoardgameCollectionLinkResponse)
+def create_collection_game_with_matches(
+    payload: schemas.BoardgameCollectionCreate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    game_data = payload.game.model_dump()
+    game_data["library_section"] = "owned"
+    new_game = models.Boardgame(**game_data, user_id=current_user.id)
+    db.add(new_game)
+    db.flush()
+    matches_linked, sources_merged = _transfer_external_game_matches(
+        new_game, payload.source_game_ids, current_user.id, db
+    )
+    db.commit()
+    db.refresh(new_game)
+    return {"game": new_game, "matches_linked": matches_linked, "sources_merged": sources_merged}
+
+
+@router.post("/{game_id}/move-to-collection", response_model=schemas.BoardgameCollectionLinkResponse)
+def move_wishlist_game_to_collection(
+    game_id: int,
+    payload: schemas.BoardgameCollectionCreate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    target = db.query(models.Boardgame).filter(
+        models.Boardgame.id == game_id,
+        models.Boardgame.user_id == current_user.id,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Wishlist game not found")
+    if target.library_section != "wishlist" or target.is_expansion:
+        raise HTTPException(status_code=422, detail="Only wishlist base games can use this action")
+
+    update_data = payload.game.model_dump()
+    update_data["library_section"] = "owned"
+    for key, value in update_data.items():
+        setattr(target, key, value)
+    matches_linked, sources_merged = _transfer_external_game_matches(
+        target, payload.source_game_ids, current_user.id, db
+    )
+    db.commit()
+    db.refresh(target)
+    return {"game": target, "matches_linked": matches_linked, "sources_merged": sources_merged}
+
+
 @router.post("/{expansion_id}/attach", response_model=schemas.BoardgameResponse)
 def attach_wishlist_expansion(
     expansion_id: int,
@@ -709,7 +786,7 @@ def update_boardgame(
     db.refresh(db_game)
     return db_game
 
-@router.delete("/{game_id}")
+@router.delete("/{game_id}", response_model=schemas.BoardgameDeleteResponse)
 def delete_boardgame(
     game_id: int,
     current_user: Annotated[models.User, Depends(get_current_user)],
@@ -723,9 +800,16 @@ def delete_boardgame(
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
         
+    match_count = len(db_game.matches)
+    if match_count:
+        db_game.library_section = "external"
+        db.commit()
+        db.refresh(db_game)
+        return {"status": "converted_to_external", "game": db_game, "matches_preserved": match_count}
+
     db.delete(db_game)
     db.commit()
-    return {"status": "ok"}
+    return {"status": "deleted", "matches_preserved": 0}
 
 
 async def _read_import_workbook(file: UploadFile) -> tuple[bytes, str]:

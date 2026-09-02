@@ -75,6 +75,13 @@ interface MatchDraft {
   played_date: string;
 }
 
+interface CollectionLinkPrompt {
+  action: 'create' | 'move';
+  draft: GameDraft;
+  targetGameId: number | null;
+  sources: Boardgame[];
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
 const newGameDraft = (section: LibrarySection): GameDraft => ({
   name: '', description: null, comments: null, image_url: null, status: 'Not Started', mark: null,
@@ -180,6 +187,9 @@ export function BoardgamesDashboard() {
   const [gameDraft, setGameDraft] = useState<GameDraft | null>(null);
   const [editingGameId, setEditingGameId] = useState<number | null>(null);
   const [isSavingGame, setIsSavingGame] = useState(false);
+  const [collectionLinkPrompt, setCollectionLinkPrompt] = useState<CollectionLinkPrompt | null>(null);
+  const [selectedMatchSourceIds, setSelectedMatchSourceIds] = useState<number[]>([]);
+  const [isLinkingCollection, setIsLinkingCollection] = useState(false);
   const [expansionName, setExpansionName] = useState('');
   const [bggQuery, setBggQuery] = useState('');
   const [bggResults, setBggResults] = useState<BggSearchResult[]>([]);
@@ -332,20 +342,59 @@ export function BoardgamesDashboard() {
 
   const openNewGame = (section: LibrarySection) => { setEditingGameId(null); setGameDraft(newGameDraft(section)); setExpansionName(''); setBggQuery(''); setBggResults([]); };
   const openEditGame = (game: Boardgame) => { setEditingGameId(game.id); setGameDraft({ ...game }); setExpansionName(''); setBggQuery(game.name); setBggResults([]); };
-  const saveGame = async () => {
-    if (!gameDraft?.name.trim()) return; setIsSavingGame(true);
+  const externalMatchCandidates = (name: string, excludeGameId?: number) => externalGames
+    .filter(game => game.id !== excludeGameId && matches.some(match => match.boardgame_id === game.id) && fuzzyNameScore(game.name, name) !== null)
+    .sort((a, b) => (fuzzyNameScore(a.name, name) ?? 99) - (fuzzyNameScore(b.name, name) ?? 99) || a.name.localeCompare(b.name));
+  const openCollectionLinkPrompt = (action: CollectionLinkPrompt['action'], draft: GameDraft, targetGameId: number | null, sources: Boardgame[]) => {
+    setSelectedMatchSourceIds(sources.filter(source => normalizedGameName(source.name) === normalizedGameName(draft.name)).map(source => source.id));
+    setCollectionLinkPrompt({ action, draft: { ...draft }, targetGameId, sources });
+  };
+  const persistGame = async (draft: GameDraft, targetId: number | null, sourceGameIds: number[] = []) => {
+    if (!draft.name.trim()) return;
+    setIsSavingGame(true);
     try {
-      const existingExternal = !editingGameId ? games.find(game => game.library_section === 'external' && normalizedGameName(game.name) === normalizedGameName(gameDraft.name)) : undefined;
-      const targetId = editingGameId || existingExternal?.id;
-      const response = await fetchWithAuth(targetId ? `/boardgames/${targetId}` : '/boardgames/', { method: targetId ? 'PUT' : 'POST', body: JSON.stringify({ ...gameDraft, name: gameDraft.name.trim() }) });
+      const cleanedDraft = { ...draft, name: draft.name.trim() };
+      const useLinkedCreate = !targetId && cleanedDraft.library_section === 'owned' && sourceGameIds.length > 0;
+      const response = await fetchWithAuth(useLinkedCreate ? '/boardgames/collection' : targetId ? `/boardgames/${targetId}` : '/boardgames/', {
+        method: targetId ? 'PUT' : 'POST',
+        body: JSON.stringify(useLinkedCreate ? { game: cleanedDraft, source_game_ids: sourceGameIds } : cleanedDraft),
+      });
       if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not save this game.'); }
-      const saved: Boardgame = await response.json(); setGames(current => targetId ? current.map(game => game.id === saved.id ? saved : game) : [...current, saved]); setGameDraft(null);
+      await loadDashboard(false);
+      setGameDraft(null); setCollectionLinkPrompt(null); setSelectedMatchSourceIds([]);
     } catch (error) { alert(error instanceof Error ? error.message : 'Could not save this game.'); } finally { setIsSavingGame(false); }
   };
+  const saveGame = () => {
+    if (!gameDraft?.name.trim()) return;
+    if (!editingGameId && gameDraft.library_section === 'owned') {
+      const sources = externalMatchCandidates(gameDraft.name);
+      if (sources.length) { openCollectionLinkPrompt('create', gameDraft, null, sources); return; }
+    }
+    void persistGame(gameDraft, editingGameId);
+  };
   const deleteGame = async (game: Boardgame) => {
-    if (!window.confirm(`Delete “${game.name}” and its match history?`)) return;
+    const matchCount = matches.filter(match => match.boardgame_id === game.id).length;
+    const confirmation = matchCount
+      ? `Remove “${game.name}” from ${game.library_section === 'owned' ? 'your collection' : 'your wishlist'}? Its ${matchCount} ${matchCount === 1 ? 'match' : 'matches'} will stay in your history and the game will be marked Not in collection.`
+      : `Delete “${game.name}”?`;
+    if (!window.confirm(confirmation)) return;
     const response = await fetchWithAuth(`/boardgames/${game.id}`, { method: 'DELETE' });
-    if (response.ok) { setGames(current => current.filter(item => item.id !== game.id)); setMatches(current => current.filter(match => match.boardgame_id !== game.id)); }
+    if (!response.ok) { const data = await response.json().catch(() => null); alert(data?.detail || 'Could not remove this game.'); return; }
+    const result: { status: string; game?: Boardgame } = await response.json();
+    if (result.status === 'converted_to_external' && result.game) setGames(current => current.map(item => item.id === game.id ? result.game! : item));
+    else setGames(current => current.filter(item => item.id !== game.id));
+  };
+  const moveGameToCollection = async (game: Boardgame, sourceGameIds: number[] = []) => {
+    setIsLinkingCollection(true);
+    try {
+      const response = await fetchWithAuth(sourceGameIds.length ? `/boardgames/${game.id}/move-to-collection` : `/boardgames/${game.id}`, {
+        method: sourceGameIds.length ? 'POST' : 'PUT',
+        body: JSON.stringify(sourceGameIds.length ? { game: { ...game, library_section: 'owned' }, source_game_ids: sourceGameIds } : { ...game, library_section: 'owned' }),
+      });
+      if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(data?.detail || 'Could not move this game to your collection.'); }
+      await loadDashboard(false);
+      setCollectionLinkPrompt(null); setSelectedMatchSourceIds([]);
+    } catch (error) { alert(error instanceof Error ? error.message : 'Could not move this game to your collection.'); } finally { setIsLinkingCollection(false); }
   };
   const markAsOwned = async (game: Boardgame) => {
     if (game.is_expansion) {
@@ -359,8 +408,9 @@ export function BoardgamesDashboard() {
       setMovingExpansion(game); setSelectedParentGameId(suggestedParent?.id || null); setParentGameSearch('');
       return;
     }
-    const response = await fetchWithAuth(`/boardgames/${game.id}`, { method: 'PUT', body: JSON.stringify({ ...game, library_section: 'owned' }) });
-    if (response.ok) { const updated: Boardgame = await response.json(); setGames(current => current.map(item => item.id === game.id ? updated : item)); }
+    const sources = externalMatchCandidates(game.name, game.id);
+    if (sources.length) { openCollectionLinkPrompt('move', { ...game, library_section: 'owned' }, game.id, sources); return; }
+    await moveGameToCollection(game);
   };
   const attachExpansion = async () => {
     if (!movingExpansion || !selectedParentGameId) return;
@@ -453,6 +503,18 @@ export function BoardgamesDashboard() {
   const deleteMatch = async (match: BoardgameMatch) => { if (!window.confirm(`Delete the ${matchDateLabel(match.played_date)} match of “${match.game_name}”?`)) return; const response = await fetchWithAuth(`/boardgames/matches/${match.id}`, { method: 'DELETE' }); if (response.ok) setMatches(current => current.filter(item => item.id !== match.id)); };
   const clearLibraryFilters = () => { setSearchQuery(''); setSelectedTag(''); setMaxRank(''); setMaxPrice(''); setMinHype(''); setMinRating(''); setExpansionFilter('all'); };
   const clearMatchFilters = () => { setMatchSearch(''); setMatchFriendFilter(''); setMatchModeFilter(''); setMatchResultFilter(''); setMatchTagFilter(''); setMatchDateFrom(''); setMatchDateTo(''); };
+  const toggleMatchSource = (gameId: number) => setSelectedMatchSourceIds(current => current.includes(gameId) ? current.filter(id => id !== gameId) : [...current, gameId]);
+  const completeCollectionLink = (linkMatches: boolean) => {
+    if (!collectionLinkPrompt) return;
+    const sourceIds = linkMatches ? selectedMatchSourceIds : [];
+    if (collectionLinkPrompt.action === 'create') {
+      void persistGame(collectionLinkPrompt.draft, null, sourceIds);
+      return;
+    }
+    if (collectionLinkPrompt.targetGameId) {
+      void moveGameToCollection({ ...collectionLinkPrompt.draft, id: collectionLinkPrompt.targetGameId }, sourceIds);
+    }
+  };
 
   if (isLoading) return <div className="bg-loading"><Loader2 className="spinner" size={34} /><p>Opening your board-game vault…</p></div>;
 
@@ -499,6 +561,24 @@ export function BoardgamesDashboard() {
       {gameDraft.library_section === 'wishlist' ? <section className="bg-form-section"><h3><ShoppingBag /> Wishlist details</h3><div className="bg-form-grid"><label>Price (€)<input type="number" min="0" step="0.01" value={gameDraft.price ?? ''} onChange={event => setGameDraft({ ...gameDraft, price: event.target.value ? Number(event.target.value) : null })} placeholder="Editable price" /></label><label>Anticipation<select value={gameDraft.hype ?? ''} onChange={event => setGameDraft({ ...gameDraft, hype: event.target.value ? Number(event.target.value) : null })}><option value="">Not rated</option>{Array.from({ length: 10 }, (_, index) => index + 1).map(score => <option key={score} value={score}>{score}/10</option>)}</select></label><label className="bg-checkbox-label wide"><input type="checkbox" checked={gameDraft.is_expansion} onChange={event => setGameDraft({ ...gameDraft, is_expansion: event.target.checked })} /><span><strong>This entry is an expansion</strong><small>Expansions can live independently in the wishlist.</small></span></label>{gameDraft.is_expansion && <label className="wide">Base game<input value={gameDraft.parent_game_name ?? ''} onChange={event => setGameDraft({ ...gameDraft, parent_game_name: event.target.value || null })} placeholder="Which game is it for?" /></label>}</div></section> : <section className="bg-form-section"><h3><Archive /> Collection details</h3><div className="bg-form-grid"><label>Your rating<select value={gameDraft.mark ?? ''} onChange={event => setGameDraft({ ...gameDraft, mark: event.target.value ? Number(event.target.value) : null })}><option value="">Not rated</option>{Array.from({ length: 10 }, (_, index) => index + 1).map(score => <option key={score} value={score}>{score}/10</option>)}</select></label><label>BGG link<input type="url" value={gameDraft.bgg_link ?? ''} onChange={event => setGameDraft({ ...gameDraft, bgg_link: event.target.value || null })} placeholder="https://boardgamegeek.com/…" /></label></div><div className="bg-expansion-editor"><div><strong>Expansions you own</strong><span>Add them manually and keep them grouped with this game.</span></div><div className="bg-expansion-input"><input value={expansionName} onChange={event => setExpansionName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addExpansion(); } }} placeholder="Expansion name" /><button onClick={addExpansion} disabled={!expansionName.trim()}><Plus /> Add</button></div>{parseStringList(gameDraft.expansions).length > 0 ? <div className="bg-expansion-edit-list">{parseStringList(gameDraft.expansions).map(name => <span key={name}><PackageCheck />{name}<button onClick={() => removeExpansion(name)} aria-label={`Remove ${name}`}><X /></button></span>)}</div> : <p>No expansions added yet.</p>}</div></section>}
       <section className="bg-form-section"><h3><TagIcon /> Tags and notes</h3><label className="bg-field-label">Tags<TagMultiSelect availableTags={availableTags} selectedTagsString={gameDraft.tags || ''} onChange={tags => setGameDraft({ ...gameDraft, tags: tags || null })} /></label><label className="bg-field-label">Private notes<textarea value={gameDraft.comments ?? ''} onChange={event => setGameDraft({ ...gameDraft, comments: event.target.value || null })} rows={3} placeholder="Edition, shop, language, reminders…" /></label></section>
     </div><footer><button className="btn btn-secondary" onClick={() => setGameDraft(null)} disabled={isSavingGame}>Cancel</button><button className="btn btn-primary" onClick={saveGame} disabled={isSavingGame || !gameDraft.name.trim()}>{isSavingGame ? <Loader2 className="spinner" /> : <Check />} {editingGameId ? 'Save changes' : 'Add game'}</button></footer></section></div>, document.body)}
+
+    {collectionLinkPrompt && createPortal(
+      <div className="bg-modal-backdrop bg-link-modal-backdrop" onMouseDown={() => !isSavingGame && !isLinkingCollection && setCollectionLinkPrompt(null)}>
+        <section className="bg-modal bg-link-modal" role="dialog" aria-modal="true" aria-labelledby="link-match-history-title" onMouseDown={event => event.stopPropagation()}>
+          <header><div className="matches"><History /></div><div><span>Similar match history found</span><h2 id="link-match-history-title">Link matches to “{collectionLinkPrompt.draft.name}”?</h2></div><button onClick={() => setCollectionLinkPrompt(null)} disabled={isSavingGame || isLinkingCollection} aria-label="Close"><X /></button></header>
+          <div className="bg-modal-scroll">
+            <p className="bg-link-intro">These Not in collection records have similar names. Select the ones that refer to this game; their matches will move to the collection entry.</p>
+            <div className="bg-link-source-list">{collectionLinkPrompt.sources.map(source => {
+              const sourceMatches = matches.filter(match => match.boardgame_id === source.id);
+              const selected = selectedMatchSourceIds.includes(source.id);
+              return <button type="button" key={source.id} className={selected ? 'selected' : ''} onClick={() => toggleMatchSource(source.id)}><span className="bg-link-checkbox">{selected && <Check size={15} />}</span><GameArtwork game={source} compact /><span><strong>{source.name}</strong><small>{sourceMatches.length} {sourceMatches.length === 1 ? 'match' : 'matches'} · Last played {sourceMatches.map(match => match.played_date || '').sort().at(-1) || 'unknown'}</small></span></button>;
+            })}</div>
+            <p className="bg-link-note"><AlertTriangle size={16} /> Only link records that are truly the same game. Selected Not in collection records will be removed after their matches transfer.</p>
+          </div>
+          <footer><button className="btn btn-secondary" onClick={() => setCollectionLinkPrompt(null)} disabled={isSavingGame || isLinkingCollection}>Cancel</button><button className="btn btn-secondary" onClick={() => completeCollectionLink(false)} disabled={isSavingGame || isLinkingCollection}>{collectionLinkPrompt.action === 'create' ? 'Add without linking' : 'Move without linking'}</button><button className="btn btn-primary" onClick={() => completeCollectionLink(true)} disabled={!selectedMatchSourceIds.length || isSavingGame || isLinkingCollection}>{isSavingGame || isLinkingCollection ? <Loader2 className="spinner" /> : <History />} Link selected matches</button></footer>
+        </section>
+      </div>, document.body
+    )}
 
     {matchDraft && createPortal(
       <div className="bg-modal-backdrop" onMouseDown={() => !isSavingMatch && !isCreatingPlayer && setMatchDraft(null)}>

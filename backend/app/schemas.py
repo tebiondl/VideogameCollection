@@ -143,6 +143,10 @@ class BoardgameBase(BaseModel):
 class BoardgameCreate(BoardgameBase):
     pass
 
+class BoardgameCollectionCreate(BaseModel):
+    game: BoardgameCreate
+    source_game_ids: list[int] = Field(default_factory=list)
+
 class BoardgameUpdate(BoardgameBase):
     id: int
 
@@ -156,6 +160,16 @@ class BoardgameResponse(BoardgameBase):
 
     class Config:
         from_attributes = True
+
+class BoardgameCollectionLinkResponse(BaseModel):
+    game: BoardgameResponse
+    matches_linked: int
+    sources_merged: int
+
+class BoardgameDeleteResponse(BaseModel):
+    status: str
+    game: BoardgameResponse | None = None
+    matches_preserved: int = 0
 
 class BoardgameSmartImportItemResponse(BoardgameBase):
     id: int
