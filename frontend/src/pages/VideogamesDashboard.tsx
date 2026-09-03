@@ -8,6 +8,8 @@ import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/Advance
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
+import { PaginationControls } from '../components/PaginationControls';
+import { parseStoredPageSize, type PageSize } from '../lib/pagination';
 import { useAuth } from '../context/AuthContext';
 import './VideogamesDashboard.css';
 
@@ -57,6 +59,9 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
 export function VideogamesDashboard() {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
+  const [pageSizeOptions, setPageSizeOptions] = useState([5, 10, 20, 50]);
+  const [pageSize, setPageSize] = useState<PageSize>(() => parseStoredPageSize(sessionStorage.getItem('vg_page_size')));
+  const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState(() => {
     return sessionStorage.getItem('vg_searchQuery') || '';
   });
@@ -64,6 +69,9 @@ export function VideogamesDashboard() {
   useEffect(() => {
     sessionStorage.setItem('vg_searchQuery', searchQuery);
   }, [searchQuery]);
+  useEffect(() => {
+    sessionStorage.setItem('vg_page_size', String(pageSize));
+  }, [pageSize]);
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
@@ -212,14 +220,20 @@ export function VideogamesDashboard() {
   useEffect(() => {
     const fetchGamesAndTags = async () => {
       try {
-        const [gamesRes, tagsRes, filtersRes] = await Promise.all([
+        const [gamesRes, tagsRes, filtersRes, paginationRes] = await Promise.all([
            fetchWithAuth('/videogames/'),
            fetchWithAuth('/videogames/tags'),
-           fetchWithAuth('/filters/')
+           fetchWithAuth('/filters/'),
+           fetchWithAuth('/settings/pagination')
         ]);
         if (gamesRes.ok) setGames(await gamesRes.json());
         if (tagsRes.ok) setAvailableTags(await tagsRes.json());
         if (filtersRes.ok) setSavedFilters(await filtersRes.json());
+        if (paginationRes.ok) {
+          const settings: { page_sizes: number[] } = await paginationRes.json();
+          setPageSizeOptions(settings.page_sizes);
+          setPageSize(current => current === 'infinite' || settings.page_sizes.includes(current) ? current : settings.page_sizes[0]);
+        }
       } catch (err) {
         console.error('Failed to load dashboard data', err);
       } finally {
@@ -398,6 +412,11 @@ export function VideogamesDashboard() {
   });
 
   const displayGames = applyMultiSort(filteredGames, sortCriteria);
+  const totalPages = pageSize === 'infinite' ? 1 : Math.max(1, Math.ceil(displayGames.length / pageSize));
+  const visiblePage = Math.min(currentPage, totalPages);
+  const pagedGames = pageSize === 'infinite'
+    ? displayGames
+    : displayGames.slice((visiblePage - 1) * pageSize, visiblePage * pageSize);
 
   const hasSorts = sortCriteria.length > 0;
   const hasActiveFiltersOrSearch = searchQuery !== '' || JSON.stringify(filterState) !== JSON.stringify(DEFAULT_FILTER_STATE);
@@ -457,7 +476,7 @@ export function VideogamesDashboard() {
               className="form-input" 
               placeholder="Search your collection..." 
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
             />
           </div>
           <button className="btn btn-secondary toolbar-btn">
@@ -557,7 +576,7 @@ export function VideogamesDashboard() {
             <button
               className="btn btn-ghost toolbar-btn"
               style={{ color: 'var(--error-color)' }}
-              onClick={() => { setFilterState(DEFAULT_FILTER_STATE); setSearchQuery(''); setSortCriteria([]); }}
+              onClick={() => { setFilterState(DEFAULT_FILTER_STATE); setSearchQuery(''); setSortCriteria([]); setCurrentPage(1); }}
               title="Clear all filters, search and sorts"
             >
               <X size={18} />
@@ -590,7 +609,7 @@ export function VideogamesDashboard() {
             <Loader2 className="spinner" size={32} />
           </div>
         ) : displayGames.length > 0 ? (
-          displayGames.map((game: any) => (
+          pagedGames.map((game: any) => (
             <div key={game.id} className="vg-card glass-card">
               <div className="vg-cover-wrapper">
                 {game.image_url ? (
@@ -615,6 +634,7 @@ export function VideogamesDashboard() {
           </div>
         )}
       </div>
+      {!isLoading && displayGames.length > 0 && <PaginationControls page={visiblePage} pageSize={pageSize} pageSizeOptions={pageSizeOptions} totalItems={displayGames.length} onPageChange={setCurrentPage} onPageSizeChange={value => { setPageSize(value); setCurrentPage(1); }} />}
 
       {/* Edit Game Modal */}
       {editingGame && (

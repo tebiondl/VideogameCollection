@@ -38,6 +38,7 @@
 .admin-player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-player-name small { color: var(--text-muted); font-size: .76rem; }
 .admin-player-edit-input { width: min(420px, 100%); }
+.admin-pagination-card { padding: 2rem; }.admin-pagination-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }.admin-pagination-heading h2 { display: flex; align-items: center; gap: .55rem; margin-bottom: .25rem; }.admin-pagination-heading h2 svg { color: #60a5fa; }.admin-pagination-heading > span { display: inline-flex; align-items: center; gap: .35rem; flex: 0 0 auto; padding: .35rem .55rem; border-radius: 99px; color: #bfdbfe; background: rgba(59,130,246,.12); font-size: .72rem; }.admin-page-size-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: .65rem; }.admin-page-size-grid label { display: flex; flex-direction: column; gap: .35rem; color: var(--text-muted); font-size: .75rem; }.admin-page-size-grid .form-input { margin: 0; }.admin-pagination-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }.admin-pagination-actions small { color: var(--text-muted); }.admin-pagination-actions .btn { min-width: 155px; justify-content: center; }
 
 .admin-modal-backdrop {
   position: fixed;
@@ -121,4 +122,5 @@
   .admin-player-card { padding: 1.25rem; }
   .admin-section-heading { align-items: stretch; flex-direction: column; }
   .admin-section-heading > span { align-self: flex-start; }
+  .admin-pagination-card { padding: 1.25rem; }.admin-pagination-heading,.admin-pagination-actions { align-items: stretch; flex-direction: column; }.admin-pagination-heading > span { align-self: flex-start; }.admin-page-size-grid { grid-template-columns: 1fr 1fr; }
 }

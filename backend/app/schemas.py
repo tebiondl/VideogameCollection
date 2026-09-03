@@ -120,6 +120,10 @@ class AutoFillPayload(BaseModel):
     game_ids: List[int]
     overwrite: bool
 
+
+class PaginationSettings(BaseModel):
+    page_sizes: list[int] = Field(default_factory=lambda: [5, 10, 20, 50])
+
 class BoardgameBase(BaseModel):
     name: str
     description: str | None = None

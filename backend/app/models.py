@@ -90,6 +90,14 @@ class SavedFilter(Base):
     name = Column(String, nullable=False)
     filter_data = Column(String, nullable=False) # JSON blob of the filter state
 
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True, nullable=False)
+    value = Column(String, nullable=False)
+
 class Boardgame(Base):
     __tablename__ = "boardgames"
 

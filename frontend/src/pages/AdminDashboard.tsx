@@ -4,6 +4,7 @@ import { Navigate, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Gamepad2, Tag as TagIcon } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import { PaginationSettingsAdmin } from '../components/PaginationSettingsAdmin';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
 
@@ -242,6 +243,7 @@ export function AdminDashboard() {
       </header>
 
       <div style={{ maxWidth: '760px', margin: '2rem auto 0', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        <PaginationSettingsAdmin />
         <div className="glass-card" style={{ padding: '2rem' }}>
           <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Data Management

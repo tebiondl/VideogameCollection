@@ -11,6 +11,8 @@ import {
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { BoardgameExcelImportModal } from '../components/BoardgameExcelImportModal';
+import { PaginationControls } from '../components/PaginationControls';
+import { parseStoredPageSize, type PageSize } from '../lib/pagination';
 import { useAuth } from '../context/AuthContext';
 import './BoardgamesDashboard.css';
 
@@ -165,6 +167,9 @@ export function BoardgamesDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [libraryView, setLibraryView] = useState<LibraryView>('grid');
+  const [pageSizeOptions, setPageSizeOptions] = useState([5, 10, 20, 50]);
+  const [pageSize, setPageSize] = useState<PageSize>(() => parseStoredPageSize(sessionStorage.getItem('bg_page_size')));
+  const [currentPage, setCurrentPage] = useState(1);
   const [matchView, setMatchView] = useState<MatchView>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState('');
@@ -212,20 +217,28 @@ export function BoardgamesDashboard() {
   useEffect(() => {
     sessionStorage.setItem('bg_active_tab', activeTab);
   }, [activeTab]);
+  useEffect(() => {
+    sessionStorage.setItem('bg_page_size', String(pageSize));
+  }, [pageSize]);
 
   function changeTab(tab: BoardgameTab) {
     setActiveTab(tab);
-    setSearchQuery(''); setSelectedTag(''); setShowFilters(false); setSelectedMatchGameId(null);
+    setSearchQuery(''); setSelectedTag(''); setShowFilters(false); setSelectedMatchGameId(null); setCurrentPage(1);
   }
 
   async function loadDashboard(showLoader = true) {
     if (showLoader) setIsLoading(true); setLoadError('');
     try {
-      const [gamesResponse, matchesResponse, tagsResponse, playersResponse] = await Promise.all([
-        fetchWithAuth('/boardgames/'), fetchWithAuth('/boardgames/matches'), fetchWithAuth('/boardgames/tags'), fetchWithAuth('/boardgames/players')
+      const [gamesResponse, matchesResponse, tagsResponse, playersResponse, paginationResponse] = await Promise.all([
+        fetchWithAuth('/boardgames/'), fetchWithAuth('/boardgames/matches'), fetchWithAuth('/boardgames/tags'), fetchWithAuth('/boardgames/players'), fetchWithAuth('/settings/pagination')
       ]);
       if (!gamesResponse.ok || !matchesResponse.ok || !tagsResponse.ok || !playersResponse.ok) throw new Error('The board-game data could not be loaded.');
       setGames(await gamesResponse.json()); setMatches(await matchesResponse.json()); setAvailableTags(await tagsResponse.json()); setPlayers(await playersResponse.json());
+      if (paginationResponse.ok) {
+        const settings: { page_sizes: number[] } = await paginationResponse.json();
+        setPageSizeOptions(settings.page_sizes);
+        setPageSize(current => current === 'infinite' || settings.page_sizes.includes(current) ? current : settings.page_sizes[0]);
+      }
     } catch (error) {
       console.error(error); setLoadError('Could not load the board-game vault. Please try again.');
     } finally { if (showLoader) setIsLoading(false); }
@@ -285,6 +298,11 @@ export function BoardgamesDashboard() {
       return a.name.localeCompare(b.name);
     });
   }, [activeTab, expansionFilter, maxPrice, maxRank, minHype, minRating, ownedGames, searchQuery, selectedTag, sortBy, wishlistGames]);
+  const totalLibraryPages = pageSize === 'infinite' ? 1 : Math.max(1, Math.ceil(visibleGames.length / pageSize));
+  const visibleLibraryPage = Math.min(currentPage, totalLibraryPages);
+  const pagedVisibleGames = pageSize === 'infinite'
+    ? visibleGames
+    : visibleGames.slice((visibleLibraryPage - 1) * pageSize, visibleLibraryPage * pageSize);
 
   const friendOptions = useMemo(() => {
     const friends = new Map<string, { name: string; plays: number }>();
@@ -501,7 +519,7 @@ export function BoardgamesDashboard() {
     } catch (error) { alert(error instanceof Error ? error.message : 'Could not save this match.'); } finally { setIsSavingMatch(false); }
   };
   const deleteMatch = async (match: BoardgameMatch) => { if (!window.confirm(`Delete the ${matchDateLabel(match.played_date)} match of “${match.game_name}”?`)) return; const response = await fetchWithAuth(`/boardgames/matches/${match.id}`, { method: 'DELETE' }); if (response.ok) setMatches(current => current.filter(item => item.id !== match.id)); };
-  const clearLibraryFilters = () => { setSearchQuery(''); setSelectedTag(''); setMaxRank(''); setMaxPrice(''); setMinHype(''); setMinRating(''); setExpansionFilter('all'); };
+  const clearLibraryFilters = () => { setSearchQuery(''); setSelectedTag(''); setMaxRank(''); setMaxPrice(''); setMinHype(''); setMinRating(''); setExpansionFilter('all'); setCurrentPage(1); };
   const clearMatchFilters = () => { setMatchSearch(''); setMatchFriendFilter(''); setMatchModeFilter(''); setMatchResultFilter(''); setMatchTagFilter(''); setMatchDateFrom(''); setMatchDateTo(''); };
   const toggleMatchSource = (gameId: number) => setSelectedMatchSourceIds(current => current.includes(gameId) ? current.filter(id => id !== gameId) : [...current, gameId]);
   const completeCollectionLink = (linkMatches: boolean) => {
@@ -529,13 +547,13 @@ export function BoardgamesDashboard() {
 
     {activeTab !== 'matches' ? <>
       <section className="bg-section-intro"><div className={activeTab === 'wishlist' ? 'bg-intro-icon wishlist' : 'bg-intro-icon owned'}>{activeTab === 'wishlist' ? <Heart /> : <PackageCheck />}</div><div><h2>{activeTab === 'wishlist' ? 'Your next shelf candidates' : 'The games you own'}</h2><p>{activeTab === 'wishlist' ? 'Keep an eye on BGG rank, price and how excited you are.' : 'Rate your collection and keep every expansion attached to its base game.'}</p></div><button className="btn btn-primary" onClick={() => openNewGame(activeTab)}><Plus size={18} /> {activeTab === 'wishlist' ? 'Add wishlist game' : 'Add owned game'}</button></section>
-      <section className="bg-toolbar"><div className="bg-search"><Search size={18} /><input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder={`Search ${activeTab === 'wishlist' ? 'wishlist' : 'collection'}…`} /></div><select value={selectedTag} onChange={event => setSelectedTag(event.target.value)} aria-label="Filter by tag"><option value="">All tags</option>{availableTags.map(tag => <option key={tag.id} value={tag.name}>{tag.name}</option>)}</select><select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort board games"><option value="name">Name A–Z</option><option value="rank">Best BGG rank</option>{activeTab === 'wishlist' ? <><option value="hype">Highest anticipation</option><option value="price-low">Lowest price</option><option value="price-high">Highest price</option></> : <option value="rating">Highest rating</option>}</select><button className={showFilters ? 'bg-tool-button active' : 'bg-tool-button'} onClick={() => setShowFilters(value => !value)}><Filter size={17} /> Filters</button><div className="bg-view-toggle"><button className={libraryView === 'grid' ? 'active' : ''} onClick={() => setLibraryView('grid')} aria-label="Grid view"><Grid2X2 size={17} /></button><button className={libraryView === 'list' ? 'active' : ''} onClick={() => setLibraryView('list')} aria-label="List view"><LayoutList size={18} /></button></div></section>
+      <section className="bg-toolbar"><div className="bg-search"><Search size={18} /><input value={searchQuery} onChange={event => { setSearchQuery(event.target.value); setCurrentPage(1); }} placeholder={`Search ${activeTab === 'wishlist' ? 'wishlist' : 'collection'}…`} /></div><select value={selectedTag} onChange={event => { setSelectedTag(event.target.value); setCurrentPage(1); }} aria-label="Filter by tag"><option value="">All tags</option>{availableTags.map(tag => <option key={tag.id} value={tag.name}>{tag.name}</option>)}</select><select value={sortBy} onChange={event => { setSortBy(event.target.value); setCurrentPage(1); }} aria-label="Sort board games"><option value="name">Name A–Z</option><option value="rank">Best BGG rank</option>{activeTab === 'wishlist' ? <><option value="hype">Highest anticipation</option><option value="price-low">Lowest price</option><option value="price-high">Highest price</option></> : <option value="rating">Highest rating</option>}</select><button className={showFilters ? 'bg-tool-button active' : 'bg-tool-button'} onClick={() => setShowFilters(value => !value)}><Filter size={17} /> Filters</button><div className="bg-view-toggle"><button className={libraryView === 'grid' ? 'active' : ''} onClick={() => setLibraryView('grid')} aria-label="Grid view"><Grid2X2 size={17} /></button><button className={libraryView === 'list' ? 'active' : ''} onClick={() => setLibraryView('list')} aria-label="List view"><LayoutList size={18} /></button></div></section>
       {showFilters && <section className="bg-filter-drawer">{activeTab === 'wishlist' ? <><label>Maximum BGG rank<input type="number" min="1" value={maxRank} onChange={event => setMaxRank(event.target.value)} placeholder="e.g. 500" /></label><label>Maximum price (€)<input type="number" min="0" step="0.01" value={maxPrice} onChange={event => setMaxPrice(event.target.value)} placeholder="e.g. 60" /></label><label>Minimum anticipation<select value={minHype} onChange={event => setMinHype(event.target.value)}><option value="">Any</option>{[5,6,7,8,9,10].map(score => <option key={score} value={score}>{score}+</option>)}</select></label></> : <><label>Minimum rating<select value={minRating} onChange={event => setMinRating(event.target.value)}><option value="">Any</option>{[5,6,7,8,9,10].map(score => <option key={score} value={score}>{score}+</option>)}</select></label><label>Expansions<select value={expansionFilter} onChange={event => setExpansionFilter(event.target.value as typeof expansionFilter)}><option value="all">All games</option><option value="with">Has expansions</option><option value="without">No expansions</option></select></label></>}<button onClick={clearLibraryFilters}><X size={16} /> Clear filters</button></section>}
       <div className="bg-results-line"><span>{visibleGames.length} {visibleGames.length === 1 ? 'game' : 'games'}</span>{(searchQuery || selectedTag || maxRank || maxPrice || minHype || minRating || expansionFilter !== 'all') && <button onClick={clearLibraryFilters}>Reset all</button>}</div>
-      {visibleGames.length ? <section className={`bg-library ${libraryView}`}>{visibleGames.map(game => {
+      {visibleGames.length ? <><section className={`bg-library ${libraryView}`}>{pagedVisibleGames.map(game => {
         const expansions = parseStringList(game.expansions), tags = parseStringList(game.tags);
         return <article className="bg-game-card" key={game.id}><div className="bg-card-art"><GameArtwork game={game} /><div className="bg-card-badges">{game.is_expansion && <span className="expansion">Expansion</span>}{game.bgg_rank ? <span className="rank"><Medal size={13} /> #{game.bgg_rank}</span> : <span className="unranked">Unranked</span>}</div><div className="bg-card-actions"><button onClick={() => openEditGame(game)} aria-label={`Edit ${game.name}`}><Edit2 size={16} /></button><button onClick={() => deleteGame(game)} aria-label={`Delete ${game.name}`}><Trash2 size={16} /></button></div></div><div className="bg-card-body"><div className="bg-card-title"><div><h3 className={gameTitleClass(game.name)} title={game.name}>{game.name}</h3>{game.publication_year && <small>{game.publication_year}</small>}</div>{game.bgg_link && <a href={game.bgg_link} target="_blank" rel="noreferrer" title="Open on BoardGameGeek"><ExternalLink size={16} /></a>}</div>{game.is_expansion && game.parent_game_name && <p className="bg-parent-game">For {game.parent_game_name}</p>}{activeTab === 'wishlist' ? <><div className="bg-wishlist-metrics"><div><CircleDollarSign /><span>{formatPrice(game.price)}</span></div><div><Sparkles /><span>{game.hype ? `${game.hype}/10` : 'No anticipation'}</span></div></div><button className="bg-owned-action" onClick={() => markAsOwned(game)}><PackageCheck size={16} /> Move to collection</button></> : <><div className="bg-owned-metrics"><div><Trophy /><span>{game.mark ? `${game.mark}/10` : 'Not rated'}</span></div><div><Gamepad2 /><span>{game.bgg_id ? `BGG ${game.bgg_id}` : 'No BGG ID'}</span></div></div><div className="bg-expansion-summary"><PackageCheck size={16} /><span>{expansions.length ? `${expansions.length} expansion${expansions.length === 1 ? '' : 's'}` : 'No expansions added'}</span></div>{expansions.length > 0 && <div className="bg-expansion-chips">{expansions.slice(0, 3).map(item => <span key={item}>{item}</span>)}{expansions.length > 3 && <span>+{expansions.length - 3}</span>}</div>}</>}{tags.length > 0 && <div className="bg-tag-row">{tags.slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}</div>}</div></article>;
-      })}</section> : <section className="bg-empty-state"><div>{activeTab === 'wishlist' ? <ShoppingBag /> : <Archive />}</div><h2>{searchQuery || selectedTag ? 'No games match these filters' : activeTab === 'wishlist' ? 'Your wishlist is ready for its first game' : 'Your collection is waiting'}</h2><p>{searchQuery || selectedTag ? 'Try clearing one or more filters.' : 'Add a game to start building this section.'}</p><button className="btn btn-primary" onClick={() => openNewGame(activeTab)}><Plus size={18} /> Add a game</button></section>}
+      })}</section><PaginationControls page={visibleLibraryPage} pageSize={pageSize} pageSizeOptions={pageSizeOptions} totalItems={visibleGames.length} onPageChange={setCurrentPage} onPageSizeChange={value => { setPageSize(value); setCurrentPage(1); }} /></> : <section className="bg-empty-state"><div>{activeTab === 'wishlist' ? <ShoppingBag /> : <Archive />}</div><h2>{searchQuery || selectedTag ? 'No games match these filters' : activeTab === 'wishlist' ? 'Your wishlist is ready for its first game' : 'Your collection is waiting'}</h2><p>{searchQuery || selectedTag ? 'Try clearing one or more filters.' : 'Add a game to start building this section.'}</p><button className="btn btn-primary" onClick={() => openNewGame(activeTab)}><Plus size={18} /> Add a game</button></section>}
     </> : <>
       <section className="bg-section-intro matches"><div className="bg-intro-icon matches"><History /></div><div><h2>Your table, remembered</h2><p>Log every group, mode, result and story from game night—even when the game belongs to someone else.</p></div><button className="btn btn-primary" onClick={() => openNewMatch()}><Plus size={18} /> Log a match</button></section>
       <section className="bg-toolbar match-toolbar"><div className="bg-search"><Search size={18} /><input value={matchSearch} onChange={event => setMatchSearch(event.target.value)} placeholder="Search games, players or comments…" /></div><div className="bg-friend-dropdown" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsFriendMenuOpen(false); }}><button type="button" className={matchFriendFilter ? 'bg-friend-trigger active' : 'bg-friend-trigger'} onClick={() => setIsFriendMenuOpen(value => !value)} aria-label="Filter by friend" aria-haspopup="listbox" aria-expanded={isFriendMenuOpen}><UserRound size={16} /><span>{selectedFriend ? `${selectedFriend.name} · ${selectedFriend.plays}` : `All friends (${friendOptions.length})`}</span><ChevronDown size={15} /></button>{isFriendMenuOpen && <div className="bg-friend-menu" role="listbox" aria-label="Friends"><button type="button" role="option" aria-selected={!matchFriendFilter} className={!matchFriendFilter ? 'selected' : ''} onClick={() => { setMatchFriendFilter(''); setIsFriendMenuOpen(false); }}><span>All friends</span><small>{friendOptions.length}</small></button>{friendOptions.map(friend => { const key = normalizedGameName(friend.name); return <button type="button" role="option" aria-selected={matchFriendFilter === key} className={matchFriendFilter === key ? 'selected' : ''} key={key} onClick={() => { setMatchFriendFilter(key); setIsFriendMenuOpen(false); }}><span>{friend.name}</span><small>{friend.plays} {friend.plays === 1 ? 'play' : 'plays'}</small></button>; })}</div>}</div><select value={matchModeFilter} onChange={event => setMatchModeFilter(event.target.value)} aria-label="Filter by match mode"><option value="">All modes</option><option value="competitive">Competitive</option><option value="cooperative">Co-op</option><option value="solo">Solo</option></select><select value={matchResultFilter} onChange={event => setMatchResultFilter(event.target.value)} aria-label="Filter by result"><option value="">All outcomes</option><option value="victory">Victories</option><option value="defeat">Defeats</option><option value="incomplete">Not finished</option><option value="competitive">Competitive winners</option></select><button className={showFilters ? 'bg-tool-button active' : 'bg-tool-button'} onClick={() => setShowFilters(value => !value)}><Filter size={17} /> More</button><div className="bg-view-toggle"><button className={matchView === 'list' ? 'active' : ''} onClick={() => { setMatchView('list'); setSelectedMatchGameId(null); }} aria-label="Match list view"><LayoutList size={18} /></button><button className={matchView === 'games' ? 'active' : ''} onClick={() => setMatchView('games')} aria-label="Matches by game"><Grid2X2 size={17} /></button></div></section>

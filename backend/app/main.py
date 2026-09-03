@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from .database import engine, Base
 from .database import SessionLocal
-from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router
+from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router
 from .services.boardgame_player_migration import migrate_legacy_match_players
 import logging
 
@@ -79,6 +79,7 @@ app.include_router(smart_import_router.router)
 app.include_router(filters_router.router)
 app.include_router(igdb_router.router)
 app.include_router(boardgames_router.router)
+app.include_router(settings_router.router)
 
 @app.get("/")
 def read_root():
