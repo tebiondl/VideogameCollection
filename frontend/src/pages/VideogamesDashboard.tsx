@@ -603,6 +603,7 @@ export function VideogamesDashboard() {
         </div>
       </div>
 
+      {!isLoading && displayGames.length > 0 && <div className="pagination-top"><PaginationControls page={visiblePage} pageSize={pageSize} pageSizeOptions={pageSizeOptions} totalItems={displayGames.length} onPageChange={setCurrentPage} onPageSizeChange={value => { setPageSize(value); setCurrentPage(1); }} /></div>}
       <div className={`vg-collection ${viewMode}-view`}>
         {isLoading ? (
           <div className="empty-state">
