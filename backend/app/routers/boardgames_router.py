@@ -4,6 +4,7 @@ from typing import List, Annotated
 import logging
 import json
 import os
+from pathlib import Path
 from datetime import datetime
 from xml.etree import ElementTree
 import httpx
@@ -142,7 +143,7 @@ def _write_match_players(match: models.BoardgameMatch, players: list[models.Boar
 
 
 def _bgg_request(path: str, params: dict) -> ElementTree.Element:
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
     token = os.getenv("BGG_API_TOKEN", "").strip()
     if not token:
         raise HTTPException(
