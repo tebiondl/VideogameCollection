@@ -373,7 +373,9 @@ def get_bgg_game(
     item = root.find("item")
     if item is None:
         raise HTTPException(status_code=404, detail="BGG game not found")
-    primary_name = item.find("name[@type='primary']") or item.find("name")
+    primary_name = item.find("name[@type='primary']")
+    if primary_name is None:
+        primary_name = item.find("name")
     if primary_name is None:
         raise HTTPException(status_code=404, detail="BGG game has no title")
     year_node = item.find("yearpublished")
