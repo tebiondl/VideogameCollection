@@ -1,0 +1,13 @@
+.bge-search-button { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; margin-top: .75rem; padding: .6rem .8rem; border: 1px solid rgba(96,165,250,.3); border-radius: 8px; color: #bfdbfe; background: rgba(59,130,246,.1); font: inherit; cursor: pointer; }
+.bg-expansion-editor button:disabled { opacity: .5; cursor: not-allowed; }
+.bge-picker { margin-top: .75rem; padding: .85rem; border: 1px solid var(--border-color); border-radius: 10px; background: #11151b; }
+.bge-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.bge-picker-heading button { display: grid; place-items: center; padding: .3rem; border: 0; color: var(--text-secondary); background: transparent; cursor: pointer; }
+.bg-expansion-editor .bge-error { color: #fecaca; }
+.bge-picker p { margin-top: .5rem; }
+.bge-filter { width: 100%; margin-top: .7rem; padding: .6rem; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); background: var(--bg-primary); font: inherit; }
+.bge-options { max-height: 260px; overflow-y: auto; margin-top: .5rem; scrollbar-color: #475569 #11151b; }
+.bge-options label { display: flex; align-items: center; gap: .6rem; padding: .65rem .35rem; border-bottom: 1px solid var(--border-color); cursor: pointer; }
+.bge-options input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: #60a5fa; }
+.bge-options label span { flex: 1; color: #e2e8f0; overflow-wrap: anywhere; }
+.bge-options small { color: #93c5fd; font-size: .7rem; }

@@ -364,6 +364,26 @@ def search_bgg(
     return results
 
 
+@router.get("/bgg/{bgg_id}/expansions", response_model=List[str])
+def get_bgg_expansions(
+    bgg_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+):
+    root = _bgg_request("thing", {"id": bgg_id})
+    item = root.find("item")
+    if item is None:
+        raise HTTPException(status_code=404, detail="BGG game not found")
+    names = {}
+    for link in item.findall("link[@type='boardgameexpansion']"):
+        # Inbound expansion links identify a base game, not an expansion of this item.
+        if link.get("inbound", "").lower() in ("true", "1"):
+            continue
+        name = (link.get("value") or "").strip()
+        if name and link.get("id") != str(bgg_id):
+            names.setdefault(name.casefold(), name)
+    return sorted(names.values(), key=str.casefold)
+
+
 @router.get("/bgg/{bgg_id}", response_model=schemas.BggGameMetadata)
 def get_bgg_game(
     bgg_id: int,

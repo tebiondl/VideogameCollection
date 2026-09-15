@@ -40,7 +40,7 @@ class BggTests(unittest.TestCase):
 
     def test_requires_login(self):
         self.app.dependency_overrides.clear()
-        for url in ("/api/boardgames/bgg/search?q=Catan", "/api/boardgames/bgg/13"):
+        for url in ("/api/boardgames/bgg/search?q=Catan", "/api/boardgames/bgg/13", "/api/boardgames/bgg/13/expansions"):
             self.assertEqual(self.client.get(url).status_code, 401)
         self.request.assert_not_called()
 
@@ -127,6 +127,43 @@ class BggTests(unittest.TestCase):
     def test_malformed_xml(self):
         self.respond("not xml")
         self.assertEqual(self.client.get("/api/boardgames/bgg/13").status_code, 502)
+
+    def test_expansions_only_names_sorted_deduplicated_and_outbound(self):
+        self.respond('''<items><item id="13">
+            <link type="boardgameexpansion" id="21" value="Zulu"/>
+            <link type="boardgameexpansion" id="22" value=" Alpha &amp; Beta " inbound="false"/>
+            <link type="boardgameexpansion" id="23" value="alpha &amp; beta"/>
+            <link type="boardgameexpansion" id="24" value="Base game" inbound="true"/>
+            <link type="boardgameexpansion" id="25" value="Another base" inbound="1"/>
+            <link type="boardgameexpansion" id="26" value=" "/>
+            <link type="boardgameexpansion" id="27"/>
+            <link type="boardgameexpansion" id="13" value="Self"/>
+            <link type="boardgameaccessory" id="28" value="Sleeves"/>
+        </item></items>''')
+        response = self.client.get("/api/boardgames/bgg/13/expansions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), ["Alpha & Beta", "Zulu"])
+        self.assertEqual(self.request.call_args.kwargs["params"], {"id": 13})
+
+    def test_expansions_are_not_limited_to_twenty(self):
+        self.respond('<items><item id="13">' + ''.join(f'<link type="boardgameexpansion" id="{i+100}" value="Expansion {i}"/>' for i in range(105)) + '</item></items>')
+        response = self.client.get("/api/boardgames/bgg/13/expansions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()), 105)
+
+    def test_expansions_empty_and_unknown_game(self):
+        self.respond('<items><item id="13"/></items>')
+        response = self.client.get("/api/boardgames/bgg/13/expansions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        self.respond()
+        self.assertEqual(self.client.get("/api/boardgames/bgg/13/expansions").status_code, 404)
+
+    def test_expansions_upstream_failure(self):
+        self.respond(status=401)
+        response = self.client.get("/api/boardgames/bgg/13/expansions")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("rejected", response.json()["detail"])
 
 
 if __name__ == "__main__":
