@@ -40,9 +40,10 @@ interface Props {
   value: string; // JSON string
   onChange: (val: string) => void;
   gameName?: string;
+  getPortalContainer?: () => Element;
 }
 
-export function DlcEditor({ value, onChange, gameName }: Props) {
+export function DlcEditor({ value, onChange, gameName, getPortalContainer }: Props) {
   const dlcs = parseDlcs(value);
   const [newName, setNewName] = useState('');
   const [showIgdbModal, setShowIgdbModal] = useState(false);
@@ -174,7 +175,7 @@ export function DlcEditor({ value, onChange, gameName }: Props) {
           <div className="glass-card modal-content" style={{ maxWidth: '800px', width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal-header">
               <h2>IGDB DLCs for "{gameName}"</h2>
-              <button className="modal-close" onClick={() => setShowIgdbModal(false)}><X size={20}/></button>
+              <button type="button" className="modal-close" onClick={() => setShowIgdbModal(false)}><X size={20}/></button>
             </div>
             
             <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem' }}>
@@ -184,10 +185,10 @@ export function DlcEditor({ value, onChange, gameName }: Props) {
                 placeholder="Search game..."
                 value={igdbSearchQuery}
                 onChange={e => setIgdbSearchQuery(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') fetchIgdbDlcs(igdbSearchQuery); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); fetchIgdbDlcs(igdbSearchQuery); } }}
                 style={{ flex: 1 }}
               />
-              <button className="btn btn-primary" onClick={() => fetchIgdbDlcs(igdbSearchQuery)}>
+              <button type="button" className="btn btn-primary" onClick={() => fetchIgdbDlcs(igdbSearchQuery)}>
                 <Search size={18} />
               </button>
             </div>
@@ -218,7 +219,7 @@ export function DlcEditor({ value, onChange, gameName }: Props) {
                           <span style={{ fontSize: '0.85rem', fontWeight: 500, lineHeight: 1.2, flex: 1, textShadow: 'none' }} title={dlc.name}>
                             {dlc.name.length > 50 ? dlc.name.substring(0, 50) + '...' : dlc.name}
                           </span>
-                          <button 
+                          <button type="button"
                             className="btn btn-secondary sm" 
                             style={{ width: '100%' }}
                             disabled={isAlreadyAdded}
@@ -235,7 +236,7 @@ export function DlcEditor({ value, onChange, gameName }: Props) {
             </div>
           </div>
         </div>,
-        document.body
+        getPortalContainer?.() || document.body
       )}
     </div>
   );

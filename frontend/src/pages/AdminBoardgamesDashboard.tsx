@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRightLeft, CalendarDays, Check, Dices, Edit2, Loader2, Plus, Shield, Tag as TagIcon, Trash2, UsersRound, X, AlertTriangle } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { PaginationSettingsAdmin } from '../components/PaginationSettingsAdmin';
+import { DatabaseBackups } from '../components/DatabaseBackups';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
 
@@ -436,6 +437,10 @@ export function AdminBoardgamesDashboard() {
             </div>)}
           </div> : <p className="text-muted">No saved players yet. They will appear here after you add them to a match.</p>}
         </div>
+
+        <section className="glass-card admin-standard-card">
+          <DatabaseBackups />
+        </section>
       </div>
       {tagUsage && createPortal(
         <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => !isReassigning && setTagUsage(null)}>

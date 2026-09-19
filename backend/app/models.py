@@ -33,9 +33,13 @@ class Videogame(Base):
     hype = Column(Integer, nullable=True)  # 1 to 10 — anticipation for not-yet-played
     completion_date = Column(String, nullable=True) # string to support just '2024' or '2024-05'
     publication_year = Column(Integer, nullable=True)
+    release_date = Column(String, nullable=True)
     completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True) # JSON encoded string or comma separated
     dlcs = Column(String, nullable=True) # JSON array: [{name, state: not_owned|not_started|finished}]
+    is_dlc = Column(Boolean, nullable=False, default=False)
+    parent_game_name = Column(String, nullable=True)
+    copies = Column(String, nullable=True) # JSON array of owned platform / format copies
 
     owner = relationship("User", back_populates="videogames")
 

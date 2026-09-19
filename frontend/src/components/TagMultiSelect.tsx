@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 interface Tag {
   id: number;
@@ -15,7 +16,10 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const [portalContainer, setPortalContainer] = useState<Element | null>(null);
   
   // Convert comma string to array for easy rendering
   const selectedTags = selectedTagsString 
@@ -24,13 +28,31 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) {
         setIsOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const place = () => {
+      const rect = dropdownRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const availableBelow = window.innerHeight - rect.bottom - 12;
+      const height = Math.min(260, Math.max(140, availableBelow >= 180 ? availableBelow : rect.top - 12));
+      const openAbove = availableBelow < 180 && rect.top > availableBelow;
+      const width = Math.min(Math.max(rect.width, 260), window.innerWidth - 24);
+      const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+      setMenuStyle({ position: 'fixed', left, top: openAbove ? Math.max(12, rect.top - height - 4) : rect.bottom + 4, width, maxHeight: height, zIndex: 12000 });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [isOpen]);
 
   const toggleTag = (tagName: string) => {
     let newTags;
@@ -45,6 +67,11 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
     inputRef.current?.focus();
   };
 
+  const openMenu = () => {
+    setPortalContainer(dropdownRef.current?.closest('dialog') || document.body);
+    setIsOpen(true);
+  };
+
   const filteredTags = availableTags.filter(tag => 
     tag.name.toLowerCase().includes(filter.toLowerCase())
   );
@@ -54,7 +81,7 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
       <div 
         className="form-input" 
         onClick={() => {
-          setIsOpen(true);
+          openMenu();
           inputRef.current?.focus();
         }} 
         style={{ minHeight: '42px', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', cursor: 'text', alignItems: 'center' }}
@@ -79,21 +106,20 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
           value={filter}
           onChange={(e) => {
             setFilter(e.target.value);
-            setIsOpen(true);
+            openMenu();
           }}
-          onFocus={() => setIsOpen(true)}
+          onFocus={openMenu}
           style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', flex: 1, minWidth: '80px', padding: 0 }}
           placeholder={selectedTags.length === 0 ? "Search tags..." : ""}
         />
       </div>
       
-      {isOpen && (
+      {isOpen && portalContainer && createPortal(
         <div 
+          ref={menuRef}
           className="glass-card" 
           style={{ 
-            position: 'absolute', top: '100%', left: 0, right: 0, 
-            zIndex: 100, maxHeight: '200px', overflowY: 'auto', 
-            marginTop: '4px', padding: '0.5rem',
+            ...menuStyle, overflowY: 'auto', padding: '0.5rem',
             border: '1px solid var(--border-color)'
           }}
         >
@@ -112,7 +138,7 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
               </label>
            ))
           )}
-        </div>
+        </div>, portalContainer
       )}
     </div>
   );

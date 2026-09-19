@@ -580,7 +580,16 @@ def delete_videogame(
     
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
-        
+
+    # A deleted collection record must not leave a Steam app pinned to a
+    # missing target. Its next owned-library sync may then be matched again.
+    from ..discovery_models import SteamCollectionLink, SteamMatchReview
+    db.query(SteamCollectionLink).filter_by(
+        user_id=current_user.id, collection_game_id=db_game.id
+    ).delete(synchronize_session=False)
+    db.query(SteamMatchReview).filter_by(
+        user_id=current_user.id, candidate_game_id=db_game.id
+    ).delete(synchronize_session=False)
     db.delete(db_game)
     db.commit()
     return {"status": "ok"}

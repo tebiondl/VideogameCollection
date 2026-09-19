@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, Archive, ArrowLeft, BarChart3, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
   Crown, Dices, Edit2, ExternalLink, Filter, Gamepad2, Grid2X2, Heart, History,
@@ -160,7 +160,11 @@ function GameArtwork({ game, compact = false }: { game: Pick<Boardgame, 'name' |
 
 export function BoardgamesDashboard() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<BoardgameTab>(() => (sessionStorage.getItem('bg_active_tab') as BoardgameTab) || 'owned');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const savedTab = localStorage.getItem(`boardgame-tab:${user?.id}`);
+  const activeTab: BoardgameTab = ['wishlist', 'owned', 'matches'].includes(requestedTab || '') ? requestedTab as BoardgameTab : ['wishlist', 'owned', 'matches'].includes(savedTab || '') ? savedTab as BoardgameTab : 'owned';
+  const setActiveTab = (tab: BoardgameTab) => setSearchParams({ tab });
   const [games, setGames] = useState<Boardgame[]>([]);
   const [matches, setMatches] = useState<BoardgameMatch[]>([]);
   const [players, setPlayers] = useState<BoardgamePlayer[]>([]);
@@ -217,8 +221,8 @@ export function BoardgamesDashboard() {
   const [isAttachingExpansion, setIsAttachingExpansion] = useState(false);
 
   useEffect(() => {
-    sessionStorage.setItem('bg_active_tab', activeTab);
-  }, [activeTab]);
+    localStorage.setItem(`boardgame-tab:${user?.id}`, activeTab);
+  }, [activeTab, user?.id]);
   useEffect(() => {
     sessionStorage.setItem('bg_page_size', String(pageSize));
   }, [pageSize]);

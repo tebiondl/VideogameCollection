@@ -2,6 +2,7 @@ import os
 import time
 import httpx
 import logging
+import json
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -77,8 +78,8 @@ def search_games(
     # Note: 'search' + 'where' don't combine well in IGDB — the where clause
     # causes empty results. search alone already ranks main games first.
     body = (
-        f'search "{q}"; '
-        f'fields name, cover.image_id, summary, first_release_date, genres.name; '
+        f'search {json.dumps(q)}; '
+        f'fields name, cover.image_id, summary, first_release_date, genres.name, game_type, parent_game.name, platforms.name; '
         f'limit {limit};'
     )
 
@@ -100,6 +101,7 @@ def search_games(
         raise HTTPException(status_code=502, detail=f"IGDB API error: {resp.text}")
 
     raw_games = resp.json()
+    raw_games.sort(key=lambda game: game.get("name", "").casefold() != q.strip().casefold())
 
     results = []
     for g in raw_games:
@@ -123,6 +125,10 @@ def search_games(
                 "summary": g.get("summary"),
                 "release_year": release_year,
                 "genres": genres,
+                "is_dlc": g.get("game_type") in (1, 2, 4),
+                "parent_game_name": g.get("parent_game", {}).get("name"),
+                "platforms": [p["name"] for p in g.get("platforms", [])],
+                "release_date": datetime.datetime.utcfromtimestamp(g["first_release_date"]).date().isoformat() if g.get("first_release_date") else None,
             }
         )
 
@@ -147,7 +153,7 @@ def get_game_dlcs(
     token = _get_twitch_token()
 
     body = (
-        f'search "{game_name}"; '
+        f'search {json.dumps(game_name)}; '
         f'fields name, dlcs.name, dlcs.cover.image_id, expansions.name, expansions.cover.image_id; '
         f'limit 10;'
     )

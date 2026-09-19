@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Gamepad2, UserCircle, LogOut } from 'lucide-react';
+import { Gamepad2, UserCircle, LogOut, ChevronDown, Dices } from 'lucide-react';
 import './Navbar.css';
 
 export function Navbar() {
@@ -24,6 +24,16 @@ export function Navbar() {
           <span className="logo-text">Epic <span className="text-gradient">Tracker</span></span>
         </Link>
 
+        {user && <div className="nav-collections">
+          <div className="nav-collection">
+            <Link to="/dashboard/videogames" aria-current={location.pathname.includes('videogames') || location.pathname === '/dashboard/admin' ? 'page' : undefined}><Gamepad2 size={18} /> Videogames <ChevronDown size={14} /></Link>
+            <div className="nav-collection-menu"><Link to="/dashboard/videogames/collection">Collection</Link><Link to="/dashboard/videogames/wanted">Games I want</Link><Link to="/dashboard/videogames/discovery">Discovery</Link></div>
+          </div>
+          <div className="nav-collection">
+            <Link to="/dashboard/boardgames" aria-current={location.pathname.includes('boardgames') ? 'page' : undefined}><Dices size={18} /> Board games <ChevronDown size={14} /></Link>
+            <div className="nav-collection-menu"><Link to="/dashboard/boardgames?tab=owned">Collection</Link><Link to="/dashboard/boardgames?tab=wishlist">Want to buy</Link><Link to="/dashboard/boardgames?tab=matches">Matches</Link></div>
+          </div>
+        </div>}
         <div className="nav-actions">
           {!user ? (
             location.pathname === '/login' ? (
@@ -38,7 +48,7 @@ export function Navbar() {
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {location.pathname !== '/dashboard' && location.pathname.startsWith('/dashboard') && (
-                <Link to="/dashboard" className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}>
+                <Link to="/dashboard" className="btn btn-secondary nav-back-hub" style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}>
                   Back to Hub
                 </Link>
               )}

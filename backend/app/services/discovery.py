@@ -1,0 +1,1170 @@
+"""Public catalog integrations and persistent, restart-safe wishlist scheduling."""
+import asyncio
+from difflib import SequenceMatcher
+import html
+import json
+import logging
+import os
+import re
+import time
+from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urljoin
+
+import httpx
+from dateutil import parser as date_parser
+from fastapi import HTTPException
+from lxml import html as lxml_html
+from sqlalchemy import or_
+from ..database import SessionLocal
+from ..models import Videogame
+from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamMatchReview, WantedGame
+
+logger = logging.getLogger(__name__)
+
+IGDB_REGION_IDS = {"Europe": 1, "North America": 2, "Japan": 5}
+IGDB_SWITCH_PLATFORM_ID = 130
+IGDB_PHYSICAL_FORMAT_ID = 2
+IGDB_STEAM_SOURCE_ID = 1
+IGDB_DLC_TYPES = {1, 2, 4}
+NINTENDO_LIFE_GUIDES_FEED = "https://www.nintendolife.com/feeds/guides"
+
+
+class UpstreamRateLimit(ValueError):
+    pass
+
+
+def normalized(value):
+    return " ".join((value or "").casefold().split())
+
+
+def platform_key(value):
+    value = normalized(value)
+    return "pc" if value in ("pc (microsoft windows)", "windows", "steam", "pc") else value
+
+
+def normalize_steam_id(value):
+    if not value or not value.strip():
+        return None
+    match = re.fullmatch(r"(?:https?://steamcommunity\.com/profiles/)?(7656119\d{10})/?", value.strip())
+    if not match:
+        raise HTTPException(422, "Enter your 17-digit SteamID64 or a steamcommunity.com/profiles/… URL.")
+    return match.group(1)
+
+
+def get_settings(db, user_id):
+    settings = db.get(DiscoverySettings, user_id)
+    if settings is None:
+        settings = DiscoverySettings(user_id=user_id)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+def find_duplicate(db, user_id, data, exclude_id=None):
+    query = db.query(WantedGame).filter(WantedGame.user_id == user_id)
+    if exclude_id is not None:
+        query = query.filter(WantedGame.id != exclude_id)
+    for game in query.all():
+        if data.get("steam_appid") and game.steam_appid == data["steam_appid"]:
+            return game
+        # An acquired row remains for history, but should not block saving a
+        # different platform or edition of the same game later.
+        if game.status == "Acquired":
+            continue
+        platforms = (platform_key(game.platform), platform_key(data.get("platform")))
+        if not game.deleted and (platforms[0] == platforms[1] or not all(platforms)):
+            if data.get("igdb_id") and game.igdb_id == data["igdb_id"]:
+                return game
+            if normalized(game.name) == normalized(data["name"]):
+                return game
+    return None
+
+
+def request_json(client, url, **kwargs):
+    response = client.get(url, **kwargs)
+    if response.status_code in (401, 403):
+        raise ValueError("Steam wishlist is private or unavailable. Make your profile and game details public.")
+    if response.status_code == 429:
+        raise UpstreamRateLimit("The source is rate limiting requests. The next scheduled sync will retry.")
+    response.raise_for_status()
+    return response.json()
+
+
+def steam_wishlist(client, steam_id):
+    raw = request_json(client, "https://api.steampowered.com/IWishlistService/GetWishlist/v1/", params={"steamid": steam_id})
+    response = raw.get("response")
+    # {} is ambiguous (private/unavailable/empty), so never use it to delete data.
+    if not isinstance(response, dict) or "items" not in response:
+        raise ValueError("Steam returned no readable wishlist. It may be empty or private; saved games are unchanged.")
+    items = response["items"]
+    if not isinstance(items, list) or any(not isinstance(x, dict) or not isinstance(x.get("appid"), int) or x["appid"] <= 0 for x in items):
+        raise ValueError("Steam returned an unexpected wishlist response.")
+    return items
+
+
+def steam_owned_games(client, steam_id, api_key=None):
+    """Read the public Steam library through the supported GetOwnedGames API."""
+    api_key = (api_key or os.getenv("STEAM_WEB_API_KEY", "")).strip()
+    if not api_key:
+        raise ValueError("Collection sync needs a Steam Web API key. Add one in Admin; wishlist sync will continue meanwhile.")
+    raw = request_json(client, "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/", params={
+        "key": api_key, "steamid": steam_id, "include_appinfo": 1, "include_played_free_games": 1,
+    })
+    response = raw.get("response")
+    if not isinstance(response, dict):
+        raise ValueError("Steam returned no readable game library. Make your game details public.")
+    games = response.get("games", [])
+    if not isinstance(games, list):
+        raise ValueError("Steam returned no readable game library. Make your game details public.")
+    return [{
+        "appid": item["appid"], "name": item.get("name") or f"Steam app {item['appid']}",
+        "playtime_hours": round((item.get("playtime_forever") or 0) / 60, 1),
+        "image_url": None, "store_url": f"https://store.steampowered.com/app/{item['appid']}/",
+    } for item in games if isinstance(item.get("appid"), int) and item["appid"] > 0]
+
+
+def _copy_has_steam_app(game, appid):
+    try:
+        return any(item.get("steam_appid") == appid for item in json.loads(game.copies or "[]"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _copy_has_igdb_game(game, igdb_id):
+    if not igdb_id:
+        return False
+    try:
+        return any(item.get("igdb_id") == igdb_id for item in json.loads(game.copies or "[]"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _collection_title_key(value):
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).split())
+
+
+def _collection_title_matches(collection, names):
+    """Return plausible titles and whether the best is safe to link automatically."""
+    targets = {_collection_title_key(name) for name in names}
+    targets.discard("")
+    scored = []
+    for game in collection:
+        candidate = _collection_title_key(game.name)
+        if not candidate:
+            continue
+        score = 0.0
+        candidate_tokens = set(candidate.split())
+        for target in targets:
+            ratio = SequenceMatcher(None, target, candidate).ratio()
+            target_tokens = set(target.split())
+            shared = len(target_tokens & candidate_tokens)
+            coverage = shared / min(len(target_tokens), len(candidate_tokens)) if target_tokens and candidate_tokens else 0
+            if coverage == 1 and min(len(target_tokens), len(candidate_tokens)) >= 2:
+                ratio = max(ratio, 0.86)
+            elif coverage >= 2 / 3:
+                ratio = max(ratio, 0.76)
+            elif coverage == 1 and min(len(target_tokens), len(candidate_tokens)) == 1:
+                ratio = max(ratio, 0.74)
+            score = max(score, ratio)
+        if score >= 0.72:
+            scored.append((score, game))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if not scored:
+        return [], False
+    ambiguous = len(scored) > 1 and scored[0][0] - scored[1][0] < 0.04
+    return [(game, score) for score, game in scored[:5]], scored[0][0] >= 0.92 and not ambiguous
+
+
+def steam_review_candidates(review):
+    try:
+        values = json.loads(review.candidates or "[]")
+    except (TypeError, ValueError):
+        values = []
+    candidates = []
+    for value in values:
+        if not isinstance(value, dict) or not value.get("game_id") or not value.get("name"):
+            continue
+        candidates.append({
+            "game_id": int(value["game_id"]), "name": str(value["name"]),
+            "confidence": float(value.get("confidence") or 0),
+        })
+    if not candidates:
+        candidates.append({
+            "game_id": review.candidate_game_id, "name": review.candidate_name,
+            "confidence": review.confidence,
+        })
+    return candidates
+
+
+def steam_review_response(review):
+    return {
+        "id": review.id, "steam_appid": review.steam_appid, "steam_name": review.steam_name,
+        "candidate_game_id": review.candidate_game_id, "candidate_name": review.candidate_name,
+        "confidence": review.confidence, "candidates": steam_review_candidates(review),
+        "created_at": review.created_at,
+    }
+
+
+def reconcile_steam_library(db, user_id, items):
+    """Persistently link owned Steam apps without replacing collection metadata."""
+    collection = db.query(Videogame).filter_by(user_id=user_id).all()
+    collection_by_id = {game.id: game for game in collection}
+    wanted_by_app = {row.steam_appid: row for row in db.query(WantedGame).filter_by(user_id=user_id, deleted=False).all() if row.steam_appid}
+    links_by_app = {row.steam_appid: row for row in db.query(SteamCollectionLink).filter_by(user_id=user_id).all()}
+    reviews_by_app = {row.steam_appid: row for row in db.query(SteamMatchReview).filter_by(user_id=user_id).all()}
+    imported = 0
+    for item in items:
+        created_collection_game = False
+        appid = item["appid"]
+        wanted = wanted_by_app.get(appid)
+        link = links_by_app.get(appid)
+        game = collection_by_id.get(link.collection_game_id) if link else None
+        if game is None:
+            game = next((row for row in collection if _copy_has_steam_app(row, appid)), None)
+        if game is None and wanted and wanted.collection_game_id:
+            game = collection_by_id.get(wanted.collection_game_id)
+        target_igdb_id = ((wanted.igdb_id if wanted else None) or item.get("igdb_id")
+                          or (link.igdb_id if link else None))
+        if game is None and target_igdb_id:
+            game = next((row for row in collection if _copy_has_igdb_game(row, target_igdb_id)), None)
+        if game is None:
+            title_keys = {_collection_title_key(item["name"])}
+            if wanted:
+                title_keys.add(_collection_title_key(wanted.name))
+            title_keys.discard("")
+            game = next((row for row in collection if _collection_title_key(row.name) in title_keys), None)
+        if game is None:
+            review = reviews_by_app.get(appid)
+            matches, automatic = _collection_title_matches(collection, [item["name"], wanted.name if wanted else ""])
+            try:
+                rejected = set(json.loads(review.rejected_candidate_ids or "[]")) if review else set()
+            except (TypeError, ValueError):
+                rejected = set()
+            matches = [(candidate, confidence) for candidate, confidence in matches if candidate.id not in rejected]
+            if automatic and review is None:
+                game = matches[0][0]
+            elif matches:
+                if review is None:
+                    review = SteamMatchReview(user_id=user_id, steam_appid=appid)
+                    db.add(review)
+                    reviews_by_app[appid] = review
+                candidate, confidence = matches[0]
+                review.steam_name = item["name"]
+                review.candidate_game_id = candidate.id
+                review.candidate_name = candidate.name
+                review.confidence = round(confidence, 4)
+                review.candidates = json.dumps([
+                    {"game_id": option.id, "name": option.name, "confidence": round(score, 4)}
+                    for option, score in matches
+                ])
+                review.steam_data = json.dumps(item)
+                review.updated_at = datetime.utcnow()
+                continue
+        review = reviews_by_app.get(appid)
+        if review is not None:
+            db.delete(review)
+            reviews_by_app.pop(appid, None)
+        copy = {
+            "id": f"steam:{appid}", "platform": "PC", "format": "Digital", "source": "Steam",
+            "store_url": item.get("store_url"), "steam_appid": appid,
+            "igdb_id": target_igdb_id, "price": None, "currency": "EUR",
+        }
+        if game is None:
+            game = Videogame(
+                user_id=user_id, name=wanted.name if wanted else item["name"],
+                description=wanted.description if wanted else None, comments=wanted.comments if wanted else None,
+                image_url=(wanted.image_url if wanted else None) or item.get("image_url"), status="Not Started",
+                playtime_hours=item.get("playtime_hours"), hype=wanted.hype if wanted else None,
+                publication_year=wanted.publication_year if wanted else None,
+                release_date=wanted.release_date if wanted else None, tags=wanted.tags if wanted else None,
+                dlcs=wanted.dlcs if wanted else None, is_dlc=wanted.is_dlc if wanted else False,
+                parent_game_name=wanted.parent_game_name if wanted else None, copies=json.dumps([copy]),
+            )
+            db.add(game)
+            db.flush()
+            created_collection_game = True
+            collection.append(game)
+            collection_by_id[game.id] = game
+            imported += 1
+        else:
+            copies = json.loads(game.copies or "[]")
+            if not any(existing.get("steam_appid") == appid for existing in copies):
+                copies.append(copy)
+                game.copies = json.dumps(copies)
+                imported += 1
+            # Steam may initialize a blank value, but never replace collection data.
+            if item.get("playtime_hours") is not None and game.playtime_hours is None:
+                game.playtime_hours = item["playtime_hours"]
+        if link is None:
+            link = SteamCollectionLink(
+                user_id=user_id, steam_appid=appid, collection_game_id=game.id,
+                igdb_id=target_igdb_id, created_collection_game=created_collection_game,
+            )
+            db.add(link)
+            links_by_app[appid] = link
+        else:
+            # Repair a stale link only after the old target has disappeared.
+            link.collection_game_id = game.id
+            if link.igdb_id is None and target_igdb_id:
+                link.igdb_id = target_igdb_id
+        if wanted:
+            wanted.status = "Acquired"
+            wanted.collection_game_id = game.id
+            wanted.steam_wishlist_missing = False
+            wanted.updated_at = datetime.utcnow()
+    return imported
+
+
+def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_id):
+    review = db.query(SteamMatchReview).filter_by(id=review_id, user_id=user_id).first()
+    if review is None:
+        raise HTTPException(404, "Steam match review not found.")
+    try:
+        item = json.loads(review.steam_data)
+    except (TypeError, ValueError):
+        raise HTTPException(409, "This Steam review is invalid. Run the sync again.")
+    choices = steam_review_candidates(review)
+    candidate = None
+    if decision != "none":
+        if candidate_game_id not in {choice["game_id"] for choice in choices}:
+            raise HTTPException(409, "That collection candidate is no longer available. Reload the review list.")
+        candidate = db.query(Videogame).filter_by(id=candidate_game_id, user_id=user_id).first()
+        if decision == "same" and candidate is None:
+            raise HTTPException(409, "The suggested collection game no longer exists. Run the sync again.")
+    if decision == "different":
+        try:
+            rejected = set(json.loads(review.rejected_candidate_ids or "[]"))
+        except (TypeError, ValueError):
+            rejected = set()
+        rejected.add(candidate_game_id)
+        remaining = [choice for choice in choices if choice["game_id"] not in rejected]
+        if remaining:
+            review.rejected_candidate_ids = json.dumps(sorted(rejected))
+            review.candidates = json.dumps(remaining)
+            review.candidate_game_id = remaining[0]["game_id"]
+            review.candidate_name = remaining[0]["name"]
+            review.confidence = remaining[0]["confidence"]
+            review.updated_at = datetime.utcnow()
+            return {"resolved": False, "collection_game_id": None, "remaining_candidates": len(remaining)}
+        candidate = Videogame(user_id=user_id, name=review.steam_name, status="Not Started")
+        db.add(candidate)
+        db.flush()
+    elif decision == "none":
+        candidate = Videogame(user_id=user_id, name=review.steam_name, status="Not Started")
+        db.add(candidate)
+        db.flush()
+    else:
+        # A confirmed identity uses Steam's canonical title while retaining every
+        # other user-owned field on the collection record.
+        candidate.name = review.steam_name
+    link = db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_appid=review.steam_appid).first()
+    if link is None:
+        db.add(SteamCollectionLink(
+            user_id=user_id, steam_appid=review.steam_appid,
+            collection_game_id=candidate.id, igdb_id=item.get("igdb_id"),
+            created_collection_game=decision in ("different", "none"),
+        ))
+    else:
+        link.collection_game_id = candidate.id
+    db.delete(review)
+    db.flush()
+    reconcile_steam_library(db, user_id, [item])
+    return {"resolved": True, "collection_game_id": candidate.id, "remaining_candidates": 0}
+
+
+def remove_steam_imports(db, user_id):
+    """Remove synced Steam data while retaining local records and non-Steam copies."""
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id).all()
+    linked_appids = {link.steam_appid for link in links}
+    created_game_ids = {link.collection_game_id for link in links if link.created_collection_game}
+    copies_removed = 0
+    games_removed = 0
+
+    games = db.query(Videogame).filter_by(user_id=user_id).all()
+    games_by_id = {game.id: game for game in games}
+    for game in games:
+        try:
+            copies = json.loads(game.copies or "[]")
+        except (TypeError, ValueError):
+            copies = []
+        kept = []
+        for copy in copies:
+            appid = copy.get("steam_appid")
+            is_steam = bool(appid) or normalized(copy.get("source")) == "steam"
+            if is_steam:
+                copies_removed += 1
+            else:
+                kept.append(copy)
+        if len(kept) != len(copies):
+            game.copies = json.dumps(kept) if kept else None
+
+    wanted_removed = 0
+    for wanted in db.query(WantedGame).filter_by(user_id=user_id).all():
+        if normalized(wanted.source) == "steam":
+            db.delete(wanted)
+            wanted_removed += 1
+            continue
+        if wanted.steam_appid in linked_appids:
+            wanted.steam_appid = None
+            if wanted.store_url and "steampowered.com" in wanted.store_url.casefold():
+                wanted.store_url = None
+
+    db.query(SteamMatchReview).filter_by(user_id=user_id).delete(synchronize_session=False)
+    db.query(SteamCollectionLink).filter_by(user_id=user_id).delete(synchronize_session=False)
+    db.flush()
+
+    for game_id in created_game_ids:
+        game = games_by_id.get(game_id)
+        if game is None:
+            continue
+        try:
+            remaining = json.loads(game.copies or "[]")
+        except (TypeError, ValueError):
+            remaining = []
+        if remaining:
+            continue
+        db.query(WantedGame).filter_by(user_id=user_id, collection_game_id=game.id).update(
+            {"collection_game_id": None, "status": "Wanted"}, synchronize_session=False
+        )
+        db.delete(game)
+        games_removed += 1
+
+    settings = db.get(DiscoverySettings, user_id)
+    if settings:
+        settings.sync_enabled = False
+        settings.last_sync_at = None
+        settings.next_sync_at = None
+        settings.sync_started_at = None
+        settings.sync_error = None
+        settings.last_import_count = 0
+        settings.last_owned_import_count = 0
+        settings.last_igdb_match_count = 0
+    return {
+        "collection_games_removed": games_removed,
+        "steam_copies_removed": copies_removed,
+        "wanted_games_removed": wanted_removed,
+    }
+
+
+def _igdb_match_data(game):
+    release_date = datetime.utcfromtimestamp(game["first_release_date"]).date().isoformat() if game.get("first_release_date") else None
+    image_id = (game.get("cover") or {}).get("image_id")
+    return {
+        "igdb_id": game["id"], "name": game.get("name") or "",
+        "description": game.get("summary"),
+        "image_url": f"https://images.igdb.com/igdb/image/upload/t_cover_big/{image_id}.jpg" if image_id else None,
+        "release_date": release_date,
+        "publication_year": int(release_date[:4]) if release_date else None,
+        "is_dlc": game.get("game_type") in IGDB_DLC_TYPES,
+        "parent_game_name": (game.get("parent_game") or {}).get("name"),
+    }
+
+
+def _igdb_title(value):
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+
+
+def _closest_igdb_game(title, expected_dlc, games):
+    wanted = _igdb_title(title)
+    best, best_score = None, 0.0
+    for game in games:
+        candidate = _igdb_title(game.get("name"))
+        if not candidate:
+            continue
+        score = SequenceMatcher(None, wanted, candidate).ratio()
+        if wanted in candidate or candidate in wanted:
+            score = max(score, 0.82)
+        candidate_dlc = game.get("game_type") in IGDB_DLC_TYPES
+        score += 0.08 if candidate_dlc == expected_dlc else -0.18
+        if score > best_score:
+            best, best_score = game, score
+    return best if best_score >= 0.72 else None
+
+
+def enrich_steam_with_igdb(db, client, user_id):
+    """Fill missing metadata using exact Steam links first, then a guarded title match."""
+    from dotenv import load_dotenv
+    from ..routers.igdb_router import _get_twitch_token
+
+    load_dotenv()
+    client_id = os.getenv("TWITCH_SECRET_CLIENT_ID", "").strip()
+    if not client_id or not os.getenv("TWITCH_SECRET", "").strip():
+        return 0, None
+
+    wanted_rows = db.query(WantedGame).filter_by(user_id=user_id, deleted=False).filter(WantedGame.steam_appid.is_not(None)).all()
+    collection_rows = db.query(Videogame).filter_by(user_id=user_id).all()
+    targets = {}
+    for row in wanted_rows:
+        if row.igdb_id is None:
+            targets.setdefault(row.steam_appid, {"name": row.name, "is_dlc": row.is_dlc})
+    for row in collection_rows:
+        try:
+            copies = json.loads(row.copies or "[]")
+        except (TypeError, ValueError):
+            continue
+        for copy in copies:
+            appid = copy.get("steam_appid")
+            if appid and not copy.get("igdb_id"):
+                targets.setdefault(int(appid), {"name": row.name, "is_dlc": row.is_dlc})
+    if not targets:
+        return 0, None
+
+    try:
+        token = _get_twitch_token()
+        headers = {"Client-ID": client_id, "Authorization": f"Bearer {token}", "Content-Type": "text/plain"}
+
+        def post(path, body):
+            response = client.post(f"https://api.igdb.com/v4/{path}", headers=headers, content=body.encode())
+            if response.status_code == 429:
+                raise UpstreamRateLimit("IGDB is rate limiting auto-completion; unmatched games will retry next sync.")
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, list):
+                raise ValueError("IGDB returned an unexpected auto-completion response.")
+            return result
+
+        matches, uncached = {}, []
+        for appid in targets:
+            cached = db.get(DiscoveryCache, f"igdb-steam:{appid}")
+            if cached and cached.updated_at > datetime.utcnow() - timedelta(days=30):
+                match = json.loads(cached.payload).get("match")
+                if match:
+                    matches[appid] = match
+            else:
+                uncached.append(appid)
+
+        game_ids_by_app = {}
+        for offset in range(0, len(uncached), 500):
+            appids = uncached[offset:offset + 500]
+            quoted = ",".join(json.dumps(str(appid)) for appid in appids)
+            body = f"fields uid,game; where external_game_source = {IGDB_STEAM_SOURCE_ID} & uid = ({quoted}); limit 500;"
+            for external in post("external_games", body):
+                try:
+                    game_ids_by_app[int(external["uid"])] = int(external["game"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+        exact_games = {}
+        game_ids = sorted(set(game_ids_by_app.values()))
+        fields = "id,name,cover.image_id,summary,first_release_date,game_type,parent_game.name"
+        for offset in range(0, len(game_ids), 500):
+            ids = ",".join(str(value) for value in game_ids[offset:offset + 500])
+            for game in post("games", f"fields {fields}; where id = ({ids}); limit 500;"):
+                exact_games[game["id"]] = game
+        for appid, game_id in game_ids_by_app.items():
+            if game_id in exact_games:
+                matches[appid] = _igdb_match_data(exact_games[game_id])
+
+        fuzzy_ids = [appid for appid in uncached if appid not in matches][:40]
+        for appid in fuzzy_ids:
+            target = targets[appid]
+            games = post("games", f"search {json.dumps(target['name'])}; fields {fields}; limit 10;")
+            closest = _closest_igdb_game(target["name"], target["is_dlc"], games)
+            if closest:
+                matches[appid] = _igdb_match_data(closest)
+            time.sleep(0.27)
+
+        attempted = set(game_ids_by_app) | set(fuzzy_ids)
+        for appid in attempted:
+            cached = db.get(DiscoveryCache, f"igdb-steam:{appid}")
+            if cached is None:
+                cached = DiscoveryCache(key=f"igdb-steam:{appid}")
+                db.add(cached)
+            cached.payload = json.dumps({"match": matches.get(appid)})
+            cached.updated_at = datetime.utcnow()
+
+        matched_appids = set()
+        wanted_by_app = {row.steam_appid: row for row in wanted_rows}
+        for appid, match in matches.items():
+            wanted = wanted_by_app.get(appid)
+            if wanted and wanted.igdb_id is None:
+                wanted.igdb_id = match["igdb_id"]
+                for key in ("description", "image_url", "release_date", "publication_year", "parent_game_name"):
+                    if getattr(wanted, key) in (None, "") and match.get(key) not in (None, ""):
+                        setattr(wanted, key, match[key])
+                wanted.is_dlc = wanted.is_dlc or match["is_dlc"]
+                wanted.updated_at = datetime.utcnow()
+                matched_appids.add(appid)
+        for row in collection_rows:
+            try:
+                copies = json.loads(row.copies or "[]")
+            except (TypeError, ValueError):
+                continue
+            changed = False
+            for copy in copies:
+                try:
+                    appid = int(copy.get("steam_appid") or 0)
+                except (TypeError, ValueError):
+                    continue
+                match = matches.get(appid)
+                if match and not copy.get("igdb_id"):
+                    copy["igdb_id"] = match["igdb_id"]
+                    changed = True
+                    matched_appids.add(appid)
+                    for key in ("description", "image_url", "release_date", "publication_year", "parent_game_name"):
+                        if getattr(row, key) in (None, "") and match.get(key) not in (None, ""):
+                            setattr(row, key, match[key])
+                    row.is_dlc = row.is_dlc or match["is_dlc"]
+            if changed:
+                row.copies = json.dumps(copies)
+        if matches:
+            for link in db.query(SteamCollectionLink).filter_by(user_id=user_id).all():
+                match = matches.get(link.steam_appid)
+                if match and link.igdb_id is None:
+                    link.igdb_id = match["igdb_id"]
+        return len(matched_appids), None
+    except (httpx.HTTPError, HTTPException, ValueError, KeyError) as exc:
+        logger.warning("IGDB Steam auto-completion failed for user %s: %s", user_id, type(exc).__name__)
+        return 0, f"IGDB auto-completion could not finish: {str(exc)[:300]}"
+
+
+def steam_details(db, client, appid):
+    key = f"steam:{appid}"
+    cached = db.get(DiscoveryCache, key)
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(days=7):
+        return json.loads(cached.payload)
+    raw = request_json(client, "https://store.steampowered.com/api/appdetails", params={"appids": appid, "l": "english"})
+    result = raw.get(str(appid), {})
+    if not result.get("success") or not result.get("data", {}).get("name"):
+        raise ValueError(f"Metadata for Steam app {appid} is unavailable; it will be retried.")
+    data = result["data"]
+    release = data.get("release_date", {}).get("date", "")
+    release_date = None
+    for pattern in ("%d %b, %Y", "%b %d, %Y", "%d %B, %Y", "%B %d, %Y"):
+        try:
+            release_date = datetime.strptime(release, pattern).date().isoformat()
+            break
+        except ValueError:
+            pass
+    fields = {
+        "name": data["name"], "description": html.unescape(re.sub(r"<[^>]*>", "", data.get("short_description", ""))),
+        "image_url": data.get("header_image"), "platform": "PC", "format": "Digital",
+        "release_date": release_date, "publication_year": int(release_date[:4]) if release_date else None,
+        # External genres are reference metadata, not the user's personal tags.
+        "tags": None,
+        "is_dlc": data.get("type") == "dlc", "parent_game_name": data.get("fullgame", {}).get("name"),
+        "steam_appid": appid, "store_url": f"https://store.steampowered.com/app/{appid}/",
+    }
+    if cached is None:
+        cached = DiscoveryCache(key=key)
+        db.add(cached)
+    cached.payload, cached.updated_at = json.dumps(fields), datetime.utcnow()
+    # Pace uncached store requests; Steam does not support batching full appdetails.
+    time.sleep(0.4)
+    return fields
+
+
+def claim_sync(db, user_id, force=False):
+    now = datetime.utcnow()
+    settings = db.get(DiscoverySettings, user_id)
+    if not settings or not settings.steam_id:
+        return False
+    query = db.query(DiscoverySettings).filter(
+        DiscoverySettings.user_id == user_id,
+        or_(DiscoverySettings.sync_started_at.is_(None), DiscoverySettings.sync_started_at < now - timedelta(hours=1)),
+    )
+    if not force:
+        query = query.filter(DiscoverySettings.sync_enabled.is_(True), or_(DiscoverySettings.next_sync_at.is_(None), DiscoverySettings.next_sync_at <= now, DiscoverySettings.sync_started_at < now - timedelta(hours=1)))
+    elif settings.last_sync_at and settings.last_sync_at > now - timedelta(minutes=5):
+        raise HTTPException(429, "Please wait five minutes between manual Steam syncs.")
+    claimed = query.update({"sync_started_at": now, "next_sync_at": now + timedelta(hours=settings.sync_hours), "sync_error": None}, synchronize_session=False)
+    db.commit()
+    db.refresh(settings)
+    return bool(claimed)
+
+
+def sync_steam(user_id, factory=SessionLocal):
+    db = factory()
+    try:
+        settings = db.get(DiscoverySettings, user_id)
+        if not settings or not settings.steam_id:
+            return
+        count, skipped = 0, 0
+        steam_id = settings.steam_id
+        with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            items = steam_wishlist(client, steam_id) if settings.sync_wishlist else []
+            owned_items, owned_error = [], None
+            if settings.sync_collection:
+                try:
+                    owned_items = steam_owned_games(client, steam_id, settings.steam_api_key)
+                except (httpx.HTTPError, ValueError, KeyError) as exc:
+                    owned_error = str(exc)[:500]
+            wanted_rows = db.query(WantedGame).filter_by(user_id=user_id).all()
+            existing_ids = {row.steam_appid for row in wanted_rows if row.steam_appid}
+            owned_names = {normalized(row.name) for row in db.query(Videogame).filter_by(user_id=user_id).all()}
+            wishlist_ids = {item["appid"] for item in items}
+            if settings.sync_wishlist:
+                for row in wanted_rows:
+                    if row.steam_appid and not row.deleted and row.status != "Acquired":
+                        row.steam_wishlist_missing = row.steam_appid not in wishlist_ids
+            missing = list(dict.fromkeys(item["appid"] for item in items if item["appid"] not in existing_ids))
+            deadline = time.monotonic() + 300
+            processed = 0
+            for appid in missing[:500]:
+                if time.monotonic() >= deadline:
+                    break
+                processed += 1
+                try:
+                    fields = steam_details(db, client, appid)
+                except UpstreamRateLimit:
+                    skipped += 1
+                    break
+                except (httpx.HTTPError, ValueError, KeyError):
+                    skipped += 1
+                    continue
+                duplicate = find_duplicate(db, user_id, fields)
+                if duplicate:
+                    # Attach the Steam identity without overwriting ANY local field.
+                    if duplicate.steam_appid is None:
+                        duplicate.steam_appid = appid
+                    duplicate.steam_wishlist_missing = False
+                elif normalized(fields["name"]) not in owned_names:
+                    db.add(WantedGame(user_id=user_id, source="steam", **fields))
+                    count += 1
+                # Release SQLite's write lock between network requests. Completed
+                # rows are durable even if the process stops during a large import.
+                db.commit()
+            owned_count = reconcile_steam_library(db, user_id, owned_items) if settings.sync_collection else 0
+            igdb_count, igdb_error = enrich_steam_with_igdb(db, client, user_id)
+            settings.last_sync_at = datetime.utcnow()
+            if settings.sync_wishlist:
+                settings.last_import_count = count
+            if settings.sync_collection:
+                settings.last_owned_import_count = owned_count
+            settings.last_igdb_match_count = igdb_count
+            pending = skipped + len(missing) - processed
+            issues = [message for message in (
+                owned_error,
+                f"{pending} games still need Steam metadata; they will be retried next sync." if pending else None,
+                igdb_error,
+            ) if message]
+            settings.sync_error = " ".join(issues) or None
+            settings.sync_started_at = None
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Steam wishlist sync failed for user %s: %s", user_id, type(exc).__name__)
+        settings = db.get(DiscoverySettings, user_id)
+        if settings:
+            if isinstance(exc, ValueError):
+                message = str(exc)[:500]
+            elif isinstance(exc, httpx.ConnectError):
+                message = "Could not reach Steam. Check the backend internet connection; saved games are unchanged and the next sync will retry."
+            elif isinstance(exc, httpx.TimeoutException):
+                message = "Steam did not respond in time. Saved games are unchanged and the next sync will retry."
+            else:
+                message = "Steam sync failed. Saved games and completed imports are kept; the next sync will retry."
+            settings.sync_error = message
+            settings.sync_started_at = None
+            db.commit()
+    finally:
+        db.close()
+
+
+def sync_due_wishlists():
+    with SessionLocal() as db:
+        now = datetime.utcnow()
+        ids = [row.user_id for row in db.query(DiscoverySettings).filter(
+            DiscoverySettings.sync_enabled.is_(True), DiscoverySettings.steam_id.is_not(None),
+            or_(DiscoverySettings.next_sync_at.is_(None), DiscoverySettings.next_sync_at <= now, DiscoverySettings.sync_started_at < now - timedelta(hours=1)),
+        ).all()]
+    for user_id in ids:
+        with SessionLocal() as db:
+            claimed = claim_sync(db, user_id)
+        if claimed:
+            sync_steam(user_id)
+
+
+async def scheduler():
+    while True:
+        try:
+            await asyncio.to_thread(sync_due_wishlists)
+        except Exception:
+            logger.exception("Discovery scheduler tick failed")
+        await asyncio.sleep(60)
+
+
+def month_window(today=None):
+    today = today or date.today()
+    current = today.replace(day=1)
+    previous = (current - timedelta(days=1)).replace(day=1)
+    following = (current + timedelta(days=32)).replace(day=1)
+    return previous, current, following
+
+
+def _release_platform(value):
+    value = value or ""
+    if re.search(r"Switch\s*1\s*(?:&|and)\s*2", value, re.I):
+        return "Nintendo Switch / Nintendo Switch 2"
+    if re.search(r"Switch\s*2", value, re.I):
+        return "Nintendo Switch 2"
+    return "Nintendo Switch"
+
+
+def _clean_retail_title(value):
+    value = html.unescape(" ".join((value or "").split()))
+    value = re.sub(r"\s+for\s+Nintendo\s+Switch(?:\s*[12])?$", "", value, flags=re.I)
+    value = re.sub(r"\s*[-–—]\s*(?:Nintendo\s+)?Switch(?:\s*[12])?(?:\s*[,–—-].*)?$", "", value, flags=re.I)
+    value = re.sub(r"\s+Nintendo\s+Switch(?:\s*[12])?(?:\s*,\s*Game-Key Card)?$", "", value, flags=re.I)
+    return value.strip()
+
+
+def _release_title_key(value):
+    value = html.unescape(value or "").replace("�", " ")
+    value = re.sub(r"Nintendo\s+Switch(?:\s*™)?\s*2?\s+Edition", "", value, flags=re.I)
+    value = re.sub(r"[^a-z0-9]+", " ", value.casefold())
+    return " ".join(value.split())
+
+
+def _retail_notes(value, platform):
+    details = [platform]
+    lowered = (value or "").casefold()
+    if "game-key card" in lowered or "game key card" in lowered:
+        details.append("Game-Key Card")
+    elif "code-in-box" in lowered or "code in box" in lowered:
+        details.append("Code in box")
+    else:
+        details.append("Retail physical edition")
+    return " | ".join(details)
+
+
+def _parse_retail_date(value, previous, following):
+    value = re.sub(r"(\d)(?:st|nd|rd|th)", r"\1", value or "", flags=re.I)
+    if not re.search(r"\b\d{4}\b", value):
+        month_probe = date_parser.parse(f"{value} 2000", fuzzy=True, dayfirst=True)
+        year = previous.year if month_probe.month == previous.month else (following - timedelta(days=1)).year
+        value = f"{value} {year}"
+    return date_parser.parse(value, fuzzy=True, dayfirst=True).date()
+
+
+def _parse_nintendo_life_guide(page_html, source_url, previous, following, catalog_lookup=None):
+    """Extract factual retail title/date/platform data from a monthly guide."""
+    root = lxml_html.fromstring(page_html)
+    games = []
+
+    def add(title, date_text, context, image_url=None):
+        try:
+            release_date = _parse_retail_date(date_text, previous, following)
+        except (ValueError, TypeError, OverflowError):
+            return
+        if not previous <= release_date < following:
+            return
+        platform = _release_platform(context)
+        name = _clean_retail_title(title)
+        if not name:
+            return
+        games.append({
+            "id": f"nintendolife:{normalized(name)}:{release_date}:{normalized(platform)}",
+            "name": name,
+            "release_date": release_date.isoformat(),
+            "image_url": image_url,
+            "source_url": source_url,
+            "region": "Europe",
+            "description": None,
+            "source": "Nintendo Life",
+            "platform": platform,
+            "notes": _retail_notes(context, platform),
+        })
+
+    heading_pattern = re.compile(
+        r"^(.*?)\s+[-–—]\s+((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?)\s*(?:\((.*?)\))?$",
+        re.I,
+    )
+    for heading in root.xpath("//h3"):
+        text = " ".join(heading.text_content().split())
+        match = heading_pattern.match(text)
+        if match:
+            context_parts = [match.group(3) or "", text]
+            for sibling in heading.itersiblings():
+                if not isinstance(sibling.tag, str):
+                    continue
+                if sibling.tag in ("h2", "h3"):
+                    break
+                if sibling.tag in ("p", "blockquote") or (sibling.tag == "aside" and "article-products" in (sibling.get("class") or "")):
+                    context_parts.append(" ".join(sibling.text_content().split()))
+            add(match.group(1), match.group(2), " ".join(context_parts))
+
+    more_sections = [node for node in root.xpath("//h2") if "More Upcoming Games" in " ".join(node.text_content().split())]
+    if more_sections:
+        for sibling in more_sections[0].itersiblings():
+            if sibling.tag == "h2":
+                break
+            for item in sibling.xpath(".//div[contains(concat(' ', normalize-space(@class), ' '), ' item ')]"):
+                title_links = item.xpath(".//div[contains(concat(' ', normalize-space(@class), ' '), ' title ')]/a[1]")
+                if not title_links:
+                    continue
+                title = title_links[0].get("title") or title_links[0].text_content()
+                images = item.xpath(".//img[1]/@src")
+                dates = item.xpath(".//span[contains(concat(' ', normalize-space(@class), ' '), ' date ')]")
+                date_text = dates[0].text_content() if dates else None
+                if not date_text and catalog_lookup:
+                    matches = catalog_lookup.get(_release_title_key(_clean_retail_title(title)), [])
+                    expected_platform = _release_platform(title)
+                    match = next((row for row in matches if row["platform"] == expected_platform), matches[0] if matches else None)
+                    date_text = match["release_date"] if match else None
+                if date_text:
+                    add(title, date_text, title, images[0] if images else None)
+
+    unique = {}
+    for game in games:
+        key = (normalized(game["name"]), game["release_date"], game["platform"])
+        unique.setdefault(key, game)
+    return sorted(unique.values(), key=lambda game: (game["release_date"], game["name"]))
+
+
+def _nintendo_life_retail_releases(db, previous, current, following):
+    key = f"nintendolife-retail:{current:%Y-%m}"
+    cached = db.get(DiscoveryCache, key)
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
+        return json.loads(cached.payload), cached.updated_at
+
+    with httpx.Client(timeout=25, follow_redirects=True, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+        feed = client.get(NINTENDO_LIFE_GUIDES_FEED)
+        feed.raise_for_status()
+        guide_urls = re.findall(r"<link>(https://www\.nintendolife\.com/guides/upcoming-nintendo-switch[^<]+)</link>", feed.text, re.I)
+        current_name = current.strftime("%B").casefold()
+        current_guides = [url for url in guide_urls if current_name in url.casefold() and str(current.year) in url]
+        previous_slug = f"{previous:%B}-and-{current:%B}-{current.year}".casefold()
+        if previous.year != current.year:
+            previous_slug = f"{previous:%B}-{previous.year}-and-{current:%B}-{current.year}".casefold()
+        previous_url = f"https://www.nintendolife.com/guides/upcoming-nintendo-switch-2-games-and-accessories-for-{previous_slug}"
+        candidates = list(dict.fromkeys(current_guides + [previous_url]))
+        catalog_lookup = {}
+        try:
+            catalog_response = client.get("https://searching.nintendo-europe.com/en/select", params={
+                "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
+                "rows": 500, "wt": "json", "sort": "date_from asc, fs_id asc",
+            })
+            catalog_response.raise_for_status()
+            for row in catalog_response.json()["response"]["docs"]:
+                if not row.get("title") or not row.get("date_from"):
+                    continue
+                system_names = " ".join(row.get("system_names_txt") or [])
+                platform = "Nintendo Switch 2" if "Switch 2" in system_names else "Nintendo Switch"
+                catalog_lookup.setdefault(_release_title_key(row["title"]), []).append({
+                    "release_date": row["date_from"][:10], "platform": platform,
+                })
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            pass
+        games = []
+        for source_url in candidates:
+            try:
+                page = client.get(source_url)
+                page.raise_for_status()
+                games.extend(_parse_nintendo_life_guide(page.text, source_url, previous, following, catalog_lookup))
+            except httpx.HTTPError:
+                continue
+    if not games:
+        raise ValueError("Nintendo Life monthly retail guide contained no dated releases")
+    unique = {}
+    for game in games:
+        unique.setdefault((normalized(game["name"]), game["release_date"], game["platform"]), game)
+    games = sorted(unique.values(), key=lambda game: (game["release_date"], game["name"]))
+    if cached is None:
+        cached = DiscoveryCache(key=key)
+        db.add(cached)
+    cached.payload, cached.updated_at = json.dumps(games), datetime.utcnow()
+    db.commit()
+    return games, cached.updated_at
+
+
+def _igdb_physical_releases(db, region, previous, current, following):
+    """Fallback source using IGDB's documented physical-product links.
+
+    IGDB connects release dates to separately curated physical external products.
+    Coverage is less complete than Nintendo's catalog, so this is intentionally a
+    fallback and its limitation is returned to the UI.
+    """
+    key = f"igdb-physical:{region}:{current:%Y-%m}"
+    cached = db.get(DiscoveryCache, key)
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
+        return json.loads(cached.payload), cached.updated_at
+
+    from dotenv import load_dotenv
+    from ..routers.igdb_router import _get_twitch_token
+
+    load_dotenv()
+    client_id = os.getenv("TWITCH_SECRET_CLIENT_ID", "").strip()
+    if not client_id:
+        raise ValueError("IGDB client ID is not configured")
+    headers = {"Client-ID": client_id, "Authorization": f"Bearer {_get_twitch_token()}", "Accept": "application/json"}
+    products = {}
+    start_timestamp = int(datetime.combine(previous, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+    end_timestamp = int(datetime.combine(following, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+
+    with httpx.Client(timeout=25, headers=headers) as client:
+        for offset in range(0, 10000, 500):
+            body = (
+                "fields game,name,url,countries; "
+                f"where platform={IGDB_SWITCH_PLATFORM_ID} & game_release_format={IGDB_PHYSICAL_FORMAT_ID}; "
+                f"limit 500; offset {offset};"
+            )
+            response = client.post("https://api.igdb.com/v4/external_games", content=body)
+            response.raise_for_status()
+            rows = response.json()
+            for row in rows:
+                if row.get("game"):
+                    products.setdefault(row["game"], row)
+            if len(rows) < 500:
+                break
+            time.sleep(0.3)
+
+        release_rows = []
+        game_ids = list(products)
+        for batch_start in range(0, len(game_ids), 300):
+            ids = ",".join(map(str, game_ids[batch_start:batch_start + 300]))
+            offset = 0
+            while True:
+                body = (
+                    "fields date,human,release_region,game.name,game.slug,game.cover.image_id,game.summary; "
+                    f"where platform={IGDB_SWITCH_PLATFORM_ID} & game=({ids}) "
+                    f"& date >= {start_timestamp} & date < {end_timestamp}; "
+                    f"sort date asc; limit 500; offset {offset};"
+                )
+                response = client.post("https://api.igdb.com/v4/release_dates", content=body)
+                response.raise_for_status()
+                page = response.json()
+                release_rows.extend(page)
+                if len(page) < 500:
+                    break
+                offset += len(page)
+                time.sleep(0.3)
+            time.sleep(0.3)
+
+    region_id = IGDB_REGION_IDS[region]
+    selected = {}
+    for row in release_rows:
+        release_region = row.get("release_region")
+        if release_region not in (None, region_id, 8):
+            continue
+        game = row.get("game") or {}
+        game_id = game.get("id")
+        if not game_id or not row.get("date"):
+            continue
+        existing = selected.get(game_id)
+        # Prefer a date explicitly assigned to the selected region over worldwide.
+        if existing and existing.get("release_region") == region_id:
+            continue
+        selected[game_id] = row
+
+    games = []
+    for game_id, row in selected.items():
+        game = row["game"]
+        product = products[game_id]
+        image_id = (game.get("cover") or {}).get("image_id")
+        games.append({
+            "id": f"igdb:{game_id}",
+            "name": game.get("name") or product.get("name") or "Unknown game",
+            "release_date": datetime.fromtimestamp(row["date"], tz=timezone.utc).date().isoformat(),
+            "image_url": f"https://images.igdb.com/igdb/image/upload/t_cover_big/{image_id}.jpg" if image_id else None,
+            "source_url": product.get("url") or f"https://www.igdb.com/games/{game.get('slug', '')}",
+            "region": region,
+            "description": game.get("summary"),
+            "source": "IGDB",
+            "platform": "Nintendo Switch",
+            "notes": "Nintendo Switch | Physical format verified by an IGDB external product.",
+        })
+
+    if cached is None:
+        cached = DiscoveryCache(key=key)
+        db.add(cached)
+    cached.payload, cached.updated_at = json.dumps(games), datetime.utcnow()
+    db.commit()
+    return games, cached.updated_at
+
+
+def nintendo_releases(db, region="Europe"):
+    previous, current, following = month_window()
+    base = {"start": previous.isoformat(), "end": following.isoformat(), "months": [previous.strftime("%Y-%m"), current.strftime("%Y-%m")],
+            "source": "Nintendo Europe catalog", "region": region,
+            "coverage": "Nintendo-listed Switch titles with a physical edition. Catalog release dates can differ from retail dates; limited-print and unlisted releases may be missing."}
+    if region != "Europe":
+        try:
+            games, updated_at = _igdb_physical_releases(db, region, previous, current, following)
+            return {**base, "source": "IGDB physical products", "games": games, "updated_at": updated_at,
+                    "coverage": "IGDB Switch releases linked to a physical external product. Coverage may be incomplete.",
+                    "warning": None if games else "IGDB has no physically verified releases for this region and period."}
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            return {**base, "games": [], "updated_at": None,
+                    "warning": "The physical-release sources are temporarily unavailable."}
+    key = f"nintendo:Europe:{current:%Y-%m}"
+    cached = db.get(DiscoveryCache, key)
+    nintendo_games, source_updates, warnings = [], [], []
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
+        nintendo_games = json.loads(cached.payload)
+        source_updates.append(cached.updated_at)
+    else:
+        try:
+            nintendo_games, offset = [], 0
+            with httpx.Client(timeout=20) as client:
+                while True:
+                    raw = request_json(client, "https://searching.nintendo-europe.com/en/select", params={
+                        "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch AND physical_version_b:true AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
+                        "rows": 200, "start": offset, "wt": "json", "sort": "date_from asc, fs_id asc",
+                    })
+                    response = raw["response"]
+                    docs = response["docs"]
+                    for item in docs:
+                        if not item.get("physical_version_b") or not item.get("date_from"):
+                            continue
+                        system_names = " ".join(item.get("system_names_txt") or [])
+                        platform = "Nintendo Switch 2" if "Switch 2" in system_names else "Nintendo Switch"
+                        nintendo_games.append({"id": f"nintendo:{item['fs_id']}", "name": item["title"], "release_date": item["date_from"][:10],
+                                               "image_url": item.get("image_url_h2x1_s") or item.get("image_url_sq_s"),
+                                               "source_url": urljoin("https://www.nintendo.com", item["url"]), "region": "Europe",
+                                               "description": item.get("excerpt"), "source": "Nintendo", "platform": platform,
+                                               "notes": f"{platform} · Nintendo catalog physical edition"})
+                    offset += len(docs)
+                    if offset >= response["numFound"]:
+                        break
+                    if not docs:
+                        raise ValueError("Nintendo pagination stopped before the full catalog was read")
+            if cached is None:
+                cached = DiscoveryCache(key=key)
+                db.add(cached)
+            cached.payload, cached.updated_at = json.dumps(nintendo_games), datetime.utcnow()
+            db.commit()
+            source_updates.append(cached.updated_at)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            if cached:
+                nintendo_games = json.loads(cached.payload)
+                source_updates.append(cached.updated_at)
+                warnings.append("Nintendo could not be refreshed; its last successful data is included.")
+
+    retail_games = []
+    try:
+        retail_games, retail_updated = _nintendo_life_retail_releases(db, previous, current, following)
+        source_updates.append(retail_updated)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        retail_cache = db.get(DiscoveryCache, f"nintendolife-retail:{current:%Y-%m}")
+        if retail_cache:
+            retail_games = json.loads(retail_cache.payload)
+            source_updates.append(retail_cache.updated_at)
+            warnings.append("The retail guide could not be refreshed; its last successful data is included.")
+        else:
+            warnings.append("The supplemental retail guide is temporarily unavailable, so coverage may be incomplete.")
+
+    combined = {}
+    for game in nintendo_games:
+        game.setdefault("platform", "Nintendo Switch")
+        if not game.get("notes"):
+            game["notes"] = "Nintendo Switch | Nintendo catalog physical edition"
+    for game in nintendo_games + retail_games:
+        dedupe_key = (normalized(game["name"]), game["release_date"], game.get("platform") or "Nintendo Switch")
+        combined.setdefault(dedupe_key, game)
+    if combined:
+        sources = "Nintendo + Nintendo Life retail guide" if nintendo_games and retail_games else ("Nintendo Europe catalog" if nintendo_games else "Nintendo Life retail guide")
+        return {**base, "source": sources, "games": list(combined.values()),
+                "updated_at": max(source_updates) if source_updates else None,
+                "coverage": "Nintendo Switch and Switch 2 retail releases combined from Nintendo's catalog and Nintendo Life's monthly physical-game guide. Game-Key Cards and code-in-box releases are labelled.",
+                "warning": " ".join(warnings) or None}
+
+    try:
+        games, updated_at = _igdb_physical_releases(db, region, previous, current, following)
+        return {**base, "source": "IGDB physical products", "games": games, "updated_at": updated_at,
+                "coverage": "IGDB Switch releases linked to a physical external product. Coverage may be incomplete.",
+                "warning": "Nintendo and the retail guide could not be reached, so this is the IGDB physical-product fallback."}
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return {**base, "games": [], "updated_at": None,
+                "warning": "The Nintendo, retail-guide and IGDB physical-release sources are temporarily unavailable."}

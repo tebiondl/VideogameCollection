@@ -13,6 +13,9 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=sqlite:///./data/videogames.db
+      - BACKUP_DIR=/app/data/backups
+      - BACKUP_RETENTION=7
+      - BACKUP_INTERVAL_HOURS=24
     volumes:
       - ./data:/app/data
 

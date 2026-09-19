@@ -14,9 +14,9 @@
 
 .hub-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2rem;
-  max-width: 1000px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
@@ -72,4 +72,12 @@
   border: 1px solid var(--border-color);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+@media (max-width: 680px) {
+  .dashboard-hub { padding: 2.5rem 1rem; }
+  .hub-header { margin-bottom: 2.5rem; }
+  .hub-header h1 { font-size: 2rem; }
+  .hub-grid { grid-template-columns: 1fr; gap: 1rem; }
+  .hub-card { padding: 2rem 1.25rem; }
 }

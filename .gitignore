@@ -16,6 +16,7 @@ backend/venv
 backend/env
 backend/.db
 backend/*.sqlite3
+backend/backups/
 *.db
 
 # Mobile App

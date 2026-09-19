@@ -6,6 +6,9 @@ import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
+import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
+import { VideogamePageHeader } from '../components/VideogamePageHeader';
+import type { CopyOptions } from '../lib/discovery';
 import './AddGamePage.css';
 
 const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
@@ -19,9 +22,9 @@ interface FileConfig {
   sheets?: { name: string; selected: boolean; prompt: string }[];
 }
 
-export function AddGamePage() {
+export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' | 'manual' | 'smart' }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'search' | 'manual' | 'smart'>('manual');
+  const [activeTab, setActiveTab] = useState<'search' | 'manual' | 'smart'>(initialTab);
   const [error, setError] = useState('');
 
   // -------------------------
@@ -40,6 +43,7 @@ export function AddGamePage() {
   const [completionPercentage, setCompletionPercentage] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
   const [dlcs, setDlcs] = useState('');
+  const [copies, setCopies] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // -------------------------
@@ -60,6 +64,7 @@ export function AddGamePage() {
   const [igdbTags, setIgdbTags] = useState<string[]>([]);
   const [igdbDlcs, setIgdbDlcs] = useState('');
   const [igdbComments, setIgdbComments] = useState('');
+  const [igdbCopies, setIgdbCopies] = useState<string | null>(null);
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -------------------------
@@ -79,17 +84,22 @@ export function AddGamePage() {
   const [pollTrigger, setPollTrigger] = useState(0);
 
   const [availableTags, setAvailableTags] = useState<any[]>([]);
+  const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
 
   useEffect(() => {
-    const fetchTags = async () => {
+    const fetchFormOptions = async () => {
       try {
-        const res = await fetchWithAuth('/videogames/tags');
-        if (res.ok) setAvailableTags(await res.json());
+        const [tagsResponse, copiesResponse] = await Promise.all([
+          fetchWithAuth('/videogames/tags'),
+          fetchWithAuth('/discovery/copy-options'),
+        ]);
+        if (tagsResponse.ok) setAvailableTags(await tagsResponse.json());
+        if (copiesResponse.ok) setCopyOptions(await copiesResponse.json());
       } catch (err) {
-        console.error("Failed to load tags");
+        console.error("Failed to load game form options");
       }
     };
-    fetchTags();
+    fetchFormOptions();
   }, []);
 
   // IGDB: debounced search — fires 400 ms after user stops typing
@@ -132,6 +142,37 @@ export function AddGamePage() {
     setIgdbTags([]);
     setIgdbDlcs('');
     setIgdbComments('');
+    setIgdbCopies(null);
+  };
+
+  const buildIgdbPayload = () => ({
+    name: selectedIgdbGame.name,
+    description: selectedIgdbGame.summary || null,
+    comments: igdbComments || null,
+    image_url: selectedIgdbGame.cover_url || null,
+    status: igdbStatus,
+    playtime_hours: igdbPlaytimeHours !== '' ? igdbPlaytimeHours : null,
+    mark: igdbMark !== '' ? igdbMark : null,
+    hype: igdbHype !== '' ? igdbHype : null,
+    completion_date: igdbCompletionDate || null,
+    publication_year: selectedIgdbGame.release_year || null,
+    release_date: selectedIgdbGame.release_date || null,
+    completion_percentage: igdbCompletionPct !== '' ? igdbCompletionPct : null,
+    tags: igdbTags.length > 0 ? igdbTags.join(',') : null,
+    dlcs: igdbDlcs || null,
+    is_dlc: !!selectedIgdbGame.is_dlc,
+    parent_game_name: selectedIgdbGame.parent_game_name || null,
+    copies: igdbCopies,
+  });
+
+  const saveIgdbItem = async () => {
+    const res = await fetchWithAuth('/videogames/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildIgdbPayload()),
+    });
+    if (!res.ok) throw new Error('Failed to save game');
+    navigate('/dashboard/videogames');
   };
 
   const handleIgdbAddGame = async () => {
@@ -146,28 +187,7 @@ export function AddGamePage() {
         setIsSubmitting(false);
         return;
       }
-      const payload = {
-        name: selectedIgdbGame.name,
-        description: selectedIgdbGame.summary || null,
-        comments: igdbComments || null,
-        image_url: selectedIgdbGame.cover_url || null,
-        status: igdbStatus,
-        playtime_hours: igdbPlaytimeHours !== '' ? igdbPlaytimeHours : null,
-        mark: igdbMark !== '' ? igdbMark : null,
-        hype: igdbHype !== '' ? igdbHype : null,
-        completion_date: igdbCompletionDate || null,
-        publication_year: selectedIgdbGame.release_year || null,
-        completion_percentage: igdbCompletionPct !== '' ? igdbCompletionPct : null,
-        tags: igdbTags.length > 0 ? igdbTags.join(',') : null,
-        dlcs: igdbDlcs || null,
-      };
-      const res = await fetchWithAuth('/videogames/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('Failed to save game');
-      navigate('/dashboard/videogames');
+      await saveIgdbItem();
     } catch (err: any) {
       setError(err.message);
       setIsSubmitting(false);
@@ -406,6 +426,7 @@ export function AddGamePage() {
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null,
         dlcs: dlcs || null,
+        copies,
       };
 
       const res = await fetchWithAuth('/videogames/', {
@@ -436,7 +457,7 @@ export function AddGamePage() {
         completion_percentage: editingItem.completion_percentage ?? null,
         tags: editingItem.tags || null,
         dlcs: editingItem.dlcs || null,
-      } : {
+      } : activeTab === 'search' && selectedIgdbGame ? buildIgdbPayload() : {
         name, description: description || null, comments: comments || null, image_url: imageUrl || null,
         status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
         mark: mark !== '' ? mark : null,
@@ -445,6 +466,7 @@ export function AddGamePage() {
         completion_percentage: completionPercentage !== '' ? completionPercentage : null,
         tags: tags.length > 0 ? tags.join(',') : null,
         dlcs: dlcs || null,
+        copies,
       };
 
       const res = await fetchWithAuth(`/videogames/${gameId}`, {
@@ -484,17 +506,16 @@ export function AddGamePage() {
 
 
   return (
-    <div className="container" style={{ padding: '2rem 1.5rem', maxWidth: '800px' }}>
-      <div style={{ marginBottom: '2rem' }}>
-        <Link to="/dashboard/videogames" className="btn btn-ghost" style={{ padding: '0.5rem 0' }}>
+    <div className="container vg-support-page" style={{ maxWidth: '900px' }}>
+      <div>
+        <Link to="/dashboard/videogames" className="vg-back-link">
           <ArrowLeft size={18} />
           Back to Videogames
         </Link>
       </div>
 
-      <header className="add-game-header">
-        <h1>Add a new game to your Tracker</h1>
-
+      <VideogamePageHeader compact eyebrow="Collection builder" icon={<Gamepad2 />} title="Add a new game" description="Search trusted game data, enter a title manually, or import several games at once." />
+      <div className="add-game-header">
         <div className="tabs-container">
           <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>
             Search Online
@@ -506,7 +527,7 @@ export function AddGamePage() {
             Smart Import
           </button>
         </div>
-      </header>
+      </div>
 
       {error && <div className="auth-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
 
@@ -562,6 +583,12 @@ export function AddGamePage() {
             <div className="form-group">
               <label className="form-label">DLCs</label>
               <DlcEditor value={dlcs} onChange={setDlcs} gameName={name} />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Owned Copies</label>
+              <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
+              <OwnedCopiesEditor value={copies} onChange={setCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
             </div>
           </div>
 
@@ -1040,6 +1067,12 @@ export function AddGamePage() {
                 <DlcEditor value={igdbDlcs} onChange={setIgdbDlcs} gameName={selectedIgdbGame?.name} />
               </div>
 
+              <div className="form-group">
+                <label className="form-label">Owned Copies</label>
+                <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
+                <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
+              </div>
+
               {/* Tags */}
               <div className="form-group">
                 <label className="form-label">Tags</label>
@@ -1076,7 +1109,12 @@ export function AddGamePage() {
           onCancel={() => setShowFuzzyModal(false)}
           onSaveNew={() => {
             setShowFuzzyModal(false);
-            saveManualItem();
+            if (activeTab === 'search' && selectedIgdbGame) {
+              setIsSubmitting(true);
+              saveIgdbItem().catch((err: Error) => { setError(err.message); setIsSubmitting(false); });
+            } else {
+              saveManualItem();
+            }
           }}
           onUpdateExisting={performUpdateNativeData}
         />

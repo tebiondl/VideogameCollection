@@ -154,13 +154,11 @@ h3 { font-size: 1.5rem; }
 
 /* Glassmorphism Cards */
 .glass-card {
-  background: rgba(26, 29, 36, 0.7);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
   padding: 2rem;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
 }
 
 /* Basic Layout */

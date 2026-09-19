@@ -12,6 +12,11 @@ import { BoardgamesDashboard } from './pages/BoardgamesDashboard';
 import { AddBoardgamePage } from './pages/AddBoardgamePage';
 import { BoardgameAnalyticsDashboard } from './pages/BoardgameAnalyticsDashboard';
 import { AdminBoardgamesDashboard } from './pages/AdminBoardgamesDashboard';
+import { CollectionNavigation, VideogameEntry } from './components/CollectionNavigation';
+import { DiscoveryDashboard } from './pages/DiscoveryDashboard';
+import { DiscoveryAnalytics } from './pages/DiscoveryAnalytics';
+import { DiscoverySmartAdd } from './pages/DiscoverySmartAdd';
+import { WantedGames } from './pages/WantedGames';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -34,7 +39,18 @@ function AppRoutes() {
     <div className="app-container">
       <Navbar />
       <main className="main-content">
+        <CollectionNavigation />
         <Routes>
+          <Route path="/dashboard/videogames/collection" element={<ProtectedRoute><VideogamesDashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/discovery" element={<ProtectedRoute><DiscoveryDashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/wanted" element={<ProtectedRoute><WantedGames /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/wanted/admin" element={<Navigate to="/dashboard/admin#steam" replace />} />
+          <Route path="/dashboard/videogames/wanted/analytics" element={<ProtectedRoute><DiscoveryAnalytics /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/wanted/smart" element={<ProtectedRoute><DiscoverySmartAdd /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/discovery/admin" element={<Navigate to="/dashboard/admin#steam" replace />} />
+          <Route path="/dashboard/videogames/discovery/analytics" element={<Navigate to="/dashboard/videogames/wanted/analytics" replace />} />
+          <Route path="/dashboard/videogames/discovery/smart" element={<Navigate to="/dashboard/videogames/wanted/smart" replace />} />
           <Route path="/" element={user && !isLoading ? <Navigate to="/dashboard" replace /> : <HomePage />} />
           <Route path="/login" element={user && !isLoading ? <Navigate to="/dashboard" replace /> : <AuthPage />} />
           <Route 
@@ -49,7 +65,7 @@ function AppRoutes() {
             path="/dashboard/videogames" 
             element={
               <ProtectedRoute>
-                <VideogamesDashboard />
+                <VideogameEntry />
               </ProtectedRoute>
             } 
           />
@@ -57,7 +73,7 @@ function AppRoutes() {
             path="/dashboard/videogames/add" 
             element={
               <ProtectedRoute>
-                <AddGamePage />
+                <AddGamePage key="manual" />
               </ProtectedRoute>
             } 
           />

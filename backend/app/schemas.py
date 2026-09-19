@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+import json
+from pydantic import BaseModel, Field, field_validator
 from typing import List
 
 class UserCreate(BaseModel):
@@ -38,9 +39,29 @@ class VideogameBase(BaseModel):
     hype: int | None = None
     completion_date: str | None = None
     publication_year: int | None = None
+    release_date: str | None = None
     completion_percentage: int | None = None
     tags: str | None = None
     dlcs: str | None = None
+    is_dlc: bool = False
+    parent_game_name: str | None = None
+    copies: str | None = None
+
+    @field_validator("copies")
+    @classmethod
+    def valid_copies(cls, value):
+        if not value:
+            return None
+        items = json.loads(value)
+        if not isinstance(items, list) or len(items) > 100:
+            raise ValueError("Copies must be a list of at most 100 entries")
+        allowed_formats = {"Any", "Physical", "Digital"}
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("platform"), str):
+                raise ValueError("Each copy needs a platform")
+            if item.get("format", "Any") not in allowed_formats:
+                raise ValueError("Invalid copy format")
+        return json.dumps(items)
 
 class VideogameCreate(VideogameBase):
     pass

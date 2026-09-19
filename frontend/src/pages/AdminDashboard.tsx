@@ -4,7 +4,11 @@ import { Navigate, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Gamepad2, Tag as TagIcon } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import type { CopyOptions } from '../lib/discovery';
 import { PaginationSettingsAdmin } from '../components/PaginationSettingsAdmin';
+import { DiscoveryAdmin } from './DiscoveryAdmin';
+import { VideogamePageHeader } from '../components/VideogamePageHeader';
+import { DatabaseBackups } from '../components/DatabaseBackups';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
 
@@ -44,10 +48,47 @@ export function AdminDashboard() {
   const [replacementTagName, setReplacementTagName] = useState('');
   const [newReplacementTagName, setNewReplacementTagName] = useState('');
   const [isReassigning, setIsReassigning] = useState(false);
+  const [copyOptionsDraft, setCopyOptionsDraft] = useState({ platforms: '', sources: '' });
+  const [isSavingCopyOptions, setIsSavingCopyOptions] = useState(false);
+  const [copyOptionsMessage, setCopyOptionsMessage] = useState('');
 
   useEffect(() => {
     fetchTags();
+    fetchCopyOptions();
   }, []);
+
+  async function fetchCopyOptions() {
+    try {
+      const res = await fetchWithAuth('/discovery/copy-options');
+      if (res.ok) {
+        const data: CopyOptions = await res.json();
+        setCopyOptionsDraft({ platforms: data.platforms.join('\n'), sources: data.sources.join('\n') });
+      }
+    } catch (err) {
+      console.error('Failed to fetch owned copy options', err);
+    }
+  }
+
+  async function saveCopyOptions(event: React.FormEvent) {
+    event.preventDefault();
+    setIsSavingCopyOptions(true);
+    setCopyOptionsMessage('');
+    const lines = (value: string) => [...new Set(value.split('\n').map(item => item.trim()).filter(Boolean))];
+    try {
+      const res = await fetchWithAuth('/discovery/copy-options', {
+        method: 'PUT',
+        body: JSON.stringify({ platforms: lines(copyOptionsDraft.platforms), sources: lines(copyOptionsDraft.sources) })
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Could not save owned copy options.');
+      const data: CopyOptions = await res.json();
+      setCopyOptionsDraft({ platforms: data.platforms.join('\n'), sources: data.sources.join('\n') });
+      setCopyOptionsMessage('Owned copy dropdowns saved.');
+    } catch (err) {
+      setCopyOptionsMessage(err instanceof Error ? err.message : 'Could not save owned copy options.');
+    } finally {
+      setIsSavingCopyOptions(false);
+    }
+  }
 
   async function fetchTags() {
     setIsLoading(true);
@@ -226,42 +267,51 @@ export function AdminDashboard() {
   }
 
   return (
-    <div className="container dashboard-hub">
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link to="/dashboard/videogames" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
+    <div className="container vg-support-page">
+      <div>
+        <Link to="/dashboard/videogames" className="vg-back-link">
           <ArrowLeft size={18} />
           Back to Tracker
         </Link>
       </div>
 
-      <header className="hub-header" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <Shield size={40} className="text-primary" />
-        <div>
-          <h1 className="text-gradient">Admin Dashboard</h1>
-          <p className="text-secondary">Manage global application settings</p>
-        </div>
-      </header>
+      <VideogamePageHeader eyebrow="Collection settings" icon={<Shield />} title="Videogame Admin" description="Steam sync, collection fields, display settings and library tools in one place." />
 
-      <div style={{ maxWidth: '760px', margin: '2rem auto 0', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <PaginationSettingsAdmin />
-        <div className="glass-card" style={{ padding: '2rem' }}>
-          <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Data Management
-          </h2>
-          <p className="text-secondary" style={{ marginBottom: '1.5rem' }}>
-            Use AI to intelligently parse legacy string "time spent" entries into numeric playtime hours.
-          </p>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleMigratePlaytime}
-            disabled={isMigrating}
-            style={{ width: '100%', justifyContent: 'center' }}
-          >
-            {isMigrating ? <><Loader2 size={18} className="spinner" /> Migrating Data...</> : 'Migrate Playtime Data'}
-          </button>
-        </div>
+      <nav className="admin-jump-nav" aria-label="Admin sections">
+        <a href="#steam">Steam sync</a>
+        <a href="#copies">Copy fields</a>
+        <a href="#display">Display</a>
+        <a href="#tags">Tags</a>
+        <a href="#maintenance">Maintenance</a>
+      </nav>
 
-        <div className="glass-card" style={{ padding: '2rem' }}>
+      <div className="admin-settings-stack">
+        <section id="steam" className="admin-anchor-section">
+          <div className="admin-group-heading"><span>CONNECTIONS & IMPORTS</span><h2>Steam and wanted games</h2><p>Manage the shared wishlist and owned-library schedule, connection status, and exports.</p></div>
+          <DiscoveryAdmin embedded />
+        </section>
+
+        <section id="copies" className="glass-card admin-anchor-section admin-standard-card">
+          <h2 style={{ marginBottom: '.6rem' }}>Owned Copy Dropdowns</h2>
+          <p className="text-secondary" style={{ marginBottom: '1.5rem' }}>These values appear in the Platform and Source dropdowns whenever you add or edit a copy. Enter one value per line; line order controls dropdown order.</p>
+          <form onSubmit={saveCopyOptions}>
+            <div className="admin-copy-options-grid">
+              <label className="form-label">Platforms<textarea className="form-input" rows={8} value={copyOptionsDraft.platforms} onChange={event => setCopyOptionsDraft(current => ({ ...current, platforms: event.target.value }))} /></label>
+              <label className="form-label">Sources<textarea className="form-input" rows={8} value={copyOptionsDraft.sources} onChange={event => setCopyOptionsDraft(current => ({ ...current, sources: event.target.value }))} /></label>
+            </div>
+            {copyOptionsMessage && <p className="text-secondary" role="status" style={{ marginTop: '.8rem' }}>{copyOptionsMessage}</p>}
+            <button className="btn btn-primary" type="submit" disabled={isSavingCopyOptions || !copyOptionsDraft.platforms.trim() || !copyOptionsDraft.sources.trim()} style={{ marginTop: '1rem' }}>
+              {isSavingCopyOptions ? <Loader2 size={18} className="spinner" /> : <Check size={18} />} Save dropdown values
+            </button>
+          </form>
+        </section>
+
+        <section id="display" className="admin-anchor-section">
+          <div className="admin-group-heading"><span>DISPLAY</span><h2>Collection display</h2><p>Control how many games appear on each collection page.</p></div>
+          <PaginationSettingsAdmin />
+        </section>
+
+        <section id="tags" className="glass-card admin-anchor-section admin-standard-card">
           <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Global Tags Manager
           </h2>
@@ -340,7 +390,12 @@ export function AdminDashboard() {
           ) : (
             <p className="text-muted">No global tags found.</p>
           )}
-        </div>
+        </section>
+
+        <section id="maintenance" className="glass-card admin-anchor-section admin-standard-card">
+          <DatabaseBackups />
+          <details className="admin-legacy-tools"><summary>Legacy maintenance tools</summary><p className="text-secondary">Parse legacy string “time spent” entries into numeric playtime hours.</p><button className="btn btn-secondary" onClick={handleMigratePlaytime} disabled={isMigrating}>{isMigrating ? <><Loader2 size={18} className="spinner" /> Migrating Data...</> : 'Migrate Playtime Data'}</button></details>
+        </section>
       </div>
 
       {tagUsage && createPortal(

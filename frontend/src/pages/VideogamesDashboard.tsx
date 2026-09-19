@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Shield, BarChart3 } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -10,7 +10,10 @@ import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
 import { PaginationControls } from '../components/PaginationControls';
 import { parseStoredPageSize, type PageSize } from '../lib/pagination';
+import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
+import type { CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
+import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -36,6 +39,45 @@ const SORT_FIELDS: SortField[] = ['mark', 'hype', 'completion_percentage'];
 let _sortIdCounter = 0;
 const newSortId = () => ++_sortIdCounter;
 
+type CollectionViewStorageKey = 'page_size' | 'search_query' | 'filter_state' | 'sort_criteria';
+
+const LEGACY_VIEW_STORAGE_KEYS: Record<CollectionViewStorageKey, string> = {
+  page_size: 'vg_page_size',
+  search_query: 'vg_searchQuery',
+  filter_state: 'vg_filterState',
+  sort_criteria: 'vg_sortCriteria',
+};
+
+const collectionViewStorageKey = (userId: number, key: CollectionViewStorageKey) =>
+  `videogame-collection-view:${userId}:${key}`;
+
+function readCollectionViewState(userId: number, key: CollectionViewStorageKey): string | null {
+  try {
+    const storageKey = collectionViewStorageKey(userId, key);
+    const storedValue = localStorage.getItem(storageKey);
+    if (storedValue !== null) return storedValue;
+
+    // Keep the user's current view when upgrading from session-only persistence.
+    const legacyKey = LEGACY_VIEW_STORAGE_KEYS[key];
+    const legacyValue = sessionStorage.getItem(legacyKey);
+    if (legacyValue !== null) {
+      localStorage.setItem(storageKey, legacyValue);
+      sessionStorage.removeItem(legacyKey);
+    }
+    return legacyValue;
+  } catch {
+    return null;
+  }
+}
+
+function writeCollectionViewState(userId: number, key: CollectionViewStorageKey, value: string) {
+  try {
+    localStorage.setItem(collectionViewStorageKey(userId, key), value);
+  } catch {
+    // Storage may be unavailable in privacy-restricted browser contexts.
+  }
+}
+
 // ─── Multi-sort comparator ────────────────────────────────────────────────────
 function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
   if (criteria.length === 0) return games;
@@ -58,24 +100,24 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
 
 export function VideogamesDashboard() {
   const { user } = useAuth();
+  const userId = user!.id;
   const [viewMode, setViewMode] = useState<ViewMode>('matrix');
   const [pageSizeOptions, setPageSizeOptions] = useState([5, 10, 20, 50]);
-  const [pageSize, setPageSize] = useState<PageSize>(() => parseStoredPageSize(sessionStorage.getItem('vg_page_size')));
+  const [pageSize, setPageSize] = useState<PageSize>(() => parseStoredPageSize(readCollectionViewState(userId, 'page_size')));
   const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState(() => {
-    return sessionStorage.getItem('vg_searchQuery') || '';
-  });
+  const [searchQuery, setSearchQuery] = useState(() => readCollectionViewState(userId, 'search_query') || '');
 
   useEffect(() => {
-    sessionStorage.setItem('vg_searchQuery', searchQuery);
-  }, [searchQuery]);
+    writeCollectionViewState(userId, 'search_query', searchQuery);
+  }, [searchQuery, userId]);
   useEffect(() => {
-    sessionStorage.setItem('vg_page_size', String(pageSize));
-  }, [pageSize]);
+    writeCollectionViewState(userId, 'page_size', String(pageSize));
+  }, [pageSize, userId]);
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
+  const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
 
   // Image Selection
   const [showImageSelectModal, setShowImageSelectModal] = useState(false);
@@ -111,7 +153,7 @@ export function VideogamesDashboard() {
   // Filtering System
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filterState, setFilterState] = useState<FilterState>(() => {
-    const saved = sessionStorage.getItem('vg_filterState');
+    const saved = readCollectionViewState(userId, 'filter_state');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) {}
     }
@@ -119,8 +161,8 @@ export function VideogamesDashboard() {
   });
 
   useEffect(() => {
-    sessionStorage.setItem('vg_filterState', JSON.stringify(filterState));
-  }, [filterState]);
+    writeCollectionViewState(userId, 'filter_state', JSON.stringify(filterState));
+  }, [filterState, userId]);
   const [savedFilters, setSavedFilters] = useState<any[]>([]);
 
   // Auto-Fill
@@ -175,7 +217,7 @@ export function VideogamesDashboard() {
 
   // Sort System
   const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>(() => {
-    const saved = sessionStorage.getItem('vg_sortCriteria');
+    const saved = readCollectionViewState(userId, 'sort_criteria');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) {}
     }
@@ -183,8 +225,8 @@ export function VideogamesDashboard() {
   });
 
   useEffect(() => {
-    sessionStorage.setItem('vg_sortCriteria', JSON.stringify(sortCriteria));
-  }, [sortCriteria]);
+    writeCollectionViewState(userId, 'sort_criteria', JSON.stringify(sortCriteria));
+  }, [sortCriteria, userId]);
   const [showSortPanel, setShowSortPanel] = useState(false);
   const sortBtnRef = useRef<HTMLButtonElement>(null);
   const sortPanelRef = useRef<HTMLDivElement>(null);
@@ -220,15 +262,17 @@ export function VideogamesDashboard() {
   useEffect(() => {
     const fetchGamesAndTags = async () => {
       try {
-        const [gamesRes, tagsRes, filtersRes, paginationRes] = await Promise.all([
+        const [gamesRes, tagsRes, filtersRes, paginationRes, copyOptionsRes] = await Promise.all([
            fetchWithAuth('/videogames/'),
            fetchWithAuth('/videogames/tags'),
            fetchWithAuth('/filters/'),
-           fetchWithAuth('/settings/pagination')
+           fetchWithAuth('/settings/pagination'),
+           fetchWithAuth('/discovery/copy-options')
         ]);
         if (gamesRes.ok) setGames(await gamesRes.json());
         if (tagsRes.ok) setAvailableTags(await tagsRes.json());
         if (filtersRes.ok) setSavedFilters(await filtersRes.json());
+        if (copyOptionsRes.ok) setCopyOptions(await copyOptionsRes.json());
         if (paginationRes.ok) {
           const settings: { page_sizes: number[] } = await paginationRes.json();
           setPageSizeOptions(settings.page_sizes);
@@ -269,9 +313,13 @@ export function VideogamesDashboard() {
         hype: editingGame.hype || null,
         completion_date: editingGame.completion_date || null,
         publication_year: editingGame.publication_year || null,
+        release_date: editingGame.release_date || null,
         completion_percentage: editingGame.completion_percentage ?? null,
         tags: editingGame.tags || null,
         dlcs: editingGame.dlcs || null,
+        is_dlc: !!editingGame.is_dlc,
+        parent_game_name: editingGame.parent_game_name || null,
+        copies: editingGame.copies || null,
       };
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
         method: 'PUT',
@@ -423,23 +471,13 @@ export function VideogamesDashboard() {
 
   return (
     <div className="container vg-dashboard">
-      <header className="vg-header">
-        <div>
-          <h1 className="text-gradient">Videogames Tracker</h1>
-          <p className="text-secondary">Track and manage your collection</p>
-        </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          {user?.is_admin && (
-            <Link to="/dashboard/admin" className="btn btn-secondary add-btn">
-              <Shield size={20} />
-              Admin Features
-            </Link>
-          )}
-          <Link to="/dashboard/videogames/analytics" className="btn btn-secondary add-btn">
-            <BarChart3 size={20} />
-            Analytics
-          </Link>
-          <button className="btn btn-primary add-btn" onClick={() => setShowAutoFillModal(true)}>
+      <VideogamePageHeader
+        eyebrow="Your library"
+        icon={<Library />}
+        title="Videogames Tracker"
+        description="Track your collection, progress, ratings and every edition you own."
+        actions={<>
+          <button className="btn btn-secondary add-btn" onClick={() => setShowAutoFillModal(true)}>
             <Sparkles size={20} />
             Completion
           </button>
@@ -447,8 +485,8 @@ export function VideogamesDashboard() {
             <Plus size={20} />
             Add Game
           </Link>
-        </div>
-      </header>
+        </>}
+      />
 
       {autoFillProgress && autoFillProgress.status !== 'idle' && (
         <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -621,7 +659,12 @@ export function VideogamesDashboard() {
               </div>
               <div className="vg-info">
                 <h3>{game.name}</h3>
-                <span className="badge" style={{ marginTop: '0.5rem', display: 'inline-block' }}>{game.status}</span>
+                <div className="vg-player-data">
+                  <span className="badge">{game.status}</span>
+                  {game.playtime_hours != null && <span><strong>{game.playtime_hours}</strong> hrs</span>}
+                  {game.mark != null && <span className="vg-score mark"><strong>{game.mark}/10</strong> rating</span>}
+                  {game.hype != null && <span className="vg-score hype"><strong>{game.hype}/10</strong> anticipation</span>}
+                </div>
               </div>
               <div className="card-actions">
                 <button className="icon-btn edit-btn" onClick={() => setEditingGame(game)} title="Edit"><Edit2 size={16} /></button>
@@ -690,9 +733,21 @@ export function VideogamesDashboard() {
                 <input type="number" min="1950" max="2100" className="form-input" placeholder="YYYY" value={editingGame.publication_year || ''} onChange={e => setEditingGame({...editingGame, publication_year: e.target.value ? Number(e.target.value) : null})} />
               </div>
 
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Release Date</label><input type="date" className="form-input" value={editingGame.release_date || ''} onChange={e => setEditingGame({...editingGame, release_date: e.target.value || null})} /></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Type</label><label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.5rem', alignItems: 'center' }}><input type="checkbox" checked={!!editingGame.is_dlc} onChange={e => setEditingGame({...editingGame, is_dlc: e.target.checked})} /> DLC / expansion</label></div>
+              </div>
+              {editingGame.is_dlc && <div className="form-group"><label className="form-label">Parent Game</label><input className="form-input" value={editingGame.parent_game_name || ''} onChange={e => setEditingGame({...editingGame, parent_game_name: e.target.value || null})} /></div>}
+
               <div className="form-group">
                 <label className="form-label">DLCs</label>
                 <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Owned Copies</label>
+                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
               </div>
             </div>
 

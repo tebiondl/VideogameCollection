@@ -1,0 +1,18 @@
+.collection-navigation { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-top:22px; padding-bottom:0; flex-wrap:wrap; }
+.collection-tabs { display:flex; gap:6px; padding:5px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:13px; }
+.collection-tabs a { display:flex; align-items:center; gap:8px; padding:9px 20px; color:var(--text-secondary); border-radius:8px; }
+.collection-tabs a.selected { background:linear-gradient(135deg,#45488b,#3b3d78); color:#f0f1ff; box-shadow:0 4px 14px rgba(70,73,150,.24); }
+.collection-tabs a:hover { background:var(--bg-tertiary); }
+.collection-tools { display:flex; gap:18px; flex-wrap:wrap; color:var(--text-secondary); font-size:.9rem; }
+.collection-tools a { display:flex; align-items:center; gap:6px; padding:8px 0; }
+.collection-tools a[aria-current], .collection-tools a:hover { color:#c5c7ff; }
+.collection-navigation a:focus-visible, .nav-collections a:focus-visible { outline:2px solid #a5b4fc; outline-offset:3px; }
+.nav-collections { display:flex; align-items:center; gap:22px; margin:0 20px; }
+.nav-collection { position:relative; }
+.nav-collection > a { display:flex; align-items:center; gap:7px; padding:22px 0; color:var(--text-secondary); font-size:.95rem; }
+.nav-collection > a[aria-current] { color:#b8baff; }
+.nav-collection-menu { display:none; position:absolute; top:100%; left:0; min-width:185px; padding:7px; border:1px solid var(--border-color); background:var(--bg-secondary); border-radius:10px; box-shadow:0 12px 35px #0008; }
+.nav-collection-menu a { display:block; padding:10px 12px; border-radius:6px; }
+.nav-collection-menu a:hover { background:var(--bg-tertiary); }
+.nav-collection:hover .nav-collection-menu, .nav-collection:focus-within .nav-collection-menu { display:block; }
+@media(max-width:760px) { .navbar { height:auto; min-height:70px; } .nav-container { flex-wrap:wrap; gap:8px; padding-top:10px; } .nav-collections { order:3; width:100%; margin:0; } .nav-collection > a { padding:8px 0 12px; } .nav-logo { font-size:1.2rem; } .nav-actions .username, .nav-actions .nav-back-hub { display:none; } .collection-navigation { padding-left:1rem; padding-right:1rem; } .collection-tabs { width:100%; } .collection-tabs a { flex:1 1 0; min-width:0; justify-content:center; gap:4px; padding:9px 6px; font-size:.77rem; white-space:nowrap; } .collection-tabs svg { width:15px; height:15px; flex:0 0 auto; } .collection-tools { gap:13px; font-size:.8rem; } }
