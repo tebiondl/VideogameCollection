@@ -50,6 +50,7 @@ class DiscoverySettings(Base):
     next_sync_at = Column(DateTime)
     sync_started_at = Column(DateTime)
     sync_error = Column(String)
+    sync_warning = Column(String)
     last_import_count = Column(Integer, nullable=False, default=0)
     last_owned_import_count = Column(Integer, nullable=False, default=0)
     last_igdb_match_count = Column(Integer, nullable=False, default=0)
@@ -205,8 +206,22 @@ class CopyOption(Base):
     __table_args__ = (UniqueConstraint("user_id", "kind", "name", name="uq_copy_option_user_kind_name"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    kind = Column(String, nullable=False)  # platform | source
+    kind = Column(String, nullable=False)  # platform | source | type | old_console
     name = Column(String, nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+
+
+class CopyCompatibility(Base):
+    """Admin-managed allowed values between two copy dropdown columns."""
+    __tablename__ = "copy_compatibility"
+    __table_args__ = (
+        UniqueConstraint("user_id", "relation", "left_name", "right_name", name="uq_copy_compatibility"),
+    )
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    relation = Column(String, nullable=False)  # platform_source | source_type
+    left_name = Column(String, nullable=False)
+    right_name = Column(String, nullable=False)
     position = Column(Integer, nullable=False, default=0)
 
 

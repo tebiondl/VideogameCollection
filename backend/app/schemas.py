@@ -48,6 +48,7 @@ class VideogameBase(BaseModel):
     is_dlc: bool = False
     parent_game_name: str | None = None
     copies: str | None = None
+    old_copies: str | None = None
     hidden: bool = False
     version: int | None = None
 
@@ -59,14 +60,13 @@ class VideogameBase(BaseModel):
         items = json.loads(value)
         if not isinstance(items, list) or len(items) > 100:
             raise ValueError("Copies must be a list of at most 100 entries")
-        allowed_formats = {"Any", "Physical", "Digital"}
         copy_ids: set[str] = set()
         steam_appids: set[int] = set()
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("platform"), str):
                 raise ValueError("Each copy needs a platform")
-            if item.get("format", "Any") not in allowed_formats:
-                raise ValueError("Invalid copy format")
+            if not isinstance(item.get("format", "Any"), str) or not item.get("format", "Any").strip():
+                raise ValueError("Each copy needs a type")
             if item.get("id"):
                 copy_id = str(item["id"])
                 if copy_id in copy_ids:
@@ -79,6 +79,28 @@ class VideogameBase(BaseModel):
                 steam_appids.add(appid)
             if item.get("playtime_hours") is not None and float(item["playtime_hours"]) < 0:
                 raise ValueError("Copy playtime cannot be negative")
+        return json.dumps(items)
+
+    @field_validator("old_copies")
+    @classmethod
+    def valid_old_copies(cls, value):
+        if not value:
+            return None
+        items = json.loads(value)
+        if not isinstance(items, list) or len(items) > 100:
+            raise ValueError("Old copies must be a list of at most 100 entries")
+        ids: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict) or not str(item.get("console") or "").strip():
+                raise ValueError("Each old copy needs a console")
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in ids:
+                raise ValueError("Every old copy needs a unique ID")
+            if item_id:
+                ids.add(item_id)
+            hours = item.get("playtime_hours")
+            if hours is not None and float(hours) < 0:
+                raise ValueError("Old-copy playtime cannot be negative")
         return json.dumps(items)
 
 class VideogameCreate(VideogameBase):

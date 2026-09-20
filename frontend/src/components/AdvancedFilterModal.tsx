@@ -285,7 +285,7 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                  <div className="copy-filter-groups">
                    {copyFilterGroup('Platform', 'copyPlatforms', copyFilterOptions.platforms)}
                    {copyFilterGroup('Source', 'copySources', copyFilterOptions.sources)}
-                   {copyFilterGroup('Format', 'copyFormats', copyFilterOptions.formats)}
+                   {copyFilterGroup('Type', 'copyFormats', copyFilterOptions.formats)}
                  </div>
                </div>
 

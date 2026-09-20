@@ -26,7 +26,7 @@ export interface DiscoverySettings {
   steam_id: string | null; steam_api_key_configured: boolean; sync_enabled: boolean; sync_hours: number; region: string;
   sync_wishlist: boolean; sync_collection: boolean;
   last_sync_at: string | null; next_sync_at: string | null; sync_started_at: string | null;
-  sync_error: string | null; last_import_count: number; last_owned_import_count: number;
+  sync_error: string | null; sync_warning: string | null; last_import_count: number; last_owned_import_count: number;
   last_igdb_match_count: number;
 }
 export interface SteamMatchReview {
@@ -43,7 +43,18 @@ export interface SteamIntegrity {
   issues: Record<string, number>;
 }
 export interface SteamMatchCandidate { game_id: number; name: string; confidence: number }
-export interface CopyOptions { platforms: string[]; sources: string[] }
+export interface CopyOptions {
+  platforms: string[];
+  sources: string[];
+  types: string[];
+  old_consoles: string[];
+  platform_sources: Record<string, string[]>;
+  source_types: Record<string, string[]>;
+}
+
+export const EMPTY_COPY_OPTIONS: CopyOptions = {
+  platforms: [], sources: [], types: [], old_consoles: [], platform_sources: {}, source_types: {},
+};
 export interface Release {
   id: string; name: string; release_date: string; image_url: string | null; source_url: string;
   region: string; source: string; platform?: string; notes?: string | null; description?: string; owned: boolean; saved: boolean;

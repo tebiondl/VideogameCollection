@@ -149,6 +149,7 @@ class SettingsResponse(BaseModel):
     next_sync_at: datetime | None = None
     sync_started_at: datetime | None = None
     sync_error: str | None = None
+    sync_warning: str | None = None
     last_import_count: int = 0
     last_owned_import_count: int = 0
     last_igdb_match_count: int = 0
@@ -192,8 +193,12 @@ class CopyOptionsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     platforms: list[str] = Field(min_length=1, max_length=100)
     sources: list[str] = Field(min_length=1, max_length=100)
+    types: list[str] = Field(default_factory=lambda: ["Any", "Physical", "Digital"], min_length=1, max_length=100)
+    old_consoles: list[str] = Field(default_factory=lambda: ["PC", "Other"], min_length=1, max_length=200)
+    platform_sources: dict[str, list[str]] = Field(default_factory=dict)
+    source_types: dict[str, list[str]] = Field(default_factory=dict)
 
-    @field_validator("platforms", "sources")
+    @field_validator("platforms", "sources", "types", "old_consoles")
     @classmethod
     def valid_options(cls, values):
         cleaned = []
@@ -209,6 +214,14 @@ class CopyOptionsInput(BaseModel):
         if not cleaned:
             raise ValueError("Keep at least one option")
         return cleaned
+
+    @field_validator("platform_sources", "source_types")
+    @classmethod
+    def valid_compatibility(cls, mapping):
+        return {
+            str(left).strip(): list(dict.fromkeys(str(right).strip() for right in values if str(right).strip()))
+            for left, values in mapping.items() if str(left).strip()
+        }
 
 
 class CopyOptionsResponse(CopyOptionsInput):

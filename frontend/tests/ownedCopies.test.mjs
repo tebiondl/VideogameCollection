@@ -41,6 +41,14 @@ test('playtime mode selects user, copy, or combined hours', () => {
   assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'combined' }), 19.5);
 });
 
+test('old-copy hours count as copy time without becoming current copies', () => {
+  const current = JSON.stringify([{ platform: 'PC', format: 'Digital', source: 'Steam', playtime_hours: 12 }]);
+  const oldCopies = JSON.stringify([{ console: 'Nintendo DS', playtime_hours: 8.5 }]);
+  assert.equal(copyPlaytimeHours(current, oldCopies), 20.5);
+  assert.equal(displayPlaytimeHours({ copies: current, old_copies: oldCopies, playtime_mode: 'copies' }), 20.5);
+  assert.equal(displayPlaytimeHours({ copies: current, old_copies: oldCopies, playtime_hours: 2, playtime_mode: 'combined' }), 22.5);
+});
+
 test('shared Steam entitlements count once in account analytics', () => {
   const seen = new Set();
   const primary = { copies: JSON.stringify([{ steam_appid: 42, playtime_hours: 12, counts_toward_totals: true }]), playtime_mode: 'copies' };

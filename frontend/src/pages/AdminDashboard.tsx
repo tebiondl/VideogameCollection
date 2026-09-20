@@ -6,6 +6,7 @@ import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangl
 import { fetchWithAuth } from '../lib/api';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { DatabaseBackups } from '../components/DatabaseBackups';
+import { CopyConfigurationAdmin } from '../components/CopyConfigurationAdmin';
 import './DashboardPage.css'; // Reuse basic styles
 import './AdminDashboard.css';
 
@@ -222,7 +223,7 @@ export function AdminDashboard() {
     }
   };
 
-  if (['#steam', '#copies', '#display'].includes(hash)) {
+  if (['#steam', '#display'].includes(hash)) {
     return <Navigate to={`/dashboard/videogames/settings${hash}`} replace />;
   }
 
@@ -244,6 +245,7 @@ export function AdminDashboard() {
 
       <nav className="admin-jump-nav" aria-label="Admin sections">
         <a href="#tags">Tags</a>
+        <a href="#copies">Copy configuration</a>
         <a href="#maintenance">Maintenance</a>
       </nav>
 
@@ -328,6 +330,8 @@ export function AdminDashboard() {
             <p className="text-muted">No global tags found.</p>
           )}
         </section>
+
+        <CopyConfigurationAdmin />
 
         <section id="maintenance" className="glass-card admin-anchor-section admin-standard-card">
           <DatabaseBackups />

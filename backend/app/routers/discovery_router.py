@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from ..database import get_db
-from ..models import User, Videogame
+from ..models import AppSetting, User, Videogame
 from ..discovery_models import (
-    WantedGame, PhysicalRelease, CopyOption, SteamCollectionLink, SteamCopyTrash,
+    WantedGame, PhysicalRelease, CopyOption, CopyCompatibility, SteamCollectionLink, SteamCopyTrash,
     SteamMatchReview, SteamOwnedGame, SteamContentLink, GameMergeRedirect, SteamAuditLog,
 )
 from ..discovery_schemas import (
@@ -19,7 +19,7 @@ from ..discovery_schemas import (
 )
 from ..services import discovery as service
 from ..services import copy_store
-from ..services.secrets import protect_secret
+from ..services.secrets import protect_secret, reveal_secret
 from .auth_router import get_current_user
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -27,6 +27,24 @@ router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 DEFAULT_COPY_OPTIONS = {
     "platforms": ["PC", "Nintendo Switch", "Nintendo Switch 2", "PlayStation 5", "PlayStation 4", "Xbox Series X|S", "Xbox One", "Steam Deck"],
     "sources": ["Steam", "Nintendo eShop", "PlayStation Store", "Xbox Store", "Retail", "Gift", "Subscription", "Other"],
+    "types": ["Any", "Physical", "Digital"],
+    "old_consoles": ["PC", "Nintendo Switch", "Nintendo Switch 2", "Nintendo 3DS", "Nintendo DS", "Game Boy Advance", "Game Boy Color", "Game Boy", "Wii U", "Wii", "GameCube", "Nintendo 64", "Super Nintendo", "NES", "PlayStation 5", "PlayStation 4", "PlayStation 3", "PlayStation 2", "PlayStation", "PS Vita", "PSP", "Xbox Series X|S", "Xbox One", "Xbox 360", "Xbox", "Steam Deck", "Sega Dreamcast", "Sega Saturn", "Sega Mega Drive / Genesis", "Other"],
+}
+
+DEFAULT_PLATFORM_SOURCES = {
+    "PC": ["Steam", "Xbox Store", "Retail", "Gift", "Subscription", "Other"],
+    "Nintendo Switch": ["Nintendo eShop", "Retail", "Other"],
+    "Nintendo Switch 2": ["Nintendo eShop", "Retail", "Other"],
+    "PlayStation 5": ["PlayStation Store", "Retail", "Gift", "Subscription", "Other"],
+    "PlayStation 4": ["PlayStation Store", "Retail", "Gift", "Subscription", "Other"],
+    "Xbox Series X|S": ["Xbox Store", "Retail", "Gift", "Subscription", "Other"],
+    "Xbox One": ["Xbox Store", "Retail", "Gift", "Subscription", "Other"],
+    "Steam Deck": ["Steam", "Gift", "Subscription", "Other"],
+}
+DEFAULT_SOURCE_TYPES = {
+    "Steam": ["Digital"], "Nintendo eShop": ["Digital"], "PlayStation Store": ["Digital"],
+    "Xbox Store": ["Digital"], "Retail": ["Physical"], "Subscription": ["Digital"],
+    "Gift": ["Any", "Physical", "Digital"], "Other": ["Any", "Physical", "Digital"],
 }
 
 
@@ -51,11 +69,40 @@ def commit(db):
 
 
 def copy_options(db, user_id):
-    rows = db.query(CopyOption).filter_by(user_id=user_id).order_by(CopyOption.position, CopyOption.id).all()
-    result = {"platforms": [], "sources": []}
+    # Copy vocabularies are system configuration. Prefer the configured admin's
+    # rows so every user sees the same dropdowns and compatibility rules.
+    owner_marker = db.query(AppSetting).filter_by(key="copy_configuration_owner_id").first()
+    try:
+        owner_id = int(owner_marker.value) if owner_marker else None
+    except (TypeError, ValueError):
+        owner_id = None
+    if owner_id is None:
+        configured_admin = db.query(CopyOption.user_id).join(User, User.id == CopyOption.user_id).filter(
+            User.is_admin.is_(True)
+        ).order_by(CopyOption.user_id).first()
+        owner_id = configured_admin[0] if configured_admin else user_id
+    rows = db.query(CopyOption).filter_by(user_id=owner_id).order_by(CopyOption.position, CopyOption.id).all()
+    has_admin_compatibility_config = any(row.kind in ("type", "old_console") for row in rows)
+    result = {"platforms": [], "sources": [], "types": [], "old_consoles": []}
     for row in rows:
-        result[f"{row.kind}s"].append(row.name)
-    return {key: result[key] or values for key, values in DEFAULT_COPY_OPTIONS.items()}
+        target = "old_consoles" if row.kind == "old_console" else f"{row.kind}s"
+        if target in result:
+            result[target].append(row.name)
+    result = {key: result[key] or values for key, values in DEFAULT_COPY_OPTIONS.items()}
+    rules = db.query(CopyCompatibility).filter_by(user_id=owner_id).order_by(
+        CopyCompatibility.position, CopyCompatibility.id
+    ).all()
+    platform_sources = {platform: [] for platform in result["platforms"]}
+    source_types = {source: [] for source in result["sources"]}
+    for rule in rules:
+        target = platform_sources if rule.relation == "platform_source" else source_types
+        if rule.left_name in target:
+            target[rule.left_name].append(rule.right_name)
+    if not any(platform_sources.values()) and not has_admin_compatibility_config:
+        platform_sources = {platform: [source for source in DEFAULT_PLATFORM_SOURCES.get(platform, result["sources"]) if source in result["sources"]] for platform in result["platforms"]}
+    if not any(source_types.values()) and not has_admin_compatibility_config:
+        source_types = {source: [copy_type for copy_type in DEFAULT_SOURCE_TYPES.get(source, result["types"]) if copy_type in result["types"]] for source in result["sources"]}
+    return {**result, "platform_sources": platform_sources, "source_types": source_types}
 
 
 @router.get("/games", response_model=list[WantedResponse])
@@ -281,11 +328,31 @@ def read_copy_options(db: Session = Depends(get_db), user: User = Depends(get_cu
 
 @router.put("/copy-options", response_model=CopyOptionsResponse)
 def save_copy_options(payload: CopyOptionsInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    admin(user)
+    owner_marker = db.query(AppSetting).filter_by(key="copy_configuration_owner_id").first()
+    if owner_marker is None:
+        db.add(AppSetting(key="copy_configuration_owner_id", value=str(user.id)))
+    else:
+        owner_marker.value = str(user.id)
     db.query(CopyOption).filter_by(user_id=user.id).delete()
-    for kind, values in (("platform", payload.platforms), ("source", payload.sources)):
+    db.query(CopyCompatibility).filter_by(user_id=user.id).delete()
+    for kind, values in (("platform", payload.platforms), ("source", payload.sources), ("type", payload.types), ("old_console", payload.old_consoles)):
         db.add_all(CopyOption(user_id=user.id, kind=kind, name=name, position=index) for index, name in enumerate(values))
+    for relation, mapping, left_values, right_values in (
+        ("platform_source", payload.platform_sources, payload.platforms, payload.sources),
+        ("source_type", payload.source_types, payload.sources, payload.types),
+    ):
+        allowed_left, allowed_right = set(left_values), set(right_values)
+        for left_position, left in enumerate(left_values):
+            for right_position, right in enumerate(mapping.get(left, [])):
+                if left not in allowed_left or right not in allowed_right:
+                    raise HTTPException(422, f"Unknown value in {relation.replace('_', ' ')} mapping.")
+                db.add(CopyCompatibility(
+                    user_id=user.id, relation=relation, left_name=left, right_name=right,
+                    position=left_position * 1000 + right_position,
+                ))
     commit(db)
-    return payload
+    return copy_options(db, user.id)
 
 
 @router.put("/settings", response_model=SettingsResponse)
@@ -334,9 +401,16 @@ def save_settings(payload: SettingsInput, db: Session = Depends(get_db), user: U
 def sync_now(background: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     settings = service.get_settings(db, user.id)
     if not settings.steam_id:
-        raise HTTPException(422, "Connect your public Steam profile in Discovery Admin first.")
+        raise HTTPException(422, "Connect your public Steam profile in User Settings first.")
     if not (settings.sync_wishlist or settings.sync_collection):
-        raise HTTPException(422, "Choose wishlist sync, collection sync, or both in Admin first.")
+        raise HTTPException(422, "Choose wishlist sync, collection sync, or both in User Settings first.")
+    if settings.sync_collection:
+        try:
+            configured_key = reveal_secret(settings.steam_api_key)
+        except Exception:
+            raise HTTPException(422, "The saved Steam Web API key cannot be read. Enter it again in User Settings.")
+        if not configured_key:
+            raise HTTPException(422, "Collection sync needs a Steam Web API key. Add one in User Settings, or turn off collection sync.")
     if not service.claim_sync(db, user.id, force=True):
         raise HTTPException(409, "A Steam sync is already running.")
     background.add_task(service.sync_steam, user.id)
@@ -478,7 +552,7 @@ def merge_collection_duplicate(
     merge_fields = (
         "description", "comments", "image_url", "status", "playtime_hours", "playtime_mode",
         "mark", "hype", "completion_date", "publication_year", "release_date",
-        "completion_percentage", "tags", "dlcs", "reviewed", "igdb_id",
+        "completion_percentage", "tags", "dlcs", "old_copies", "reviewed", "igdb_id",
     )
     for field in merge_fields:
         default_source = "current" if retained_game.id == current_game.id else "other"
@@ -766,7 +840,7 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
         allowed = {
             "name", "description", "comments", "image_url", "status", "playtime_hours",
             "playtime_mode", "mark", "hype", "completion_date", "publication_year",
-            "release_date", "completion_percentage", "tags", "dlcs", "hidden", "reviewed", "igdb_id",
+            "release_date", "completion_percentage", "tags", "dlcs", "old_copies", "hidden", "reviewed", "igdb_id",
         }
         fields = {key: value for key, value in snapshot.items() if key in allowed}
         fields.update({"name": fields.get("name") or row.collection_game_name or row.name,

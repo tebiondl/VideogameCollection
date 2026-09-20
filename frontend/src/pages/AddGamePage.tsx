@@ -8,7 +8,7 @@ import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
 import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
-import type { CopyOptions } from '../lib/discovery';
+import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
 import './AddGamePage.css';
 
 const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
@@ -84,7 +84,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [pollTrigger, setPollTrigger] = useState(0);
 
   const [availableTags, setAvailableTags] = useState<any[]>([]);
-  const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
+  const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
 
   useEffect(() => {
     const fetchFormOptions = async () => {
@@ -592,7 +592,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
             <div className="form-group">
               <label className="form-label">Owned Copies</label>
               <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
-              <OwnedCopiesEditor value={copies} onChange={setCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
+              <OwnedCopiesEditor value={copies} onChange={setCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
             </div>
           </div>
 
@@ -1074,7 +1074,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
                 <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
-                <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
+                <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
               </div>
 
               {/* Tags */}

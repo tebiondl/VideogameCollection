@@ -43,3 +43,10 @@ test('Steam Deck cannot be physical', () => {
   assert.deepEqual([...compatibleCopyFormats('Steam Deck', 'Other')], ['Digital']);
   assert.equal(isCopySourceCompatible('Steam Deck', 'Retail'), false);
 });
+
+test('admin mappings override the built-in compatibility defaults', () => {
+  const platformSources = { Handheld: ['Cartridge', 'Download'] };
+  const sourceTypes = { Cartridge: ['Boxed'], Download: ['Digital'] };
+  assert.deepEqual([...compatibleCopySources('Handheld', ['Steam', 'Cartridge', 'Download'], platformSources)], ['Cartridge', 'Download']);
+  assert.deepEqual([...compatibleCopyFormats('Handheld', 'Cartridge', ['Boxed', 'Digital'], sourceTypes)], ['Boxed']);
+});

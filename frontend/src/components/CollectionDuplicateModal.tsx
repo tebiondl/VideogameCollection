@@ -22,7 +22,7 @@ const MERGE_FIELDS = [
   ['status', 'Status'], ['playtime_hours', 'My added time'], ['playtime_mode', 'Time display mode'],
   ['mark', 'Rating'], ['hype', 'Anticipation'], ['completion_date', 'Completion date'],
   ['completion_percentage', 'Completion %'], ['publication_year', 'Publication year'],
-  ['release_date', 'Release date'], ['reviewed', 'Checked / reviewed'], ['igdb_id', 'IGDB identity'], ['tags', 'Tags'], ['dlcs', 'DLC list'],
+  ['release_date', 'Release date'], ['reviewed', 'Checked / reviewed'], ['igdb_id', 'IGDB identity'], ['tags', 'Tags'], ['dlcs', 'DLC list'], ['old_copies', 'Old copies'],
 ] as const;
 
 function shownValue(value: unknown) {

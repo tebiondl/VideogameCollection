@@ -42,6 +42,7 @@ class Videogame(Base):
     is_dlc = Column(Boolean, nullable=False, default=False)
     parent_game_name = Column(String, nullable=True)
     copies = Column(String, nullable=True) # JSON array of owned platform / format copies
+    old_copies = Column(String, nullable=True) # JSON array of historical console / playtime records
     hidden = Column(Boolean, nullable=False, default=False)
     reviewed = Column(Boolean, nullable=False, default=False)
     merged_into_game_id = Column(Integer, nullable=True, index=True)

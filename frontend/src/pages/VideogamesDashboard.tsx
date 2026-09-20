@@ -11,7 +11,8 @@ import { DlcEditor } from '../components/DlcEditor';
 import { PaginationControls } from '../components/PaginationControls';
 import { parseStoredPageSize, type PageSize } from '../lib/pagination';
 import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
-import type { CopyOptions } from '../lib/discovery';
+import { OldCopiesEditor } from '../components/OldCopiesEditor';
+import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
@@ -122,7 +123,7 @@ export function VideogamesDashboard() {
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
-  const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
+  const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
   const copyFilterOptions = useMemo(() => {
     const platforms = new Set(copyOptions.platforms);
     const sources = new Set(copyOptions.sources);
@@ -786,7 +787,7 @@ export function VideogamesDashboard() {
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
-                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
                   if (!copy.id || !window.confirm(`Restore ${copy.name || 'this Steam copy'} as its own collection game?`)) return;
                   const response = await fetchWithAuth(`/discovery/steam/collection-games/${editingGame.id}/copies/${encodeURIComponent(copy.id)}/restore-duplicate`, { method: 'POST' });
                   if (!response.ok) {
@@ -802,6 +803,12 @@ export function VideogamesDashboard() {
                   setEditingGame(result.source_game);
                 }} />
                 <button type="button" className="btn btn-secondary" style={{ marginTop: '.75rem' }} onClick={() => setDuplicateGame(editingGame)}><GitMerge size={17} /> Merge duplicate collection game</button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Old Copies</label>
+                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Record a copy you played but no longer own. Its time counts toward copy playtime without appearing as a current copy.</p>
+                <OldCopiesEditor value={editingGame.old_copies} onChange={value => setEditingGame({ ...editingGame, old_copies: value })} consoleOptions={copyOptions.old_consoles} />
               </div>
 
               <div className="form-row" style={{ alignItems: 'stretch' }}>
@@ -855,7 +862,7 @@ export function VideogamesDashboard() {
                 <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={editingGame.playtime_hours !== null && editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : ''} onChange={e => setEditingGame({...editingGame, playtime_hours: e.target.value ? Number(e.target.value) : null})} />
               </div>
               <div className="form-row">
-                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Copies playtime</label><input className="form-input" value={`${copyPlaytimeHours(editingGame.copies).toFixed(1)} hours`} disabled /></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Copies playtime</label><input className="form-input" value={`${copyPlaytimeHours(editingGame.copies, editingGame.old_copies).toFixed(1)} hours`} disabled /></div>
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={editingGame.playtime_mode || 'user'} onChange={event => setEditingGame({ ...editingGame, playtime_mode: event.target.value })}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
               </div>
 

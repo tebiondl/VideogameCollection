@@ -242,6 +242,11 @@
 .owned-copy-grid label { color:var(--text-secondary); font-size:.8rem; }
 .owned-copy-grid .wide { grid-column:1/-1; }
 .owned-copy-grid .form-input { margin-top:.35rem; }
+.old-copies-editor { display:flex; flex-direction:column; gap:.65rem; }
+.old-copy-row { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) auto; gap:.75rem; align-items:end; padding:.8rem; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-tertiary); }
+.old-copy-row label { color:var(--text-secondary); font-size:.8rem; }
+.old-copy-row .form-input { margin-top:.35rem; }
+@media (max-width:620px) { .old-copy-row { grid-template-columns:1fr auto; } .old-copy-row label { grid-column:1/-1; } }
 
 .empty-state {
   grid-column: 1 / -1;

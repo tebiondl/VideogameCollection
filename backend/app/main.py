@@ -33,6 +33,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN is_dlc BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN parent_game_name VARCHAR",
         "ALTER TABLE videogames ADD COLUMN copies TEXT",
+        "ALTER TABLE videogames ADD COLUMN old_copies TEXT",
         "ALTER TABLE videogames ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN reviewed BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN igdb_id INTEGER",
@@ -45,6 +46,7 @@ def _run_migrations():
         "ALTER TABLE discovery_settings ADD COLUMN sync_wishlist BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN sync_collection BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN owned_sync_generation INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE discovery_settings ADD COLUMN sync_warning VARCHAR",
         "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",
@@ -79,6 +81,20 @@ def _run_migrations():
             columns[table].add(column)
 
 _run_migrations()
+
+# Older versions stored retryable metadata notices in the fatal-error field.
+# Keep existing installations from showing those notices as failed syncs.
+def _separate_sync_warnings():
+    with engine.connect() as conn:
+        conn.execute(text(
+            "UPDATE discovery_settings SET sync_warning = sync_error, sync_error = NULL "
+            "WHERE sync_warning IS NULL AND sync_error LIKE '%games still need Steam metadata%' "
+            "AND sync_error NOT LIKE '%Steam Web API key%' "
+            "AND sync_error NOT LIKE '%Could not reach Steam%'"
+        ))
+        conn.commit()
+
+_separate_sync_warnings()
 
 # Steam genres used to be copied into the personal tag field. Clear that legacy
 # import once; future Steam refreshes leave tags entirely user-controlled.

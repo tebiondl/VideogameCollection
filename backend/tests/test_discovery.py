@@ -239,7 +239,9 @@ class DiscoveryTests(unittest.TestCase):
             service.sync_steam(self.user.id, self.factory)
         self.assertEqual(metadata.call_count, 1)
         self.db.expire_all()
-        self.assertIn('2 games', self.db.get(DiscoverySettings, self.user.id).sync_error)
+        settings = self.db.get(DiscoverySettings, self.user.id)
+        self.assertIsNone(settings.sync_error)
+        self.assertIn('2 games', settings.sync_warning)
 
     def test_scheduler_imports_due_but_not_paused_connections(self):
         self.configured()
@@ -805,14 +807,20 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.db.query(Videogame).one().name, 'Library Game')
         self.assertEqual(self.db.get(DiscoverySettings, settings.user_id).last_owned_import_count, 1)
 
-    def test_copy_options_are_personal_and_editable(self):
+    def test_copy_options_are_admin_managed_and_shared(self):
         defaults = self.client.get('/api/discovery/copy-options').json()
         self.assertIn('PC', defaults['platforms'])
-        saved = self.client.put('/api/discovery/copy-options', json={'platforms': ['PC', 'PC', 'Switch'], 'sources': ['Steam', 'Retail']})
+        saved = self.client.put('/api/discovery/copy-options', json={
+            'platforms': ['PC', 'PC', 'Switch'], 'sources': ['Steam', 'Retail'],
+            'types': ['Digital', 'Physical'], 'old_consoles': ['PC', 'Nintendo DS'],
+            'platform_sources': {'PC': ['Steam'], 'Switch': ['Retail']},
+            'source_types': {'Steam': ['Digital'], 'Retail': ['Physical']},
+        })
         self.assertEqual(saved.status_code, 200, saved.text)
         self.assertEqual(saved.json()['platforms'], ['PC', 'Switch'])
+        self.assertEqual(saved.json()['platform_sources']['Switch'], ['Retail'])
         self.user = self.users[1]
-        self.assertNotEqual(self.client.get('/api/discovery/copy-options').json()['platforms'], ['PC', 'Switch'])
+        self.assertEqual(self.client.get('/api/discovery/copy-options').json()['platforms'], ['PC', 'Switch'])
 
     def test_month_window_year_rollover_and_leap_year(self):
         self.assertEqual(service.month_window(date(2027, 1, 4)), (date(2026, 12, 1), date(2027, 1, 1), date(2027, 2, 1)))

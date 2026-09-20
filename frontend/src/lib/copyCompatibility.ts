@@ -49,33 +49,43 @@ function unique(values: string[]) {
   });
 }
 
-export function compatibleCopySources(platform: string | null | undefined, sources: string[]) {
+function configuredValues(left: string | null | undefined, mapping: Record<string, string[]> | undefined) {
+  const key = Object.keys(mapping || {}).find(value => sameCopyValue(value, left));
+  return key ? mapping?.[key] : undefined;
+}
+
+export function compatibleCopySources(platform: string | null | undefined, sources: string[], platformSources?: Record<string, string[]>) {
+  const configured = configuredValues(platform, platformSources);
+  if (configured) return unique(configured).filter(value => sources.some(source => sameCopyValue(source, value)));
   const family = platformFamily(platform);
   const values = unique(sources);
   if (family === 'unknown') return values;
   return values.filter(source => allowedSources[family].has(sourceKind(source)));
 }
 
-export function isCopySourceCompatible(platform: string | null | undefined, source: string | null | undefined) {
+export function isCopySourceCompatible(platform: string | null | undefined, source: string | null | undefined, platformSources?: Record<string, string[]>) {
   if (!source) return true;
+  if (platformSources) return compatibleCopySources(platform, Object.values(platformSources).flat(), platformSources).some(value => sameCopyValue(value, source));
   return compatibleCopySources(platform, [source]).length === 1;
 }
 
-export function compatibleCopyFormats(platform: string | null | undefined, source: string | null | undefined): string[] {
+export function compatibleCopyFormats(platform: string | null | undefined, source: string | null | undefined, types: readonly string[] = COPY_FORMATS, sourceTypes?: Record<string, string[]>): string[] {
+  const configured = configuredValues(source, sourceTypes);
+  if (configured) return unique(configured).filter(value => types.some(type => sameCopyValue(type, value)));
   if (platformFamily(platform) === 'steam_deck') return ['Digital'];
   const kind = sourceKind(source);
   if (kind === 'steam' || kind === 'nintendo_store' || kind === 'playstation_store' || kind === 'xbox_store' || kind === 'subscription') return ['Digital'];
   if (kind === 'retail') return ['Physical'];
-  return [...COPY_FORMATS];
+  return [...types];
 }
 
-export function compatibleCopyFormat(platform: string | null | undefined, source: string | null | undefined, current: string | null | undefined) {
-  const formats = compatibleCopyFormats(platform, source);
-  return formats.find(format => sameCopyValue(format, current)) || formats[0];
+export function compatibleCopyFormat(platform: string | null | undefined, source: string | null | undefined, current: string | null | undefined, types: readonly string[] = COPY_FORMATS, sourceTypes?: Record<string, string[]>) {
+  const formats = compatibleCopyFormats(platform, source, types, sourceTypes);
+  return formats.find(format => sameCopyValue(format, current)) || formats[0] || '';
 }
 
-export function preferredCopySource(platform: string | null | undefined, sources: string[], excludeSteam = false) {
-  const compatible = compatibleCopySources(platform, sources).filter(source => !excludeSteam || !isSteamSource(source));
+export function preferredCopySource(platform: string | null | undefined, sources: string[], excludeSteam = false, platformSources?: Record<string, string[]>) {
+  const compatible = compatibleCopySources(platform, sources, platformSources).filter(source => !excludeSteam || !isSteamSource(source));
   return compatible.find(source => sourceKind(source) === 'retail')
     || compatible.find(source => sourceKind(source) === 'other')
     || compatible[0]

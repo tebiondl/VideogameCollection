@@ -3,7 +3,7 @@ import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isC
 import type { OwnedCopy } from '../lib/ownedCopies';
 import { parseCopies } from '../lib/ownedCopies';
 
-export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOptions, onLinkSteam, onRestoreDuplicate }: { value: string | null | undefined; onChange: (value: string | null) => void; platformOptions: string[]; sourceOptions: string[]; onLinkSteam?: (copy: OwnedCopy, index: number) => void; onRestoreDuplicate?: (copy: OwnedCopy, index: number) => void }) {
+export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOptions, typeOptions, platformSources, sourceTypes, onLinkSteam, onRestoreDuplicate }: { value: string | null | undefined; onChange: (value: string | null) => void; platformOptions: string[]; sourceOptions: string[]; typeOptions: string[]; platformSources: Record<string, string[]>; sourceTypes: Record<string, string[]>; onLinkSteam?: (copy: OwnedCopy, index: number) => void; onRestoreDuplicate?: (copy: OwnedCopy, index: number) => void }) {
   const copies = parseCopies(value);
   const update = (index: number, patch: Partial<OwnedCopy>) => {
     const next = copies.map((copy, copyIndex) => copyIndex === index ? { ...copy, ...patch } : copy);
@@ -23,11 +23,11 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
       const platforms = copy.platform && !platformOptions.includes(copy.platform) ? [copy.platform, ...platformOptions] : platformOptions;
       const isSteam = !!copy.steam_appid;
       const steamOption = sourceOptions.find(isSteamSource) || 'Steam';
-      const sources = compatibleCopySources(copy.platform, copy.source ? [copy.source, ...sourceOptions] : sourceOptions);
+      const sources = compatibleCopySources(copy.platform, copy.source ? [copy.source, ...sourceOptions] : sourceOptions, platformSources);
       const renderedSources = isSteam && !sources.some(isSteamSource) ? [steamOption, ...sources] : sources;
       const sourceValue = isSteam ? steamOption : sources.find(source => sameCopyValue(source, copy.source)) || '';
-      const formats = compatibleCopyFormats(copy.platform, sourceValue);
-      const formatValue = compatibleCopyFormat(copy.platform, sourceValue, copy.format);
+      const formats = compatibleCopyFormats(copy.platform, sourceValue, typeOptions, sourceTypes);
+      const formatValue = compatibleCopyFormat(copy.platform, sourceValue, copy.format, typeOptions, sourceTypes);
       const canLinkSteam = !!onLinkSteam && (isSteam || isSteamSource(sourceValue));
       const canRestoreDuplicate = !!onRestoreDuplicate && isSteam && (!!copy.duplicate_of_appid || !!copy.merged_from_game_id);
       return <details className="owned-copy-editor" key={copy.id || index}>
@@ -36,13 +36,13 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
         <label className="wide">Copy name / edition<input className="form-input" value={copy.name || ''} disabled={isSteam} onChange={event => update(index, { name: event.target.value || null })} placeholder="e.g. Final Fantasy VII (2013)" /></label>
         <label>Platform<select className="form-input" value={copy.platform || ''} disabled={isSteam} onChange={event => {
           const platform = event.target.value;
-          const source = isCopySourceCompatible(platform, copy.source) ? copy.source : null;
-          update(index, { platform, source, format: compatibleCopyFormat(platform, source, copy.format) });
+          const source = isCopySourceCompatible(platform, copy.source, platformSources) ? copy.source : null;
+          update(index, { platform, source, format: compatibleCopyFormat(platform, source, copy.format, typeOptions, sourceTypes) });
         }}><option value="" disabled>Choose platform</option>{platforms.map(value => <option key={value}>{value}</option>)}</select></label>
-        <label>Format<select className="form-input" value={formatValue} disabled={isSteam} onChange={event => update(index, { format: event.target.value })}>{formats.map(value => <option key={value}>{value}</option>)}</select></label>
+        <label>Type<select className="form-input" value={formatValue} disabled={isSteam} onChange={event => update(index, { format: event.target.value })}>{formats.map(value => <option key={value}>{value}</option>)}</select></label>
         <label>Source<select className="form-input" value={sourceValue} disabled={isSteam} onChange={event => {
           const source = event.target.value;
-          update(index, { source, format: compatibleCopyFormat(copy.platform, source, copy.format) });
+          update(index, { source, format: compatibleCopyFormat(copy.platform, source, copy.format, typeOptions, sourceTypes) });
         }}><option value="" disabled>Choose source</option>{renderedSources.map(value => <option key={value}>{value}</option>)}</select>{isSteam && <small className="text-muted">Locked while this copy is linked to Steam.</small>}</label>
         <label>Copy playtime (hours)<input className="form-input" type="number" min="0" step="0.1" value={copy.playtime_hours ?? ''} disabled={isSteam} onChange={event => update(index, { playtime_hours: event.target.value ? Number(event.target.value) : null })} />{isSteam && <small className="text-muted">Updated automatically by Steam.{copy.counts_toward_totals === false ? ' Shared link; counted once in global analytics.' : ''}</small>}</label>
         <label>Price<input className="form-input" type="number" min="0" step="0.01" value={copy.price ?? ''} onChange={event => update(index, { price: event.target.value ? Number(event.target.value) : null })} /></label>
@@ -57,8 +57,8 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
     </details>})}
     <button type="button" className="btn btn-secondary" onClick={() => {
       const platform = platformOptions[0] || '';
-      const source = preferredCopySource(platform, sourceOptions);
-      const format = compatibleCopyFormat(platform, source, 'Any');
+      const source = preferredCopySource(platform, sourceOptions, false, platformSources);
+      const format = compatibleCopyFormat(platform, source, typeOptions[0] || 'Any', typeOptions, sourceTypes);
       onChange(JSON.stringify([...copies, { id: crypto.randomUUID(), platform, format, source, currency: 'EUR' }]));
     }}><Plus size={16} /> Add another copy</button>
   </div>;

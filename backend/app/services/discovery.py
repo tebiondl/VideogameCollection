@@ -1115,7 +1115,7 @@ def claim_sync(db, user_id, force=False):
         query = query.filter(DiscoverySettings.sync_enabled.is_(True), or_(DiscoverySettings.next_sync_at.is_(None), DiscoverySettings.next_sync_at <= now, DiscoverySettings.sync_started_at < now - timedelta(hours=1)))
     elif settings.last_sync_at and settings.last_sync_at > now - timedelta(minutes=5):
         raise HTTPException(429, "Please wait five minutes between manual Steam syncs.")
-    claimed = query.update({"sync_started_at": now, "next_sync_at": now + timedelta(hours=settings.sync_hours), "sync_error": None}, synchronize_session=False)
+    claimed = query.update({"sync_started_at": now, "next_sync_at": now + timedelta(hours=settings.sync_hours), "sync_error": None, "sync_warning": None}, synchronize_session=False)
     db.commit()
     db.refresh(settings)
     return bool(claimed)
@@ -1193,12 +1193,12 @@ def sync_steam(user_id, factory=SessionLocal):
                 settings.last_owned_import_count = owned_count
             settings.last_igdb_match_count = igdb_count
             pending = skipped + len(missing) - processed
-            issues = [message for message in (
-                owned_error,
+            warnings = [message for message in (
                 f"{pending} games still need Steam metadata; they will be retried next sync." if pending else None,
                 igdb_error,
             ) if message]
-            settings.sync_error = " ".join(issues) or None
+            settings.sync_error = owned_error
+            settings.sync_warning = " ".join(warnings) or None
             settings.sync_started_at = None
             db.commit()
     except Exception as exc:
@@ -1215,6 +1215,7 @@ def sync_steam(user_id, factory=SessionLocal):
             else:
                 message = "Steam sync failed. Saved games and completed imports are kept; the next sync will retry."
             settings.sync_error = message
+            settings.sync_warning = None
             settings.sync_started_at = None
             db.commit()
     finally:
