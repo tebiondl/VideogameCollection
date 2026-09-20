@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Shield, Plus, Trash2, Loader2, ArrowLeft, Edit2, Check, X, AlertTriangle, Gamepad2, Tag as TagIcon } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
-import type { CopyOptions } from '../lib/discovery';
-import { PaginationSettingsAdmin } from '../components/PaginationSettingsAdmin';
-import { DiscoveryAdmin } from './DiscoveryAdmin';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { DatabaseBackups } from '../components/DatabaseBackups';
 import './DashboardPage.css'; // Reuse basic styles
@@ -34,6 +31,7 @@ interface TagUsage {
 
 export function AdminDashboard() {
   const { user } = useAuth();
+  const { hash } = useLocation();
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newTagName, setNewTagName] = useState('');
@@ -48,47 +46,10 @@ export function AdminDashboard() {
   const [replacementTagName, setReplacementTagName] = useState('');
   const [newReplacementTagName, setNewReplacementTagName] = useState('');
   const [isReassigning, setIsReassigning] = useState(false);
-  const [copyOptionsDraft, setCopyOptionsDraft] = useState({ platforms: '', sources: '' });
-  const [isSavingCopyOptions, setIsSavingCopyOptions] = useState(false);
-  const [copyOptionsMessage, setCopyOptionsMessage] = useState('');
 
   useEffect(() => {
     fetchTags();
-    fetchCopyOptions();
   }, []);
-
-  async function fetchCopyOptions() {
-    try {
-      const res = await fetchWithAuth('/discovery/copy-options');
-      if (res.ok) {
-        const data: CopyOptions = await res.json();
-        setCopyOptionsDraft({ platforms: data.platforms.join('\n'), sources: data.sources.join('\n') });
-      }
-    } catch (err) {
-      console.error('Failed to fetch owned copy options', err);
-    }
-  }
-
-  async function saveCopyOptions(event: React.FormEvent) {
-    event.preventDefault();
-    setIsSavingCopyOptions(true);
-    setCopyOptionsMessage('');
-    const lines = (value: string) => [...new Set(value.split('\n').map(item => item.trim()).filter(Boolean))];
-    try {
-      const res = await fetchWithAuth('/discovery/copy-options', {
-        method: 'PUT',
-        body: JSON.stringify({ platforms: lines(copyOptionsDraft.platforms), sources: lines(copyOptionsDraft.sources) })
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Could not save owned copy options.');
-      const data: CopyOptions = await res.json();
-      setCopyOptionsDraft({ platforms: data.platforms.join('\n'), sources: data.sources.join('\n') });
-      setCopyOptionsMessage('Owned copy dropdowns saved.');
-    } catch (err) {
-      setCopyOptionsMessage(err instanceof Error ? err.message : 'Could not save owned copy options.');
-    } finally {
-      setIsSavingCopyOptions(false);
-    }
-  }
 
   async function fetchTags() {
     setIsLoading(true);
@@ -261,7 +222,11 @@ export function AdminDashboard() {
     }
   };
 
-  // Restrict access to admin only
+  if (['#steam', '#copies', '#display'].includes(hash)) {
+    return <Navigate to={`/dashboard/videogames/settings${hash}`} replace />;
+  }
+
+  // Restrict system administration to admins; personal settings have their own page.
   if (user && !user.is_admin) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -275,42 +240,14 @@ export function AdminDashboard() {
         </Link>
       </div>
 
-      <VideogamePageHeader eyebrow="Collection settings" icon={<Shield />} title="Videogame Admin" description="Steam sync, collection fields, display settings and library tools in one place." />
+      <VideogamePageHeader eyebrow="System administration" icon={<Shield />} title="Videogame Admin" description="Manage shared tags, database backups, and system maintenance tools." />
 
       <nav className="admin-jump-nav" aria-label="Admin sections">
-        <a href="#steam">Steam sync</a>
-        <a href="#copies">Copy fields</a>
-        <a href="#display">Display</a>
         <a href="#tags">Tags</a>
         <a href="#maintenance">Maintenance</a>
       </nav>
 
       <div className="admin-settings-stack">
-        <section id="steam" className="admin-anchor-section">
-          <div className="admin-group-heading"><span>CONNECTIONS & IMPORTS</span><h2>Steam and wanted games</h2><p>Manage the shared wishlist and owned-library schedule, connection status, and exports.</p></div>
-          <DiscoveryAdmin embedded />
-        </section>
-
-        <section id="copies" className="glass-card admin-anchor-section admin-standard-card">
-          <h2 style={{ marginBottom: '.6rem' }}>Owned Copy Dropdowns</h2>
-          <p className="text-secondary" style={{ marginBottom: '1.5rem' }}>These values appear in the Platform and Source dropdowns whenever you add or edit a copy. Enter one value per line; line order controls dropdown order.</p>
-          <form onSubmit={saveCopyOptions}>
-            <div className="admin-copy-options-grid">
-              <label className="form-label">Platforms<textarea className="form-input" rows={8} value={copyOptionsDraft.platforms} onChange={event => setCopyOptionsDraft(current => ({ ...current, platforms: event.target.value }))} /></label>
-              <label className="form-label">Sources<textarea className="form-input" rows={8} value={copyOptionsDraft.sources} onChange={event => setCopyOptionsDraft(current => ({ ...current, sources: event.target.value }))} /></label>
-            </div>
-            {copyOptionsMessage && <p className="text-secondary" role="status" style={{ marginTop: '.8rem' }}>{copyOptionsMessage}</p>}
-            <button className="btn btn-primary" type="submit" disabled={isSavingCopyOptions || !copyOptionsDraft.platforms.trim() || !copyOptionsDraft.sources.trim()} style={{ marginTop: '1rem' }}>
-              {isSavingCopyOptions ? <Loader2 size={18} className="spinner" /> : <Check size={18} />} Save dropdown values
-            </button>
-          </form>
-        </section>
-
-        <section id="display" className="admin-anchor-section">
-          <div className="admin-group-heading"><span>DISPLAY</span><h2>Collection display</h2><p>Control how many games appear on each collection page.</p></div>
-          <PaginationSettingsAdmin />
-        </section>
-
         <section id="tags" className="glass-card admin-anchor-section admin-standard-card">
           <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Global Tags Manager

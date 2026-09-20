@@ -34,7 +34,7 @@ export function DiscoverySmartAdd() {
   }
   return <div className="container discovery">
     <Link className="disc-back" to="/dashboard/videogames/wanted">← Back to Games I want</Link>
-    <VideogamePageHeader eyebrow="Games I want" icon={<Sparkles />} title="Smart Add" description="Find game metadata or review an entire list before saving it to Games I want." actions={<Link className="btn btn-secondary" to="/dashboard/videogames/wanted/admin">Connect Steam wishlist</Link>} />
+    <VideogamePageHeader eyebrow="Games I want" icon={<Sparkles />} title="Smart Add" description="Find game metadata or review an entire list before saving it to Games I want." actions={<Link className="btn btn-secondary" to="/dashboard/videogames/settings#steam">Connect Steam wishlist</Link>} />
     {error && <p className="disc-alert error" role="alert">{error}</p>}{message && <p className="disc-alert success" role="status">{message}</p>}
     <section className="disc-panel"><h2>Find with IGDB</h2><p className="disc-muted">Uses your existing Twitch integration, including DLCs and expansions.</p><form className="disc-inline" onSubmit={search}><input aria-label="Find game with IGDB" value={query} onChange={e => setQuery(e.target.value)} placeholder="Game or DLC title…" required /><button className="btn btn-primary" disabled={busy || !query.trim()}><Search size={17} /> {busy ? 'Searching…' : 'Search'}</button></form>
       <div className="disc-search-results">{results.map(game => <button key={game.igdb_id} onClick={() => setEditor({ draft: fromIgdb(game) })}><span>{game.name} {game.is_dlc ? '· DLC' : ''}</span><small>{game.release_year || 'TBA'} · {game.platforms.join(', ')}</small></button>)}</div>

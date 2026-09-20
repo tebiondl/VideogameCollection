@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Trash2 } from 'lucide-react';
+import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Shield, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './CollectionNavigation.css';
 
@@ -21,7 +21,7 @@ export function CollectionNavigation() {
   const discovery = pathname.includes('/discovery');
   const wanted = pathname.includes('/wanted');
   const tab = discovery ? 'discovery' : wanted ? 'wanted' : 'collection';
-  const context = pathname.endsWith('/analytics') ? 'analytics' : pathname.endsWith('/admin') ? 'admin' : pathname.endsWith('/smart') ? 'smart' : '';
+  const context = pathname.endsWith('/analytics') ? 'analytics' : pathname.endsWith('/admin') ? 'admin' : pathname.endsWith('/settings') ? 'settings' : pathname.endsWith('/smart') ? 'smart' : '';
   const base = '/dashboard/videogames';
   const destination = (target: string) => target === 'discovery' ? `${base}/discovery`
     : target === 'wanted' ? `${base}/wanted${context ? `/${context}` : ''}`
@@ -31,7 +31,7 @@ export function CollectionNavigation() {
       try { localStorage.setItem(`videogame-tab:${user.id}`, tab); } catch { /* private storage */ }
     }
   }, [isVideogame, tab, user]);
-  if (!isVideogame || !user || context === 'admin') return null;
+  if (!isVideogame || !user || context === 'admin' || context === 'settings') return null;
   const toolsBase = wanted ? `${base}/wanted` : base;
   return <div className="container collection-navigation">
     <nav className="collection-tabs" aria-label="Videogame sections">
@@ -43,7 +43,8 @@ export function CollectionNavigation() {
       <Link to={`${toolsBase}/smart`} aria-current={context === 'smart' ? 'page' : undefined}><Sparkles size={16} /> Smart Add</Link>
       {!wanted && <Link to={`${base}/trash`} aria-current={pathname.endsWith('/trash') ? 'page' : undefined}><Trash2 size={16} /> Trash</Link>}
       <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Analytics</Link>
-      {(wanted || user.is_admin) && <Link to={wanted ? `${toolsBase}/admin` : '/dashboard/admin'}><Settings2 size={16} /> Admin</Link>}
+      <Link to={`${base}/settings`}><Settings2 size={16} /> User Settings</Link>
+      {user.is_admin && <Link to="/dashboard/admin"><Shield size={16} /> Admin</Link>}
     </nav>}
   </div>;
 }

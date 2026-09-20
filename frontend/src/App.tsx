@@ -8,6 +8,7 @@ import { AnalyticsDashboard } from './pages/AnalyticsDashboard';
 import { VideogamesDashboard } from './pages/VideogamesDashboard';
 import { AddGamePage } from './pages/AddGamePage';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { UserSettings } from './pages/UserSettings';
 import { BoardgamesDashboard } from './pages/BoardgamesDashboard';
 import { AddBoardgamePage } from './pages/AddBoardgamePage';
 import { BoardgameAnalyticsDashboard } from './pages/BoardgameAnalyticsDashboard';
@@ -47,10 +48,10 @@ function AppRoutes() {
           <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/discovery" element={<ProtectedRoute><DiscoveryDashboard /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/wanted" element={<ProtectedRoute><WantedGames /></ProtectedRoute>} />
-          <Route path="/dashboard/videogames/wanted/admin" element={<Navigate to="/dashboard/admin#steam" replace />} />
+          <Route path="/dashboard/videogames/wanted/admin" element={<Navigate to="/dashboard/videogames/settings#steam" replace />} />
           <Route path="/dashboard/videogames/wanted/analytics" element={<ProtectedRoute><DiscoveryAnalytics /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/wanted/smart" element={<ProtectedRoute><DiscoverySmartAdd /></ProtectedRoute>} />
-          <Route path="/dashboard/videogames/discovery/admin" element={<Navigate to="/dashboard/admin#steam" replace />} />
+          <Route path="/dashboard/videogames/discovery/admin" element={<Navigate to="/dashboard/videogames/settings#steam" replace />} />
           <Route path="/dashboard/videogames/discovery/analytics" element={<Navigate to="/dashboard/videogames/wanted/analytics" replace />} />
           <Route path="/dashboard/videogames/discovery/smart" element={<Navigate to="/dashboard/videogames/wanted/smart" replace />} />
           <Route path="/" element={user && !isLoading ? <Navigate to="/dashboard" replace /> : <HomePage />} />
@@ -118,6 +119,14 @@ function AppRoutes() {
                 <AdminDashboard />
               </ProtectedRoute>
             } 
+          />
+          <Route
+            path="/dashboard/videogames/settings"
+            element={
+              <ProtectedRoute>
+                <UserSettings />
+              </ProtectedRoute>
+            }
           />
           <Route 
             path="/dashboard/videogames/analytics" 
