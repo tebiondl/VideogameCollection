@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import { errorMessage } from '../lib/discovery';
 import type { AcquireDraft, CopyOptions } from '../lib/discovery';
 import { DlcEditor } from './DlcEditor';
@@ -24,26 +25,67 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
       setTags(nextTags);
       setCopyOptions(options);
       setCollectionGames(ownedGames.filter((game: { is_dlc: boolean }) => !game.is_dlc));
-      if (nonSteamOnly) {
-        const nonSteamSources = (options.sources as string[]).filter(value => value.toLowerCase() !== 'steam');
-        setDraft(current => ({ ...current, source: current.source && current.source.toLowerCase() !== 'steam' ? current.source : nonSteamSources.find(value => value.toLowerCase() === 'retail') || nonSteamSources[0] || 'Other' }));
-      }
+      setDraft(current => {
+        const configuredSource = (options.sources as string[]).some(value => sameCopyValue(value, current.source));
+        const sourceAllowed = configuredSource && isCopySourceCompatible(current.platform, current.source) && (!nonSteamOnly || !isSteamSource(current.source));
+        const source = sourceAllowed ? current.source : preferredCopySource(current.platform, options.sources as string[], nonSteamOnly);
+        const format = compatibleCopyFormat(current.platform, source, current.format);
+        const keepSteamData = isSteamSource(source);
+        return {
+          ...current,
+          source,
+          format,
+          steam_appid: keepSteamData ? current.steam_appid : null,
+          store_url: !keepSteamData && current.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : current.store_url,
+        };
+      });
     }).catch(() => {});
   }, [nonSteamOnly]);
   const field = <K extends keyof AcquireDraft>(key: K, value: AcquireDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
   const changePlatform = (platform: string) => setDraft(current => {
-    const steamCompatible = ['pc', 'steam deck'].includes(platform.trim().toLowerCase());
-    if (current.source.trim().toLowerCase() !== 'steam' || steamCompatible) return { ...current, platform };
-    const source = copyOptions.sources.find(value => value.toLowerCase() === 'retail') || copyOptions.sources.find(value => value.toLowerCase() !== 'steam') || current.source;
-    const store_url = current.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : current.store_url;
-    return { ...current, platform, source, store_url };
+    const configuredSource = copyOptions.sources.some(value => sameCopyValue(value, current.source));
+    const sourceAllowed = configuredSource && isCopySourceCompatible(platform, current.source) && (!nonSteamOnly || !isSteamSource(current.source));
+    const source = sourceAllowed ? current.source : preferredCopySource(platform, copyOptions.sources, nonSteamOnly);
+    const format = compatibleCopyFormat(platform, source, current.format);
+    const keepSteamData = isSteamSource(source);
+    return {
+      ...current,
+      platform,
+      source,
+      format,
+      steam_appid: keepSteamData ? current.steam_appid : null,
+      store_url: !keepSteamData && current.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : current.store_url,
+    };
+  });
+  const changeSource = (source: string) => setDraft(current => {
+    const keepSteamData = isSteamSource(source);
+    return {
+      ...current,
+      source,
+      format: compatibleCopyFormat(current.platform, source, current.format),
+      steam_appid: keepSteamData ? current.steam_appid : null,
+      store_url: !keepSteamData && current.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : current.store_url,
+    };
   });
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
-    const submitted = nonSteamOnly ? { ...draft, source: draft.source.toLowerCase() === 'steam' ? 'Other' : draft.source, steam_appid: null, store_url: draft.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : draft.store_url } : draft;
+    const configuredSource = copyOptions.sources.some(value => sameCopyValue(value, draft.source));
+    const allowedSource = configuredSource && isCopySourceCompatible(draft.platform, draft.source) && (!nonSteamOnly || !isSteamSource(draft.source));
+    const source = allowedSource ? draft.source : preferredCopySource(draft.platform, copyOptions.sources, nonSteamOnly);
+    const keepSteamData = isSteamSource(source) && !nonSteamOnly;
+    const submitted = {
+      ...draft,
+      source,
+      format: compatibleCopyFormat(draft.platform, source, draft.format),
+      steam_appid: keepSteamData ? draft.steam_appid : null,
+      store_url: !keepSteamData && draft.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : draft.store_url,
+    };
     try { await onSave(submitted); onClose(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   }
-  const sourceOptions = [...new Set([draft.source, ...copyOptions.sources].filter(Boolean))].filter(value => !nonSteamOnly || value.toLowerCase() !== 'steam');
+  const sourceOptions = compatibleCopySources(draft.platform, copyOptions.sources).filter(value => !nonSteamOnly || !isSteamSource(value));
+  const sourceValue = sourceOptions.find(value => sameCopyValue(value, draft.source)) || '';
+  const formatOptions = compatibleCopyFormats(draft.platform, sourceValue);
+  const formatValue = compatibleCopyFormat(draft.platform, sourceValue, draft.format);
   return <dialog ref={dialog} className="discovery-dialog discovery acquire-dialog" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="acquire-title">
     <div className="disc-section-heading"><div><p className="disc-eyebrow">REVIEW YOUR COPY</p><h2 id="acquire-title">{nonSteamOnly ? 'Add a non-Steam copy' : 'Move to collection'}</h2></div><button className="disc-icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
     <p className="disc-muted">{nonSteamOnly ? 'Steam collection sync manages the Steam copy. Add the other platform or edition you bought here.' : 'Confirm the copy you bought and adjust the game or player information before adding it.'}</p>
@@ -51,8 +93,8 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
     <form className="disc-form" onSubmit={submit}>
       <section className="disc-form-section"><h3>Owned copy</h3><div className="disc-form-grid">
         <label>Platform<select autoFocus required value={draft.platform} onChange={event => changePlatform(event.target.value)}>{[...new Set([draft.platform, ...copyOptions.platforms].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
-        <label>Format<select value={draft.format} onChange={event => field('format', event.target.value)}>{['Any', 'Physical', 'Digital'].map(value => <option key={value}>{value}</option>)}</select></label>
-        <label>Source<select required value={draft.source} onChange={event => field('source', event.target.value)}>{sourceOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+        <label>Format<select value={formatValue} onChange={event => field('format', event.target.value)}>{formatOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+        <label>Source<select required value={sourceValue} onChange={event => changeSource(event.target.value)}><option value="" disabled>Choose source</option>{sourceOptions.map(value => <option key={value}>{value}</option>)}</select></label>
         <label>Price paid<input type="number" min={0} step="0.01" value={draft.price ?? ''} onChange={event => field('price', event.target.value ? Number(event.target.value) : null)} /></label>
         <label>Currency<select value={draft.currency} onChange={event => field('currency', event.target.value)}>{['EUR', 'USD', 'GBP', 'JPY'].map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="wide">Store / source URL<input type="url" value={draft.store_url || ''} onChange={event => field('store_url', event.target.value || null)} /></label>
