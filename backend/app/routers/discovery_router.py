@@ -511,6 +511,10 @@ def merge_collection_duplicate(
         used_ids.add(new_id)
         copy_id_map[old_id] = new_id
         owned_copy.copy_id = new_id
+        # Preserve the first card this copy was merged from. If cards are
+        # merged repeatedly, undo should still recover the copy's own card.
+        if owned_copy.merged_from_game_id is None:
+            owned_copy.merged_from_game_id = duplicate_game.id
         owned_copy.collection_game_id = retained_game.id
         owned_copy.position = next_position
         next_position += 1
@@ -573,6 +577,119 @@ def merge_collection_duplicate(
     commit(db)
     db.refresh(retained_game)
     return {"collection_game": retained_game, "duplicate_game_id": duplicate_game.id}
+
+
+@router.post("/steam/collection-games/{game_id}/copies/{copy_id}/restore-duplicate")
+def restore_duplicate_copy(
+    game_id: int, copy_id: str,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    source_game = db.query(Videogame).filter_by(
+        id=game_id, user_id=user.id, is_dlc=False,
+    ).first()
+    if source_game is None:
+        raise HTTPException(404, "Collection game not found.")
+
+    owned_copy = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, collection_game_id=source_game.id, copy_id=copy_id,
+    ).first()
+    if owned_copy is None or not owned_copy.steam_appid:
+        raise HTTPException(404, "Linked Steam copy not found.")
+
+    scope = owned_copy.steam_id or copy_store.steam_scope(db, user.id)
+    catalog = db.query(SteamOwnedGame).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=owned_copy.steam_appid,
+    ).first()
+    if catalog is None:
+        raise HTTPException(409, "The Steam game is no longer available in the synced account.")
+    if catalog.duplicate_of_appid is None and owned_copy.merged_from_game_id is None:
+        raise HTTPException(409, "This copy is not recorded as a merged duplicate.")
+
+    original_game = None
+    if owned_copy.merged_from_game_id:
+        candidate = db.query(Videogame).filter_by(
+            id=owned_copy.merged_from_game_id, user_id=user.id, is_dlc=False,
+        ).first()
+        # Reuse the exact source card while it has not subsequently been
+        # merged into some unrelated game. It retains the user's old fields.
+        if candidate and candidate.id != source_game.id and candidate.merged_into_game_id in (None, source_game.id):
+            original_game = candidate
+
+    if original_game is None:
+        original_game = Videogame(
+            user_id=user.id,
+            name=catalog.name,
+            image_url=catalog.image_url,
+            status="Not Started",
+            playtime_mode="copies",
+            igdb_id=catalog.igdb_id,
+            hidden=False,
+        )
+        db.add(original_game)
+        db.flush()
+    else:
+        original_game.name = catalog.name
+        original_game.hidden = False
+        original_game.merged_into_game_id = None
+        original_game.version = (original_game.version or 1) + 1
+
+    target_rows = copy_store.ensure_copies(db, original_game)
+    if any(row.steam_appid == owned_copy.steam_appid for row in target_rows):
+        raise HTTPException(409, "The restored game already contains this Steam copy.")
+    used_ids = {row.copy_id for row in target_rows}
+    while owned_copy.copy_id in used_ids:
+        owned_copy.copy_id = f"copy:{uuid4().hex}"
+
+    owned_copy.collection_game_id = original_game.id
+    owned_copy.position = len(target_rows)
+    owned_copy.name = catalog.name
+    owned_copy.platform = "PC"
+    owned_copy.format = "Digital"
+    owned_copy.source = "Steam"
+    owned_copy.store_url = catalog.store_url
+    owned_copy.igdb_id = catalog.igdb_id
+    owned_copy.playtime_hours = catalog.playtime_hours
+    owned_copy.created_collection_game = False
+    owned_copy.user_selected = True
+    owned_copy.merged_from_game_id = None
+    owned_copy.updated_at = datetime.utcnow()
+    catalog.duplicate_of_appid = None
+    catalog.updated_at = datetime.utcnow()
+
+    remaining_rows = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, collection_game_id=source_game.id,
+    ).filter(SteamCollectionLink.id != owned_copy.id).order_by(
+        SteamCollectionLink.position, SteamCollectionLink.id,
+    ).all()
+    for position, row in enumerate(remaining_rows):
+        row.position = position
+
+    db.query(GameMergeRedirect).filter_by(
+        user_id=user.id, merged_game_id=original_game.id, retained_game_id=source_game.id,
+    ).delete(synchronize_session=False)
+    db.query(WantedGame).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=owned_copy.steam_appid,
+    ).update({"collection_game_id": original_game.id}, synchronize_session=False)
+    for suppression in db.query(SteamCopyTrash).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=owned_copy.steam_appid,
+        collection_game_id=source_game.id,
+    ).all():
+        suppression.collection_game_id = original_game.id
+        suppression.collection_game_name = original_game.name
+
+    db.flush()
+    copy_store.project_game(db, source_game, remaining_rows)
+    copy_store.project_game(db, original_game, target_rows + [owned_copy])
+    source_game.version = (source_game.version or 1) + 1
+    copy_store.record_audit(
+        db, user.id, "duplicate_copy_restored", steam_id=scope,
+        steam_appid=owned_copy.steam_appid, game_id=original_game.id,
+        copy_id=owned_copy.copy_id, details={"restored_from_game_id": source_game.id},
+    )
+    commit(db)
+    db.refresh(source_game)
+    db.refresh(original_game)
+    return {"source_game": source_game, "restored_game": original_game}
 
 
 @router.get("/steam/trash")

@@ -783,7 +783,21 @@ export function VideogamesDashboard() {
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
-                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} />
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
+                  if (!copy.id || !window.confirm(`Restore ${copy.name || 'this Steam copy'} as its own collection game?`)) return;
+                  const response = await fetchWithAuth(`/discovery/steam/collection-games/${editingGame.id}/copies/${encodeURIComponent(copy.id)}/restore-duplicate`, { method: 'POST' });
+                  if (!response.ok) {
+                    const error = await response.json().catch(() => null);
+                    window.alert(error?.detail || 'Could not restore this copy.');
+                    return;
+                  }
+                  const result = await response.json();
+                  setGames(current => {
+                    const changed = current.map(row => row.id === result.source_game.id ? result.source_game : row.id === result.restored_game.id ? result.restored_game : row);
+                    return changed.some(row => row.id === result.restored_game.id) ? changed : [result.restored_game, ...changed];
+                  });
+                  setEditingGame(result.source_game);
+                }} />
                 <button type="button" className="btn btn-secondary" style={{ marginTop: '.75rem' }} onClick={() => setDuplicateGame(editingGame)}><GitMerge size={17} /> Merge duplicate collection game</button>
               </div>
 

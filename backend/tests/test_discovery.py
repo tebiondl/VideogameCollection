@@ -432,6 +432,28 @@ class DiscoveryTests(unittest.TestCase):
         duplicate_link = self.db.query(SteamCollectionLink).filter_by(steam_appid=2).one()
         self.assertEqual(duplicate_link.collection_game_id, canonical.id)
         self.assertEqual(duplicate_link.copy_id, 'steam:2')
+        self.assertEqual(duplicate_link.merged_from_game_id, duplicate_card.id)
+
+        restored = self.client.post(
+            f'/api/discovery/steam/collection-games/{canonical.id}/copies/steam:2/restore-duplicate'
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        payload = restored.json()
+        self.assertEqual(payload['source_game']['id'], canonical.id)
+        self.assertEqual(payload['restored_game']['id'], duplicate_card.id)
+        self.assertEqual(payload['restored_game']['name'], 'Final Fantasy VII (2013)')
+        self.db.refresh(canonical)
+        self.db.refresh(duplicate_card)
+        self.db.refresh(duplicate_link)
+        self.assertFalse(duplicate_card.hidden)
+        self.assertIsNone(duplicate_card.merged_into_game_id)
+        self.assertEqual(duplicate_card.status, 'Finished')
+        self.assertEqual(duplicate_card.comments, 'edition notes')
+        self.assertEqual(duplicate_link.collection_game_id, duplicate_card.id)
+        self.assertIsNone(duplicate_link.merged_from_game_id)
+        self.assertIsNone(self.db.get(SteamOwnedGame, apps[1].id).duplicate_of_appid)
+        self.assertEqual({copy['steam_appid'] for copy in json.loads(canonical.copies)}, {1})
+        self.assertEqual({copy['steam_appid'] for copy in json.loads(duplicate_card.copies)}, {2})
 
     def test_collection_duplicate_can_keep_the_current_game(self):
         current = Videogame(user_id=self.user.id, name='Current', status='Not Started',
@@ -457,6 +479,37 @@ class DiscoveryTests(unittest.TestCase):
         link = self.db.query(SteamCollectionLink).filter(SteamCollectionLink.steam_appid.is_not(None)).one()
         self.assertEqual(link.collection_game_id, current.id)
         self.assertEqual(link.copy_id, 'steam:44')
+
+    def test_legacy_duplicate_copy_restores_to_a_new_game(self):
+        combined = Videogame(user_id=self.user.id, name='Combined card', status='Playing')
+        primary = SteamOwnedGame(user_id=self.user.id, steam_appid=80, name='Primary edition')
+        duplicate = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=81, name='Older duplicate edition',
+            duplicate_of_appid=80,
+        )
+        self.db.add_all([combined, primary, duplicate])
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=combined.id,
+                                copy_id='steam:80', steam_appid=80),
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=combined.id,
+                                copy_id='steam:81', steam_appid=81),
+        ])
+        self.db.commit()
+
+        response = self.client.post(
+            f'/api/discovery/steam/collection-games/{combined.id}/copies/steam:81/restore-duplicate'
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        restored = response.json()['restored_game']
+        self.assertNotEqual(restored['id'], combined.id)
+        self.assertEqual(restored['name'], 'Older duplicate edition')
+        self.assertEqual(json.loads(restored['copies'])[0]['steam_appid'], 81)
+        self.assertEqual(
+            self.db.query(SteamCollectionLink).filter_by(steam_appid=81).one().collection_game_id,
+            restored['id'],
+        )
+        self.assertIsNone(self.db.get(SteamOwnedGame, duplicate.id).duplicate_of_appid)
 
     def test_deleted_steam_copy_is_locked_trashed_and_not_recreated_by_sync(self):
         game = Videogame(user_id=self.user.id, name='Steam game', status='Not Started', playtime_mode='copies', copies=json.dumps([

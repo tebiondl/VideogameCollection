@@ -143,6 +143,7 @@ def copy_dict(db: Session, row: OwnedCopy) -> dict:
         "igdb_id": row.igdb_id, "price": row.price, "currency": row.currency,
         "playtime_hours": row.playtime_hours,
         "steam_appid": row.steam_appid,
+        "merged_from_game_id": row.merged_from_game_id,
         "counts_toward_totals": bool(row.counts_toward_totals),
     }
     if row.steam_appid:
@@ -156,6 +157,7 @@ def copy_dict(db: Session, row: OwnedCopy) -> dict:
                 "igdb_id": entitlement.igdb_id or result.get("igdb_id"),
                 "playtime_hours": entitlement.playtime_hours,
                 "steam_active": bool(entitlement.active),
+                "duplicate_of_appid": entitlement.duplicate_of_appid,
             })
     return result
 

@@ -84,6 +84,10 @@ class OwnedCopy(Base):
     playtime_hours = Column(Float)
     steam_id = Column(String, nullable=False, default="")
     steam_appid = Column(Integer, nullable=True, index=True)
+    # The collection card this copy occupied before a duplicate merge. Keeping
+    # this on the copy makes a merge reversible without copying or overwriting
+    # the user's game-level data.
+    merged_from_game_id = Column(Integer, nullable=True, index=True)
     created_collection_game = Column(Boolean, nullable=False, default=False)
     user_selected = Column(Boolean, nullable=False, default=False)
     counts_toward_totals = Column(Boolean, nullable=False, default=True)

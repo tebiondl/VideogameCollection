@@ -6,6 +6,9 @@ export interface OwnedCopy {
   source?: string | null;
   store_url?: string | null;
   steam_appid?: number | null;
+  duplicate_of_appid?: number | null;
+  merged_from_game_id?: number | null;
+  steam_active?: boolean;
   igdb_id?: number | null;
   price?: number | null;
   currency?: string;

@@ -44,6 +44,7 @@ def _run_migrations():
         "ALTER TABLE discovery_settings ADD COLUMN sync_wishlist BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN sync_collection BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN owned_sync_generation INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",
         "ALTER TABLE steam_collection_links ADD COLUMN created_collection_game BOOLEAN NOT NULL DEFAULT 0",
@@ -489,6 +490,32 @@ def _encrypt_saved_api_keys_v8():
 
 
 _encrypt_saved_api_keys_v8()
+
+
+def _project_duplicate_restore_metadata_v9():
+    """Refresh legacy card JSON so pre-existing duplicate copies expose undo metadata."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="duplicate_restore_metadata_v9").first():
+            return
+        from .services.copy_store import project_game
+        for game in db.query(Videogame).all():
+            rows = db.query(SteamCollectionLink).filter_by(
+                user_id=game.user_id, collection_game_id=game.id,
+            ).order_by(SteamCollectionLink.position, SteamCollectionLink.id).all()
+            if rows:
+                project_game(db, game, rows)
+        db.add(AppSetting(key="duplicate_restore_metadata_v9", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Duplicate restore metadata projection failed")
+        raise
+    finally:
+        db.close()
+
+
+_project_duplicate_restore_metadata_v9()
 
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():
