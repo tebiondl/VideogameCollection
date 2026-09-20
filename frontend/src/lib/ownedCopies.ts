@@ -1,5 +1,6 @@
 export interface OwnedCopy {
   id?: string;
+  name?: string | null;
   platform: string;
   format: string;
   source?: string | null;

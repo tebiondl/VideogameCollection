@@ -208,7 +208,8 @@ def steam_review_response(review):
 
 def steam_copy(item, igdb_id=None, copy_id=None):
     return {
-        "id": copy_id or f"steam:{item['appid']}", "platform": "PC", "format": "Digital", "source": "Steam",
+        "id": copy_id or f"steam:{item['appid']}", "name": item.get("name"),
+        "platform": "PC", "format": "Digital", "source": "Steam",
         "store_url": item.get("store_url") or f"https://store.steampowered.com/app/{item['appid']}/",
         "steam_appid": item["appid"], "igdb_id": igdb_id or item.get("igdb_id"),
         "playtime_hours": item.get("playtime_hours"), "price": None, "currency": "EUR",
@@ -233,8 +234,14 @@ def attach_steam_copy(game, item, igdb_id=None, copy_id=None):
         copies = []
     for copy in copies:
         if int(copy.get("steam_appid") or 0) == item["appid"]:
+            changed = False
             if not copy.get("id"):
                 copy["id"] = copy_id or f"steam:{item['appid']}"
+                changed = True
+            if not copy.get("name") and item.get("name"):
+                copy["name"] = item["name"]
+                changed = True
+            if changed:
                 game.copies = json.dumps(copies)
             return False
     copies.append(steam_copy(item, igdb_id, copy_id))

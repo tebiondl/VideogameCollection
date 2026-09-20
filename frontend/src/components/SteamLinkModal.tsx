@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, CopyPlus, Link2, Loader2, Search, X } from 'lucide-react';
+import { Check, Link2, Loader2, Search, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import './SteamLinkModal.css';
 import type { OwnedCopy } from '../lib/ownedCopies';
@@ -13,7 +13,6 @@ interface SteamCandidate {
   similarity: number;
   current: boolean;
   linked_collection_count: number;
-  duplicate_of_appid: number | null;
 }
 
 export function SteamLinkModal({ game, copy, onClose, onLinked }: {
@@ -45,12 +44,12 @@ export function SteamLinkModal({ game, copy, onClose, onLinked }: {
     return items.filter(item => !key || item.name.toLowerCase().includes(key) || String(item.steam_appid).includes(key));
   }, [items, query]);
 
-  async function link(item: SteamCandidate, mode: 'primary' | 'duplicate') {
+  async function link(item: SteamCandidate) {
     setBusy(item.steam_appid); setError('');
     try {
       const response = await fetchWithAuth(`/discovery/steam/collection-games/${game.id}/copies/${encodeURIComponent(copy.id!)}/link`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ steam_appid: item.steam_appid, mode }),
+        body: JSON.stringify({ steam_appid: item.steam_appid }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'The Steam link could not be saved.');
       onLinked(await response.json());
@@ -70,8 +69,7 @@ export function SteamLinkModal({ game, copy, onClose, onLinked }: {
       {visible.map(item => <article key={item.steam_appid} className={`steam-link-row ${item.current ? 'current' : ''}`}>
         <div><strong>{item.name}</strong><small>App {item.steam_appid} · {item.playtime_hours ?? 0} hrs · {Math.round(item.similarity * 100)}% title match{item.linked_collection_count ? ` · linked to ${item.linked_collection_count}` : ''}</small></div>
         <div className="steam-link-actions">
-          <button type="button" className="btn btn-primary" disabled={busy !== null || item.current} onClick={() => link(item, 'primary')}>{busy === item.steam_appid ? <Loader2 className="spinner" size={16} /> : <Link2 size={16} />}{item.current ? 'Linked' : currentAppid ? 'Change link' : 'Link'}</button>
-          {currentAppid && !item.current && <button type="button" className="btn btn-secondary" disabled={busy !== null} onClick={() => link(item, 'duplicate')}><CopyPlus size={16} />Duplicate copy</button>}
+          <button type="button" className="btn btn-primary" disabled={busy !== null || item.current} onClick={() => link(item)}>{busy === item.steam_appid ? <Loader2 className="spinner" size={16} /> : <Link2 size={16} />}{item.current ? 'Linked' : currentAppid ? 'Change link' : 'Link'}</button>
         </div>
       </article>)}
       {!error && visible.length === 0 && <p className="disc-muted">No owned Steam games match this search. Run a collection sync to refresh the catalog.</p>}

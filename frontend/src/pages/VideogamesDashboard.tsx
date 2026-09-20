@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -15,6 +15,7 @@ import type { CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
+import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
 import { matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
 import './VideogamesDashboard.css';
 
@@ -119,6 +120,7 @@ export function VideogamesDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
+  const [duplicateGame, setDuplicateGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
   const copyFilterOptions = useMemo(() => {
@@ -777,6 +779,7 @@ export function VideogamesDashboard() {
                 <label className="form-label">Owned Copies</label>
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
                 <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} />
+                <button type="button" className="btn btn-secondary" style={{ marginTop: '.75rem' }} onClick={() => setDuplicateGame(editingGame)}><GitMerge size={17} /> Merge duplicate collection game</button>
               </div>
 
               <div className="form-row" style={{ alignItems: 'stretch' }}>
@@ -853,6 +856,11 @@ export function VideogamesDashboard() {
         const game = updated as any;
         setGames(current => current.map(row => row.id === game.id ? game : row));
         setEditingGame(game);
+      }} />}
+
+      {duplicateGame && <CollectionDuplicateModal game={duplicateGame} games={games} onClose={() => setDuplicateGame(null)} onMerged={result => {
+        setGames(current => current.map(row => row.id === result.collection_game.id ? result.collection_game : row.id === result.duplicate_game_id ? { ...row, hidden: true, copies: null } : row));
+        setEditingGame(result.collection_game);
       }} />}
 
       {/* Image Select Modal */}

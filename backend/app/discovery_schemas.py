@@ -178,7 +178,11 @@ class SteamMatchDecision(BaseModel):
 
 class SteamGameLinkInput(BaseModel):
     steam_appid: int = Field(gt=0)
-    mode: Literal["primary", "duplicate"] = "primary"
+
+
+class CollectionDuplicateInput(BaseModel):
+    other_game_id: int = Field(gt=0)
+    direction: Literal["current_into_other", "other_into_current"]
 
 
 class CopyOptionsInput(BaseModel):

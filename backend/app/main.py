@@ -165,6 +165,40 @@ def _backfill_steam_copy_links_v3():
 
 _backfill_steam_copy_links_v3()
 
+def _backfill_steam_copy_names_v4():
+    """Show the original Steam title for each edition kept under one card."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_copy_names_backfilled_v4").first():
+            return
+        import json
+        catalog = {
+            (row.user_id, row.steam_appid): row.name
+            for row in db.query(SteamOwnedGame).all()
+        }
+        for game in db.query(Videogame).all():
+            try:
+                copies = json.loads(game.copies or "[]")
+            except (TypeError, ValueError):
+                continue
+            changed = False
+            for owned_copy in copies:
+                appid = owned_copy.get("steam_appid")
+                if appid and not owned_copy.get("name"):
+                    owned_copy["name"] = catalog.get((game.user_id, int(appid))) or game.name
+                    changed = True
+            if changed:
+                game.copies = json.dumps(copies)
+        db.add(AppSetting(key="steam_copy_names_backfilled_v4", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam copy-name v4 backfill failed")
+    finally:
+        db.close()
+
+_backfill_steam_copy_names_v4()
+
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():
     db = SessionLocal()
