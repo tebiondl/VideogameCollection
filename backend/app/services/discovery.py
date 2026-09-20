@@ -122,7 +122,9 @@ def steam_owned_games(client, steam_id, api_key=None):
         raise ValueError("Steam returned no readable game library. Make your game details public.")
     return [{
         "appid": item["appid"], "name": item.get("name") or f"Steam app {item['appid']}",
-        "playtime_hours": round((item.get("playtime_forever") or 0) / 60, 1),
+        # Steam's client total includes offline/disconnected sessions, while
+        # GetOwnedGames exposes those minutes in a separate field.
+        "playtime_hours": round(((item.get("playtime_forever") or 0) + (item.get("playtime_disconnected") or 0)) / 60, 1),
         "image_url": None, "store_url": f"https://store.steampowered.com/app/{item['appid']}/",
     } for item in games if isinstance(item.get("appid"), int) and item["appid"] > 0]
 
@@ -273,7 +275,7 @@ def attach_steam_copy(db, game, item, igdb_id=None, copy_id=None, steam_id=None)
         row.igdb_id, row.playtime_hours,
     )
     db.flush()
-    if len(copy_store.ensure_copies(db, game)) == 1 and game.playtime_hours is None and getattr(game, "playtime_mode", "user") == "user":
+    if created and len(copy_store.ensure_copies(db, game)) == 1 and (game.playtime_hours is None or game.playtime_hours == 0) and getattr(game, "playtime_mode", "user") == "user":
         game.playtime_mode = "copies"
     copy_store.project_game(db, game)
     if created or before != after:

@@ -265,10 +265,10 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_official_steam_library_parser_and_exact_wanted_acquisition(self):
         client = MagicMock()
-        client.get.return_value = httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={"response": {"games": [{"appid": 101, "name": "Owned Game", "playtime_forever": 750}]}})
+        client.get.return_value = httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={"response": {"games": [{"appid": 101, "name": "Owned Game", "playtime_forever": 750, "playtime_disconnected": 310}]}})
         owned = service.steam_owned_games(client, '76561197960434622', 'a' * 32)
         self.assertEqual(owned[0]['appid'], 101)
-        self.assertEqual(owned[0]['playtime_hours'], 12.5)
+        self.assertEqual(owned[0]['playtime_hours'], 17.7)
         self.assertEqual(client.get.call_args.kwargs['params']['key'], 'a' * 32)
 
         exact = self.create('Custom wanted name', steam_appid=101, platform='PC', comments='keep')
@@ -281,6 +281,24 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(collection.copies)[0]['steam_appid'], 101)
         self.assertEqual(self.db.get(WantedGame, exact['id']).status, 'Acquired')
         self.assertEqual(self.db.get(WantedGame, other['id']).status, 'Wanted')
+
+    def test_automatic_first_steam_copy_displays_steam_time_when_local_time_is_zero(self):
+        collection = Videogame(
+            user_id=self.user.id, name='Owned Game', status='Not Started',
+            playtime_hours=0, playtime_mode='user',
+        )
+        self.db.add(collection)
+        self.db.commit()
+
+        service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 101, 'name': 'Owned Game', 'playtime_hours': 31.6,
+            'image_url': None, 'store_url': 'https://store.steampowered.com/app/101/',
+        }])
+        self.db.commit()
+
+        self.assertEqual(collection.playtime_hours, 0)
+        self.assertEqual(collection.playtime_mode, 'copies')
+        self.assertEqual(json.loads(collection.copies)[0]['playtime_hours'], 31.6)
 
     def test_steam_library_persists_collection_link_without_overwriting_local_data(self):
         collection = Videogame(
