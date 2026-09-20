@@ -21,6 +21,9 @@ export interface TagGroup {
 export interface FilterState {
   tagQuery: TagGroup;
   statusFilter: string[];
+  copyPlatforms: string[];
+  copySources: string[];
+  copyFormats: string[];
   completionRange: { min: number | ''; max: number | ''; includeEmpty: boolean };
   ratingRange: { min: number | ''; max: number | '' };
   playtimeRange: { min: number | ''; max: number | '' };
@@ -31,6 +34,9 @@ export interface FilterState {
 export const DEFAULT_FILTER_STATE: FilterState = {
   tagQuery: { type: 'group', id: 'root', matchLogic: 'AND', conditions: [] },
   statusFilter: [],
+  copyPlatforms: [],
+  copySources: [],
+  copyFormats: [],
   completionRange: { min: '', max: '', includeEmpty: true },
   ratingRange: { min: '', max: '' },
   playtimeRange: { min: '', max: '' },
@@ -44,6 +50,7 @@ interface Props {
   onApply: () => void;
   onClose: () => void;
   availableTags: any[];
+  copyFilterOptions: { platforms: string[]; sources: string[]; formats: string[] };
   savedFilters: any[];
   onSaveFilter: (name: string, filterData: FilterState) => void;
   onLoadFilter: (filter: any) => void;
@@ -52,7 +59,7 @@ interface Props {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, availableTags, savedFilters, onSaveFilter, onLoadFilter, onDeleteFilter }: Props) {
+export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, availableTags, copyFilterOptions, savedFilters, onSaveFilter, onLoadFilter, onDeleteFilter }: Props) {
   const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
   const [filterName, setFilterName] = React.useState('');
   const [showSavedList, setShowSavedList] = React.useState(false);
@@ -71,6 +78,28 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
     }
     onChange({ ...filterState, statusFilter: newStatuses });
   };
+
+  const toggleCopyValue = (field: 'copyPlatforms' | 'copySources' | 'copyFormats', value: string) => {
+    const selected = filterState[field];
+    onChange({
+      ...filterState,
+      [field]: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value],
+    });
+  };
+
+  const copyFilterGroup = (label: string, field: 'copyPlatforms' | 'copySources' | 'copyFormats', options: string[]) => (
+    <div className="copy-filter-group">
+      <h4>{label}</h4>
+      <div className="status-pills">
+        {options.map(value => <button
+          type="button"
+          key={value}
+          className={`status-pill ${filterState[field].includes(value) ? 'active' : ''}`}
+          onClick={() => toggleCopyValue(field, value)}
+        >{value}</button>)}
+      </div>
+    </div>
+  );
 
   const renderTagGroup = (group: TagGroup, parentPath: (number | string)[] = []) => {
     const isRoot = group.id === 'root';
@@ -225,6 +254,18 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                  <p className="text-muted" style={{ margin: '.65rem 0 0', fontSize: '.82rem' }}>
                    Hidden Steam betas and network tests stay out of the collection until this filter is selected.
                  </p>
+               </div>
+
+               <div className="filter-section">
+                 <h3>Owned Copies</h3>
+                 <p className="text-muted copy-filter-help">
+                   A game is shown when one of its copies matches every selected category. Multiple choices in the same category match any.
+                 </p>
+                 <div className="copy-filter-groups">
+                   {copyFilterGroup('Platform', 'copyPlatforms', copyFilterOptions.platforms)}
+                   {copyFilterGroup('Source', 'copySources', copyFilterOptions.sources)}
+                   {copyFilterGroup('Format', 'copyFormats', copyFilterOptions.formats)}
+                 </div>
                </div>
 
                <div className="filter-row" style={{ flexDirection: 'column' }}>

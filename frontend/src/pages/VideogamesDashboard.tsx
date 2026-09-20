@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -15,6 +15,7 @@ import type { CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
+import { matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -120,6 +121,19 @@ export function VideogamesDashboard() {
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
+  const copyFilterOptions = useMemo(() => {
+    const platforms = new Set(copyOptions.platforms);
+    const sources = new Set(copyOptions.sources);
+    const formats = new Set(['Physical', 'Digital', 'Any']);
+    games.flatMap(game => parseCopies(game.copies)).forEach(copy => {
+      if (copy.platform) platforms.add(copy.platform);
+      if (copy.source) sources.add(copy.source);
+      if (copy.steam_appid) sources.add('Steam');
+      if (copy.format) formats.add(copy.format);
+    });
+    const sorted = (values: Set<string>) => [...values].filter(Boolean).sort((a, b) => a.localeCompare(b));
+    return { platforms: sorted(platforms), sources: sorted(sources), formats: sorted(formats) };
+  }, [copyOptions, games]);
 
   // Image Selection
   const [showImageSelectModal, setShowImageSelectModal] = useState(false);
@@ -440,6 +454,12 @@ export function VideogamesDashboard() {
      if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
      
      if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
+
+     if (!matchesOwnedCopyFilters(g.copies, {
+       platforms: filterState.copyPlatforms,
+       sources: filterState.copySources,
+       formats: filterState.copyFormats,
+     })) return false;
 
      if (filterState.ratingRange.min !== '' && (g.mark === null || g.mark < filterState.ratingRange.min)) return false;
      if (filterState.ratingRange.max !== '' && (g.mark === null || g.mark > filterState.ratingRange.max)) return false;
@@ -906,6 +926,7 @@ export function VideogamesDashboard() {
            onApply={() => setShowFilterModal(false)}
            onClose={() => setShowFilterModal(false)}
            availableTags={availableTags}
+           copyFilterOptions={copyFilterOptions}
            savedFilters={savedFilters}
            onSaveFilter={handleSaveFilter}
            onLoadFilter={handleLoadFilter}

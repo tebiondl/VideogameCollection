@@ -140,6 +140,39 @@
   border-color: var(--accent-primary);
 }
 
+.copy-filter-help {
+  margin: -0.35rem 0 1rem;
+  font-size: 0.82rem;
+}
+
+.copy-filter-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.copy-filter-group {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.copy-filter-group h4 {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 720px) {
+  .copy-filter-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Range Inputs */
 .range-inputs {
   display: flex;
