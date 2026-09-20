@@ -194,11 +194,10 @@ class CopyOptionsInput(BaseModel):
     platforms: list[str] = Field(min_length=1, max_length=100)
     sources: list[str] = Field(min_length=1, max_length=100)
     types: list[str] = Field(default_factory=lambda: ["Any", "Physical", "Digital"], min_length=1, max_length=100)
-    old_consoles: list[str] = Field(default_factory=lambda: ["PC", "Other"], min_length=1, max_length=200)
     platform_sources: dict[str, list[str]] = Field(default_factory=dict)
     source_types: dict[str, list[str]] = Field(default_factory=dict)
 
-    @field_validator("platforms", "sources", "types", "old_consoles")
+    @field_validator("platforms", "sources", "types")
     @classmethod
     def valid_options(cls, values):
         cleaned = []

@@ -47,13 +47,12 @@ export interface CopyOptions {
   platforms: string[];
   sources: string[];
   types: string[];
-  old_consoles: string[];
   platform_sources: Record<string, string[]>;
   source_types: Record<string, string[]>;
 }
 
 export const EMPTY_COPY_OPTIONS: CopyOptions = {
-  platforms: [], sources: [], types: [], old_consoles: [], platform_sources: {}, source_types: {},
+  platforms: [], sources: [], types: [], platform_sources: {}, source_types: {},
 };
 export interface Release {
   id: string; name: string; release_date: string; image_url: string | null; source_url: string;

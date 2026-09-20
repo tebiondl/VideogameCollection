@@ -28,7 +28,6 @@ DEFAULT_COPY_OPTIONS = {
     "platforms": ["PC", "Nintendo Switch", "Nintendo Switch 2", "PlayStation 5", "PlayStation 4", "Xbox Series X|S", "Xbox One", "Steam Deck"],
     "sources": ["Steam", "Nintendo eShop", "PlayStation Store", "Xbox Store", "Retail", "Gift", "Subscription", "Other"],
     "types": ["Any", "Physical", "Digital"],
-    "old_consoles": ["PC", "Nintendo Switch", "Nintendo Switch 2", "Nintendo 3DS", "Nintendo DS", "Game Boy Advance", "Game Boy Color", "Game Boy", "Wii U", "Wii", "GameCube", "Nintendo 64", "Super Nintendo", "NES", "PlayStation 5", "PlayStation 4", "PlayStation 3", "PlayStation 2", "PlayStation", "PS Vita", "PSP", "Xbox Series X|S", "Xbox One", "Xbox 360", "Xbox", "Steam Deck", "Sega Dreamcast", "Sega Saturn", "Sega Mega Drive / Genesis", "Other"],
 }
 
 DEFAULT_PLATFORM_SOURCES = {
@@ -82,10 +81,10 @@ def copy_options(db, user_id):
         ).order_by(CopyOption.user_id).first()
         owner_id = configured_admin[0] if configured_admin else user_id
     rows = db.query(CopyOption).filter_by(user_id=owner_id).order_by(CopyOption.position, CopyOption.id).all()
-    has_admin_compatibility_config = any(row.kind in ("type", "old_console") for row in rows)
-    result = {"platforms": [], "sources": [], "types": [], "old_consoles": []}
+    has_admin_compatibility_config = any(row.kind == "type" for row in rows)
+    result = {"platforms": [], "sources": [], "types": []}
     for row in rows:
-        target = "old_consoles" if row.kind == "old_console" else f"{row.kind}s"
+        target = f"{row.kind}s"
         if target in result:
             result[target].append(row.name)
     result = {key: result[key] or values for key, values in DEFAULT_COPY_OPTIONS.items()}
@@ -336,7 +335,7 @@ def save_copy_options(payload: CopyOptionsInput, db: Session = Depends(get_db), 
         owner_marker.value = str(user.id)
     db.query(CopyOption).filter_by(user_id=user.id).delete()
     db.query(CopyCompatibility).filter_by(user_id=user.id).delete()
-    for kind, values in (("platform", payload.platforms), ("source", payload.sources), ("type", payload.types), ("old_console", payload.old_consoles)):
+    for kind, values in (("platform", payload.platforms), ("source", payload.sources), ("type", payload.types)):
         db.add_all(CopyOption(user_id=user.id, kind=kind, name=name, position=index) for index, name in enumerate(values))
     for relation, mapping, left_values, right_values in (
         ("platform_source", payload.platform_sources, payload.platforms, payload.sources),

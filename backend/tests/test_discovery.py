@@ -812,7 +812,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn('PC', defaults['platforms'])
         saved = self.client.put('/api/discovery/copy-options', json={
             'platforms': ['PC', 'PC', 'Switch'], 'sources': ['Steam', 'Retail'],
-            'types': ['Digital', 'Physical'], 'old_consoles': ['PC', 'Nintendo DS'],
+            'types': ['Digital', 'Physical'],
             'platform_sources': {'PC': ['Steam'], 'Switch': ['Retail']},
             'source_types': {'Steam': ['Digital'], 'Retail': ['Physical']},
         })

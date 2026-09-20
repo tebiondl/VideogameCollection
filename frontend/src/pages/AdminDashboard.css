@@ -131,16 +131,26 @@
 }
 .admin-copy-options-grid.three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-copy-intro { margin: .55rem 0 1.5rem; }
+.admin-option-column { min-width: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-primary); }
+.admin-option-heading { display: flex; align-items: center; justify-content: space-between; padding: .9rem 1rem; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--bg-tertiary) 74%, transparent); }
+.admin-option-heading h3 { margin: 0; font-size: .95rem; }
+.admin-option-heading span { display: grid; place-items: center; min-width: 1.55rem; height: 1.55rem; padding: 0 .35rem; border-radius: 999px; color: #ddd6fe; background: rgba(139,92,246,.17); font-size: .72rem; font-weight: 800; }
+.admin-option-rows { display: flex; flex-direction: column; gap: .45rem; max-height: 23rem; padding: .7rem; overflow: auto; }
+.admin-option-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .4rem; align-items: center; }
+.admin-option-row .form-input { min-width: 0; padding: .58rem .7rem; border-color: transparent; background: var(--bg-secondary); }
+.admin-option-row .form-input:focus { border-color: rgba(167,139,250,.55); }
+.admin-option-row .admin-icon-button { width: 2.25rem; height: 2.25rem; }
+.admin-add-option { display: flex; align-items: center; justify-content: center; gap: .35rem; width: calc(100% - 1.4rem); margin: 0 .7rem .7rem; padding: .58rem; border: 1px dashed rgba(167,139,250,.38); border-radius: 8px; color: #c4b5fd; background: rgba(139,92,246,.06); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.admin-add-option:hover { border-color: rgba(167,139,250,.7); background: rgba(139,92,246,.13); }
 .admin-compatibility-section { margin: 2rem 0; padding-top: 1.5rem; border-top: 1px solid var(--border-color); }
 .admin-compatibility-section h3 { margin-bottom: .35rem; }
-.admin-compatibility-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: 1rem; }
-.admin-compatibility-list fieldset { min-width: 0; padding: .9rem; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); }
-.admin-compatibility-list legend { padding: 0 .35rem; color: var(--text-primary); font-weight: 700; }
-.admin-compatibility-list fieldset > div { display: flex; flex-wrap: wrap; gap: .45rem .8rem; }
-.admin-compatibility-list label { display: inline-flex; align-items: center; gap: .35rem; color: var(--text-secondary); font-size: .82rem; }
-.admin-old-console-list { display: grid; grid-template-columns: minmax(280px, .7fr) 1fr; align-items: start; gap: 1.25rem; margin: 2rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); }
-.admin-old-console-list label { display: flex; flex-direction: column; gap: .55rem; }
-.admin-old-console-list p { padding-top: 1.7rem; }
+.admin-rule-rows { display: flex; flex-direction: column; gap: .55rem; margin-top: 1rem; }
+.admin-rule-row { display: grid; grid-template-columns: minmax(140px,.34fr) minmax(0,1fr); gap: 1rem; align-items: center; padding: .8rem .9rem; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); }
+.admin-rule-row > strong { overflow: hidden; color: var(--text-primary); font-size: .86rem; text-overflow: ellipsis; }
+.admin-rule-tags { display: flex; flex-wrap: wrap; gap: .4rem; }
+.admin-rule-tag { padding: .4rem .58rem; border: 1px solid var(--border-color); border-radius: 7px; color: var(--text-muted); background: var(--bg-secondary); font: inherit; font-size: .75rem; cursor: pointer; transition: var(--transition); }
+.admin-rule-tag:hover { color: #ddd6fe; border-color: rgba(167,139,250,.42); }
+.admin-rule-tag.selected { color: #f5f3ff; border-color: rgba(167,139,250,.58); background: rgba(139,92,246,.22); box-shadow: inset 0 0 0 1px rgba(196,181,253,.08); }
 
 .admin-jump-nav {
   position: sticky;
@@ -205,7 +215,7 @@
 .admin-legacy-tools summary { color: var(--text-secondary); cursor: pointer; }.admin-legacy-tools p { margin: .8rem 0; }
 
 @media (max-width: 650px) {
-  .admin-copy-options-grid, .admin-copy-options-grid.three-columns, .admin-compatibility-list, .admin-old-console-list { grid-template-columns: 1fr; }
+  .admin-copy-options-grid, .admin-copy-options-grid.three-columns, .admin-rule-row { grid-template-columns: 1fr; }
   .admin-standard-card { padding: 1.25rem; }
   .admin-jump-nav { position: static; }
   .admin-backup-actions { align-items: stretch; flex-direction: column; }

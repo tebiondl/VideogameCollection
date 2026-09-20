@@ -808,7 +808,7 @@ export function VideogamesDashboard() {
               <div className="form-group">
                 <label className="form-label">Old Copies</label>
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Record a copy you played but no longer own. Its time counts toward copy playtime without appearing as a current copy.</p>
-                <OldCopiesEditor value={editingGame.old_copies} onChange={value => setEditingGame({ ...editingGame, old_copies: value })} consoleOptions={copyOptions.old_consoles} />
+                <OldCopiesEditor value={editingGame.old_copies} onChange={value => setEditingGame({ ...editingGame, old_copies: value })} consoleOptions={copyOptions.platforms} />
               </div>
 
               <div className="form-row" style={{ alignItems: 'stretch' }}>
