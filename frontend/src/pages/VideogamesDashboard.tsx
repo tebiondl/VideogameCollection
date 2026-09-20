@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, Link2, EyeOff } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -14,6 +14,7 @@ import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
 import type { CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
+import { SteamLinkModal } from '../components/SteamLinkModal';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -116,6 +117,7 @@ export function VideogamesDashboard() {
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
+  const [steamLinkGame, setSteamLinkGame] = useState<any>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
 
@@ -155,7 +157,10 @@ export function VideogamesDashboard() {
   const [filterState, setFilterState] = useState<FilterState>(() => {
     const saved = readCollectionViewState(userId, 'filter_state');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try {
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly };
+      } catch (e) {}
     }
     return DEFAULT_FILTER_STATE;
   });
@@ -320,6 +325,7 @@ export function VideogamesDashboard() {
         is_dlc: !!editingGame.is_dlc,
         parent_game_name: editingGame.parent_game_name || null,
         copies: editingGame.copies || null,
+        hidden: !!editingGame.hidden,
       };
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
         method: 'PUT',
@@ -350,7 +356,8 @@ export function VideogamesDashboard() {
 
   const handleLoadFilter = (sf: any) => {
     try {
-       setFilterState(JSON.parse(sf.filter_data));
+       const parsed = JSON.parse(sf.filter_data);
+       setFilterState({ ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly });
     } catch {}
   };
 
@@ -428,6 +435,8 @@ export function VideogamesDashboard() {
   };
 
   const filteredGames = games.filter(g => {
+     if (!!g.hidden !== !!filterState.hiddenOnly) return false;
+     if (g.is_dlc) return false;
      if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
      
      if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
@@ -749,6 +758,18 @@ export function VideogamesDashboard() {
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
                 <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
               </div>
+
+              <div className="form-row" style={{ alignItems: 'stretch' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Steam link</label>
+                  <button type="button" className="btn btn-secondary" onClick={() => setSteamLinkGame(editingGame)}><Link2 size={17} /> Link or change Steam game</button>
+                  <p className="text-muted" style={{ margin: '.55rem 0 0', fontSize: '.82rem' }}>You can also merge another Steam app as a duplicate copy.</p>
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Visibility</label>
+                  <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center' }}><input type="checkbox" checked={!!editingGame.hidden} onChange={event => setEditingGame({ ...editingGame, hidden: event.target.checked })} /><EyeOff size={17} /> Hide from collection</label>
+                </div>
+              </div>
             </div>
 
             <div className="data-section-user">
@@ -812,6 +833,12 @@ export function VideogamesDashboard() {
           </div>
         </div>
       )}
+
+      {steamLinkGame && <SteamLinkModal game={steamLinkGame} onClose={() => setSteamLinkGame(null)} onLinked={updated => {
+        const game = updated as any;
+        setGames(current => current.map(row => row.id === game.id ? game : row));
+        setEditingGame(game);
+      }} />}
 
       {/* Image Select Modal */}
       {showImageSelectModal && editingGame && (

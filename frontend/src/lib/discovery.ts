@@ -17,6 +17,7 @@ export interface AcquireDraft {
   is_dlc: boolean; parent_game_name: string | null; platform: string; format: string;
   source: string; store_url: string | null; steam_appid: number | null; igdb_id: number | null;
   price: number | null; currency: string;
+  parent_game_id: number | null;
 }
 export const emptyWanted = (): WantedDraft => ({ name: '', description: '', comments: '', image_url: '', platform: '', format: 'Any',
   status: 'Wanted', hype: null, target_price: null, currency: 'EUR', release_date: null, publication_year: null,
@@ -67,7 +68,7 @@ export function toAcquireDraft(game: WantedGame): AcquireDraft {
     completion_percentage: null, tags: game.tags, dlcs: game.dlcs, is_dlc: game.is_dlc,
     parent_game_name: game.parent_game_name, platform: game.platform, format: game.format,
     source: game.source === 'steam' ? 'Steam' : game.source, store_url: game.store_url, steam_appid: game.steam_appid, igdb_id: game.igdb_id,
-    price: game.target_price, currency: game.currency,
+    price: game.target_price, currency: game.currency, parent_game_id: null,
   };
 }
 export function payload(draft: WantedDraft): WantedDraft {

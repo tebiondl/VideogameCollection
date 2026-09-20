@@ -40,6 +40,7 @@ class Videogame(Base):
     is_dlc = Column(Boolean, nullable=False, default=False)
     parent_game_name = Column(String, nullable=True)
     copies = Column(String, nullable=True) # JSON array of owned platform / format copies
+    hidden = Column(Boolean, nullable=False, default=False)
 
     owner = relationship("User", back_populates="videogames")
 

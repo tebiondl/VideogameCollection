@@ -61,15 +61,34 @@ class DiscoverySettings(Base):
 
 class SteamCollectionLink(Base):
     """Stable ownership link; collection data remains authoritative across Steam syncs."""
-    __tablename__ = "steam_collection_links"
-    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_collection_link_user_app"),)
+    __tablename__ = "steam_game_links"
+    __table_args__ = (UniqueConstraint("user_id", "collection_game_id", name="uq_steam_game_link_user_game"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     steam_appid = Column(Integer, nullable=False)
     collection_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
     igdb_id = Column(Integer)
     created_collection_game = Column(Boolean, nullable=False, default=False)
+    user_selected = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SteamOwnedGame(Base):
+    """Last successful Steam library snapshot used for manual linking and duplicate choices."""
+    __tablename__ = "steam_owned_games"
+    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_owned_game_user_app"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_appid = Column(Integer, nullable=False)
+    name = Column(String, nullable=False)
+    playtime_hours = Column(Float)
+    image_url = Column(String)
+    store_url = Column(String)
+    igdb_id = Column(Integer)
+    is_dlc = Column(Boolean, nullable=False, default=False)
+    parent_game_name = Column(String)
+    duplicate_of_appid = Column(Integer)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class SteamMatchReview(Base):

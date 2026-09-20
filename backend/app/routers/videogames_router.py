@@ -505,7 +505,10 @@ def get_videogames(
     current_user: Annotated[models.User, Depends(get_current_user)], 
     db: Session = Depends(database.get_db)
 ):
-    games = db.query(models.Videogame).filter(models.Videogame.user_id == current_user.id).all()
+    games = db.query(models.Videogame).filter(
+        models.Videogame.user_id == current_user.id,
+        models.Videogame.is_dlc.is_(False),
+    ).all()
     return games
 
 @router.post("/check-similar", response_model=List[schemas.VideogameResponse])
@@ -522,7 +525,10 @@ def check_similar_game(
     if not target_name:
         return []
         
-    user_games = db.query(models.Videogame).filter(models.Videogame.user_id == current_user.id).all()
+    user_games = db.query(models.Videogame).filter(
+        models.Videogame.user_id == current_user.id,
+        models.Videogame.is_dlc.is_(False),
+    ).all()
     
     similar_games = []
     for game in user_games:
@@ -538,6 +544,8 @@ def create_videogame(
     current_user: Annotated[models.User, Depends(get_current_user)], 
     db: Session = Depends(database.get_db)
 ):
+    if game.is_dlc:
+        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
     new_game = models.Videogame(**game.model_dump(), user_id=current_user.id)
     db.add(new_game)
     db.commit()
@@ -580,6 +588,8 @@ def delete_videogame(
     
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+    if game_update.is_dlc:
+        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
 
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.

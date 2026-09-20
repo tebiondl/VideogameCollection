@@ -8,6 +8,10 @@ export type DlcState = 'not_owned' | 'not_started' | 'finished';
 export interface Dlc {
   name: string;
   state: DlcState;
+  steam_appid?: number | null;
+  platform?: string | null;
+  source?: string | null;
+  playtime_hours?: number | null;
 }
 
 const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'finished'];
@@ -111,7 +115,7 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer }: Pro
       <div className="dlc-list">
         {dlcs.map((dlc, idx) => (
           <div key={idx} className="dlc-row">
-            <span className="dlc-name">{dlc.name}</span>
+            <span className="dlc-name">{dlc.name}{(dlc.source || dlc.platform || dlc.playtime_hours != null) && <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 400, marginTop: '.2rem' }}>{[dlc.source, dlc.platform, dlc.playtime_hours != null ? `${dlc.playtime_hours} hrs` : null].filter(Boolean).join(' · ')}</small>}</span>
             <button
               type="button"
               className="dlc-state-btn"

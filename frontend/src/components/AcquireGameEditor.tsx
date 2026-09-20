@@ -10,6 +10,7 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
   const [draft, setDraft] = useState(() => nonSteamOnly ? { ...initial, source: initial.source.toLowerCase() === 'steam' ? '' : initial.source, steam_appid: null, store_url: initial.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : initial.store_url } : initial);
   const [tags, setTags] = useState<{ id: number; name: string }[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
+  const [collectionGames, setCollectionGames] = useState<{ id: number; name: string; is_dlc: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
@@ -18,9 +19,11 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
     Promise.all([
       fetchWithAuth('/videogames/tags').then(response => response.ok ? response.json() : []),
       fetchWithAuth('/discovery/copy-options').then(response => response.ok ? response.json() : { platforms: [], sources: [] }),
-    ]).then(([nextTags, options]) => {
+      fetchWithAuth('/videogames/').then(response => response.ok ? response.json() : []),
+    ]).then(([nextTags, options, ownedGames]) => {
       setTags(nextTags);
       setCopyOptions(options);
+      setCollectionGames(ownedGames.filter((game: { is_dlc: boolean }) => !game.is_dlc));
       if (nonSteamOnly) {
         const nonSteamSources = (options.sources as string[]).filter(value => value.toLowerCase() !== 'steam');
         setDraft(current => ({ ...current, source: current.source && current.source.toLowerCase() !== 'steam' ? current.source : nonSteamSources.find(value => value.toLowerCase() === 'retail') || nonSteamSources[0] || 'Other' }));
@@ -58,8 +61,11 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
         <label className="wide">Name<input required maxLength={300} value={draft.name} onChange={event => field('name', event.target.value)} /></label>
         <label>Release date<input type="date" value={draft.release_date || ''} onChange={event => field('release_date', event.target.value || null)} /></label>
         <label>Publication year<input type="number" min={1970} max={2200} value={draft.publication_year ?? ''} onChange={event => field('publication_year', event.target.value ? Number(event.target.value) : null)} /></label>
-        <label className="disc-check"><input type="checkbox" checked={draft.is_dlc} onChange={event => field('is_dlc', event.target.checked)} /> This is a DLC / expansion</label>
-        <label>Parent game<input value={draft.parent_game_name || ''} onChange={event => field('parent_game_name', event.target.value || null)} /></label>
+        <label className="disc-check"><input type="checkbox" checked={draft.is_dlc} onChange={event => setDraft(current => ({ ...current, is_dlc: event.target.checked, parent_game_id: event.target.checked ? current.parent_game_id : null }))} /> This is a DLC / expansion</label>
+        {draft.is_dlc ? <label className="wide">Add expansion under<select required value={draft.parent_game_id ?? ''} onChange={event => {
+          const parent = collectionGames.find(game => game.id === Number(event.target.value));
+          setDraft(current => ({ ...current, parent_game_id: parent?.id ?? null, parent_game_name: parent?.name ?? null }));
+        }}><option value="">Choose a game from your collection…</option>{collectionGames.map(game => <option key={game.id} value={game.id}>{game.name}</option>)}</select></label> : null}
         <label className="wide">Description<textarea rows={3} value={draft.description || ''} onChange={event => field('description', event.target.value || null)} /></label>
         <label className="wide">Cover image URL<input type="url" value={draft.image_url || ''} onChange={event => field('image_url', event.target.value || null)} /></label>
       </div></section>

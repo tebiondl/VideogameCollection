@@ -96,6 +96,7 @@ class AcquireInput(BaseModel):
     igdb_id: int | None = Field(default=None, gt=0)
     price: float | None = Field(default=None, ge=0, le=1000000, allow_inf_nan=False)
     currency: Literal["EUR", "USD", "GBP", "JPY"] = "EUR"
+    parent_game_id: int | None = Field(default=None, gt=0)
 
     @field_validator("release_date")
     @classmethod
@@ -173,6 +174,11 @@ class SteamMatchReviewResponse(BaseModel):
 class SteamMatchDecision(BaseModel):
     decision: Literal["same", "different", "none"]
     candidate_game_id: int | None = Field(default=None, gt=0)
+
+
+class SteamGameLinkInput(BaseModel):
+    steam_appid: int = Field(gt=0)
+    mode: Literal["primary", "duplicate"] = "primary"
 
 
 class CopyOptionsInput(BaseModel):

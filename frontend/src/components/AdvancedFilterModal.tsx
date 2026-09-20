@@ -25,6 +25,7 @@ export interface FilterState {
   ratingRange: { min: number | ''; max: number | '' };
   playtimeRange: { min: number | ''; max: number | '' };
   dateRange: { min: number | ''; max: number | '' };
+  hiddenOnly: boolean;
 }
 
 export const DEFAULT_FILTER_STATE: FilterState = {
@@ -33,7 +34,8 @@ export const DEFAULT_FILTER_STATE: FilterState = {
   completionRange: { min: '', max: '', includeEmpty: true },
   ratingRange: { min: '', max: '' },
   playtimeRange: { min: '', max: '' },
-  dateRange: { min: '', max: '' }
+  dateRange: { min: '', max: '' },
+  hiddenOnly: false,
 };
 
 interface Props {
@@ -207,6 +209,22 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                      ))}
                    </div>
                  </div>
+               </div>
+
+               <div className="filter-section">
+                 <h3>Visibility</h3>
+                 <div className="status-pills">
+                   <button
+                     type="button"
+                     className={`status-pill ${filterState.hiddenOnly ? 'active' : ''}`}
+                     onClick={() => onChange({ ...filterState, hiddenOnly: !filterState.hiddenOnly })}
+                   >
+                     Hidden games only
+                   </button>
+                 </div>
+                 <p className="text-muted" style={{ margin: '.65rem 0 0', fontSize: '.82rem' }}>
+                   Hidden Steam betas and network tests stay out of the collection until this filter is selected.
+                 </p>
                </div>
 
                <div className="filter-row" style={{ flexDirection: 'column' }}>

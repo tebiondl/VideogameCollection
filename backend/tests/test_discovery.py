@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.database import Base, get_db
 from backend.app.models import User, Videogame
-from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamMatchReview
+from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamMatchReview, SteamOwnedGame
 from backend.app.routers import discovery_router as router
 from backend.app.services import discovery as service
 
@@ -74,16 +74,21 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/discovery/import', json=data).json(), {"added": 2, "skipped": 1})
         self.assertEqual(self.client.post('/api/discovery/import', json=data).json(), {"added": 0, "skipped": 3})
 
-    def test_acquisition_is_idempotent_and_retains_dlc_and_notes(self):
-        game = self.create(comments="keep", is_dlc=True, dlcs='[{"name":"Bonus","state":"not_owned"}]')
-        first = self.client.post(f"/api/discovery/games/{game['id']}/acquire")
-        second = self.client.post(f"/api/discovery/games/{game['id']}/acquire")
+    def test_acquisition_nests_dlc_under_selected_collection_game(self):
+        parent = Videogame(user_id=self.user.id, name="Base", status="Not Started")
+        self.db.add(parent)
+        self.db.commit()
+        game = self.create("Bonus", comments="keep", is_dlc=True, parent_game_name="Base")
+        payload = {"name": "Bonus", "is_dlc": True, "parent_game_name": "Base", "parent_game_id": parent.id,
+                   "platform": "PC", "format": "Digital", "source": "Steam", "steam_appid": 42}
+        first = self.client.post(f"/api/discovery/games/{game['id']}/acquire", json=payload)
+        second = self.client.post(f"/api/discovery/games/{game['id']}/acquire", json=payload)
         self.assertEqual(first.json(), second.json())
         self.assertEqual(self.db.query(Videogame).count(), 1)
         owned = self.db.query(Videogame).one()
-        self.assertEqual(owned.comments, 'keep')
-        self.assertIn('DLC', owned.tags)
+        self.assertEqual(owned.name, 'Base')
         self.assertEqual(json.loads(owned.dlcs)[0]['name'], 'Bonus')
+        self.assertEqual(json.loads(owned.dlcs)[0]['steam_appid'], 42)
         self.assertEqual(self.db.get(WantedGame, game['id']).status, 'Acquired')
 
     def test_acquisition_review_can_change_platform_and_add_multiple_copies(self):
@@ -271,7 +276,7 @@ class DiscoveryTests(unittest.TestCase):
         self.db.commit()
         self.assertEqual(imported, 1)
         collection = self.db.query(Videogame).one()
-        self.assertEqual(collection.name, 'Custom wanted name')
+        self.assertEqual(collection.name, 'Owned Game')
         self.assertEqual(json.loads(collection.copies)[0]['steam_appid'], 101)
         self.assertEqual(self.db.get(WantedGame, exact['id']).status, 'Acquired')
         self.assertEqual(self.db.get(WantedGame, other['id']).status, 'Wanted')
@@ -298,7 +303,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 1)
         self.db.commit()
         self.assertEqual(self.db.query(Videogame).count(), 1)
-        self.assertEqual(collection.name, 'My custom title')
+        self.assertEqual(collection.name, 'A different Steam title')
         self.assertEqual(collection.description, 'Keep this')
         self.assertEqual(collection.mark, 9)
         self.assertEqual(collection.playtime_hours, 3.0)
@@ -332,13 +337,72 @@ class DiscoveryTests(unittest.TestCase):
         self.db.commit()
         self.assertEqual(imported, 1)
         self.assertEqual(self.db.query(Videogame).count(), 1)
-        self.assertEqual(original.name, 'Clair Obsucr: Expedition 33')
+        self.assertEqual(original.name, 'Clair Obscur: Expedition 33')
         self.assertEqual(original.description, 'Local data')
         self.assertEqual(original.status, 'Playing')
         self.assertEqual(original.playtime_hours, 33.0)
         self.assertEqual(original.mark, 10)
         self.assertEqual(json.loads(original.copies)[0]['steam_appid'], 1903340)
         self.assertEqual(self.db.query(SteamCollectionLink).one().collection_game_id, original.id)
+
+    def test_manual_link_allows_one_steam_app_for_multiple_collection_games(self):
+        first = Videogame(user_id=self.user.id, name='Edition One', status='Not Started')
+        second = Videogame(user_id=self.user.id, name='Edition Two', status='Not Started')
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=900, name='Steam Complete Edition', playtime_hours=2.0)
+        self.db.add_all([first, second, steam])
+        self.db.commit()
+        for game in (first, second):
+            response = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/link', json={
+                'steam_appid': 900, 'mode': 'primary',
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+        links = self.db.query(SteamCollectionLink).filter_by(user_id=self.user.id, steam_appid=900).all()
+        self.assertEqual({link.collection_game_id for link in links}, {first.id, second.id})
+        self.assertEqual(json.loads(first.copies)[0]['steam_appid'], 900)
+        self.assertEqual(json.loads(second.copies)[0]['steam_appid'], 900)
+
+    def test_manual_duplicate_keeps_one_visible_card_and_two_steam_copies(self):
+        canonical = Videogame(user_id=self.user.id, name='Final Fantasy VII', status='Not Started')
+        duplicate_card = Videogame(user_id=self.user.id, name='Final Fantasy VII (2013)', status='Not Started')
+        apps = [
+            SteamOwnedGame(user_id=self.user.id, steam_appid=1, name='Final Fantasy VII'),
+            SteamOwnedGame(user_id=self.user.id, steam_appid=2, name='Final Fantasy VII (2013)'),
+        ]
+        self.db.add_all([canonical, duplicate_card, *apps])
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=canonical.id),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=duplicate_card.id, created_collection_game=True),
+        ])
+        service.attach_steam_copy(canonical, {'appid': 1, 'name': apps[0].name})
+        service.attach_steam_copy(duplicate_card, {'appid': 2, 'name': apps[1].name})
+        self.db.commit()
+        response = self.client.post(f'/api/discovery/steam/collection-games/{canonical.id}/link', json={
+            'steam_appid': 2, 'mode': 'duplicate',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(canonical)
+        self.db.refresh(duplicate_card)
+        self.assertEqual({copy['steam_appid'] for copy in json.loads(canonical.copies)}, {1, 2})
+        self.assertTrue(duplicate_card.hidden)
+        self.assertEqual(self.db.get(SteamOwnedGame, apps[1].id).duplicate_of_appid, 1)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=2).count(), 0)
+
+    def test_owned_steam_dlc_is_nested_and_never_creates_a_collection_card(self):
+        parent = Videogame(user_id=self.user.id, name='Base Game', status='Not Started')
+        wanted = WantedGame(user_id=self.user.id, name='Expansion', platform='PC', format='Digital',
+                            source='steam', steam_appid=81, is_dlc=True, parent_game_name='Base Game')
+        self.db.add_all([parent, wanted])
+        self.db.commit()
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 81, 'name': 'Expansion', 'playtime_hours': 0, 'is_dlc': True,
+            'parent_game_name': 'Base Game', 'store_url': 'https://store.steampowered.com/app/81/',
+        }])
+        self.db.commit()
+        self.assertEqual(imported, 0)
+        self.assertEqual(self.db.query(Videogame).count(), 1)
+        self.assertEqual(json.loads(parent.dlcs)[0]['steam_appid'], 81)
+        self.assertEqual(wanted.collection_game_id, parent.id)
 
     def test_uncertain_steam_title_waits_for_review_then_links_existing_game(self):
         original = Videogame(

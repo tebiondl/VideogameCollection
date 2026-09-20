@@ -166,12 +166,16 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   });
 
   const saveIgdbItem = async () => {
+    if (selectedIgdbGame.is_dlc) throw new Error('Expansions are stored inside a base game. Open the base game and add it in the DLC section.');
     const res = await fetchWithAuth('/videogames/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildIgdbPayload()),
     });
-    if (!res.ok) throw new Error('Failed to save game');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to save game');
+    }
     navigate('/dashboard/videogames');
   };
 

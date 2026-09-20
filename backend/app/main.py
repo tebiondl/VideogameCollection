@@ -4,7 +4,7 @@ from sqlalchemy import text
 from .database import engine, Base
 from .database import SessionLocal
 from .models import AppSetting, Videogame
-from .discovery_models import SteamCollectionLink, WantedGame
+from .discovery_models import SteamCollectionLink, SteamOwnedGame, WantedGame
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router
 from .services.discovery import scheduler
 from .services.backups import scheduler as backup_scheduler
@@ -29,6 +29,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN is_dlc BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN parent_game_name VARCHAR",
         "ALTER TABLE videogames ADD COLUMN copies TEXT",
+        "ALTER TABLE videogames ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN last_owned_import_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN steam_api_key VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_igdb_match_count INTEGER NOT NULL DEFAULT 0",
@@ -158,6 +159,68 @@ def _backfill_steam_collection_links():
         db.close()
 
 _backfill_steam_collection_links()
+
+def _backfill_steam_links_v2():
+    """Copy legacy one-app/one-game links into the collection-owned link model."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_game_links_backfilled_v2").first():
+            return
+        import json
+        existing_games = {(row.user_id, row.collection_game_id) for row in db.query(SteamCollectionLink).all()}
+        with engine.connect() as conn:
+            try:
+                legacy = conn.execute(text(
+                    "SELECT user_id, steam_appid, collection_game_id, igdb_id, created_collection_game "
+                    "FROM steam_collection_links ORDER BY id"
+                )).mappings().all()
+            except Exception:
+                legacy = []
+        for row in legacy:
+            key = (row["user_id"], row["collection_game_id"])
+            if key in existing_games:
+                continue
+            db.add(SteamCollectionLink(
+                user_id=row["user_id"], steam_appid=row["steam_appid"],
+                collection_game_id=row["collection_game_id"], igdb_id=row["igdb_id"],
+                created_collection_game=bool(row["created_collection_game"]),
+            ))
+            existing_games.add(key)
+        catalog_keys = {(row.user_id, row.steam_appid) for row in db.query(SteamOwnedGame).all()}
+        for game in db.query(Videogame).all():
+            try:
+                copies = json.loads(game.copies or "[]")
+            except (TypeError, ValueError):
+                copies = []
+            for copy in copies:
+                appid = copy.get("steam_appid")
+                if not appid:
+                    continue
+                key = (game.user_id, int(appid))
+                if key not in catalog_keys:
+                    db.add(SteamOwnedGame(
+                        user_id=game.user_id, steam_appid=int(appid), name=game.name,
+                        playtime_hours=copy.get("playtime_hours"), image_url=game.image_url,
+                        store_url=copy.get("store_url"), igdb_id=copy.get("igdb_id"),
+                    ))
+                    catalog_keys.add(key)
+                link_key = (game.user_id, game.id)
+                if link_key not in existing_games:
+                    db.add(SteamCollectionLink(
+                        user_id=game.user_id, steam_appid=int(appid), collection_game_id=game.id,
+                        igdb_id=copy.get("igdb_id"),
+                    ))
+                    existing_games.add(link_key)
+                    break
+        db.add(AppSetting(key="steam_game_links_backfilled_v2", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam game-link v2 backfill failed")
+    finally:
+        db.close()
+
+_backfill_steam_links_v2()
 
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():

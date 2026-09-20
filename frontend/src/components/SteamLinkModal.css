@@ -1,0 +1,12 @@
+.steam-link-dialog { width: min(780px, calc(100vw - 2rem)); max-height: 86vh; }
+.steam-link-search { display:flex; align-items:center; gap:.65rem; margin:1rem 0; padding:.75rem 1rem; border:1px solid var(--border-color); border-radius:var(--radius-md); background:var(--bg-tertiary); }
+.steam-link-search input { flex:1; border:0; outline:0; color:var(--text-primary); background:transparent; font:inherit; }
+.steam-link-list { display:flex; flex-direction:column; gap:.65rem; max-height:52vh; overflow:auto; padding-right:.25rem; }
+.steam-link-row { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem; border:1px solid var(--border-color); border-radius:var(--radius-md); background:rgba(255,255,255,.025); }
+.steam-link-row.current { border-color:var(--accent-primary); background:rgba(139,92,246,.1); }
+.steam-link-row > div:first-child { min-width:0; display:flex; flex-direction:column; gap:.3rem; }
+.steam-link-row strong { overflow:hidden; text-overflow:ellipsis; }
+.steam-link-row small { color:var(--text-muted); }
+.steam-link-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.45rem; flex-shrink:0; }
+.steam-link-actions .btn { padding:.55rem .7rem; white-space:nowrap; }
+@media (max-width: 680px) { .steam-link-row { align-items:flex-start; flex-direction:column; } .steam-link-actions { width:100%; justify-content:flex-start; } }

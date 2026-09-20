@@ -46,6 +46,7 @@ class VideogameBase(BaseModel):
     is_dlc: bool = False
     parent_game_name: str | None = None
     copies: str | None = None
+    hidden: bool = False
 
     @field_validator("copies")
     @classmethod
