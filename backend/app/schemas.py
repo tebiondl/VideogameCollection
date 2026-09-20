@@ -41,6 +41,7 @@ class VideogameBase(BaseModel):
     completion_date: str | None = None
     publication_year: int | None = None
     release_date: str | None = None
+    igdb_id: int | None = None
     completion_percentage: int | None = None
     tags: str | None = None
     dlcs: str | None = None
@@ -48,6 +49,7 @@ class VideogameBase(BaseModel):
     parent_game_name: str | None = None
     copies: str | None = None
     hidden: bool = False
+    version: int | None = None
 
     @field_validator("copies")
     @classmethod
@@ -58,11 +60,25 @@ class VideogameBase(BaseModel):
         if not isinstance(items, list) or len(items) > 100:
             raise ValueError("Copies must be a list of at most 100 entries")
         allowed_formats = {"Any", "Physical", "Digital"}
+        copy_ids: set[str] = set()
+        steam_appids: set[int] = set()
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("platform"), str):
                 raise ValueError("Each copy needs a platform")
             if item.get("format", "Any") not in allowed_formats:
                 raise ValueError("Invalid copy format")
+            if item.get("id"):
+                copy_id = str(item["id"])
+                if copy_id in copy_ids:
+                    raise ValueError("Every copy needs a unique ID")
+                copy_ids.add(copy_id)
+            if item.get("steam_appid"):
+                appid = int(item["steam_appid"])
+                if appid <= 0 or appid in steam_appids:
+                    raise ValueError("A Steam app can only appear once on a game")
+                steam_appids.add(appid)
+            if item.get("playtime_hours") is not None and float(item["playtime_hours"]) < 0:
+                raise ValueError("Copy playtime cannot be negative")
         return json.dumps(items)
 
 class VideogameCreate(VideogameBase):

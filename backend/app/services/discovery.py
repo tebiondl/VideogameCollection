@@ -18,6 +18,9 @@ from sqlalchemy import or_
 from ..database import SessionLocal
 from ..models import Videogame
 from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
+from ..discovery_models import SteamContentLink
+from . import copy_store
+from .secrets import reveal_secret
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,10 @@ def _collection_title_matches(collection, names):
     targets = {_collection_title_key(name) for name in names}
     targets.discard("")
     scored = []
+    edition_tokens = {
+        "demo", "beta", "alpha", "test", "playtest", "network", "server", "soundtrack",
+        "remaster", "remastered", "remake", "definitive", "complete", "edition", "classic",
+    }
     for game in collection:
         candidate = _collection_title_key(game.name)
         if not candidate:
@@ -166,6 +173,8 @@ def _collection_title_matches(collection, names):
                 ratio = max(ratio, 0.76)
             elif coverage == 1 and min(len(target_tokens), len(candidate_tokens)) == 1:
                 ratio = max(ratio, 0.74)
+            if (target_tokens & edition_tokens) != (candidate_tokens & edition_tokens):
+                ratio -= 0.18
             score = max(score, ratio)
         if score >= 0.72:
             scored.append((score, game))
@@ -202,7 +211,7 @@ def steam_review_response(review):
         "id": review.id, "steam_appid": review.steam_appid, "steam_name": review.steam_name,
         "candidate_game_id": review.candidate_game_id, "candidate_name": review.candidate_name,
         "confidence": review.confidence, "candidates": steam_review_candidates(review),
-        "created_at": review.created_at,
+        "created_at": review.created_at, "match_kind": review.match_kind,
     }
 
 
@@ -216,81 +225,91 @@ def steam_copy(item, igdb_id=None, copy_id=None):
     }
 
 
-def steam_copy_id(game, appid):
-    try:
-        copies = json.loads(game.copies or "[]")
-    except (TypeError, ValueError):
-        return None
-    for copy in copies:
-        if int(copy.get("steam_appid") or 0) == int(appid):
-            return str(copy.get("id") or f"steam:{appid}")
-    return None
+def steam_copy_id(db, game, appid, steam_id=None):
+    query = db.query(SteamCollectionLink).filter_by(
+        user_id=game.user_id, collection_game_id=game.id, steam_appid=int(appid),
+    )
+    if steam_id is not None:
+        query = query.filter_by(steam_id=steam_id)
+    row = query.first()
+    return row.copy_id if row else None
 
 
-def attach_steam_copy(game, item, igdb_id=None, copy_id=None):
-    try:
-        copies = json.loads(game.copies or "[]")
-    except (TypeError, ValueError):
-        copies = []
-    for copy in copies:
-        if int(copy.get("steam_appid") or 0) == item["appid"]:
-            changed = False
-            if not copy.get("id"):
-                copy["id"] = copy_id or f"steam:{item['appid']}"
-                changed = True
-            if not copy.get("name") and item.get("name"):
-                copy["name"] = item["name"]
-                changed = True
-            # Steam owns this value. Refresh it on every successful library sync.
-            if item.get("playtime_hours") is not None and copy.get("playtime_hours") != item["playtime_hours"]:
-                copy["playtime_hours"] = item["playtime_hours"]
-                changed = True
-            if changed:
-                game.copies = json.dumps(copies)
-            return False
-    if not copies and game.playtime_hours is None and getattr(game, "playtime_mode", "user") == "user":
+def attach_steam_copy(db, game, item, igdb_id=None, copy_id=None, steam_id=None):
+    scope = steam_id if steam_id is not None else copy_store.steam_scope(db, game.user_id)
+    row = db.query(SteamCollectionLink).filter_by(
+        user_id=game.user_id, steam_id=scope, collection_game_id=game.id,
+        steam_appid=item["appid"],
+    ).first()
+    created = row is None
+    before = None if row is None else (
+        row.name, row.platform, row.format, row.source, row.store_url,
+        row.igdb_id, row.playtime_hours,
+    )
+    if row is None:
+        used_ids = {
+            value.copy_id for value in copy_store.ensure_copies(db, game)
+        }
+        public_id = str(copy_id or f"steam:{item['appid']}")
+        while public_id in used_ids:
+            public_id = f"copy:{__import__('uuid').uuid4().hex}"
+        row = SteamCollectionLink(
+            user_id=game.user_id, steam_id=scope, collection_game_id=game.id,
+            copy_id=public_id, steam_appid=item["appid"],
+            position=len(used_ids), counts_toward_totals=copy_store.next_shared_playtime_flag(
+                db, game.user_id, scope, item["appid"],
+            ),
+        )
+        db.add(row)
+    row.name = item.get("name") or row.name or game.name
+    row.platform, row.format, row.source = "PC", "Digital", "Steam"
+    row.store_url = item.get("store_url") or row.store_url or f"https://store.steampowered.com/app/{item['appid']}/"
+    row.igdb_id = igdb_id or item.get("igdb_id") or row.igdb_id
+    if item.get("playtime_hours") is not None:
+        row.playtime_hours = item["playtime_hours"]
+    row.updated_at = datetime.utcnow()
+    after = (
+        row.name, row.platform, row.format, row.source, row.store_url,
+        row.igdb_id, row.playtime_hours,
+    )
+    db.flush()
+    if len(copy_store.ensure_copies(db, game)) == 1 and game.playtime_hours is None and getattr(game, "playtime_mode", "user") == "user":
         game.playtime_mode = "copies"
-    copies.append(steam_copy(item, igdb_id, copy_id))
-    game.copies = json.dumps(copies)
-    return True
+    copy_store.project_game(db, game)
+    if created or before != after:
+        game.version = (game.version or 1) + 1
+    return created
 
 
-def detach_steam_copy(game, appid):
-    try:
-        copies = json.loads(game.copies or "[]")
-    except (TypeError, ValueError):
-        copies = []
-    kept = [copy for copy in copies if int(copy.get("steam_appid") or 0) != int(appid)]
-    if len(kept) == len(copies):
+def detach_steam_copy(db, game, appid, steam_id=None):
+    query = db.query(SteamCollectionLink).filter_by(
+        user_id=game.user_id, collection_game_id=game.id, steam_appid=int(appid),
+    )
+    if steam_id is not None:
+        query = query.filter_by(steam_id=steam_id)
+    row = query.first()
+    if row is None:
         return False
-    game.copies = json.dumps(kept) if kept else None
+    db.delete(row)
+    db.flush()
+    copy_store.project_game(db, game)
     return True
 
 
 def trash_steam_copy(db, user_id, game, owned_copy):
-    """Create a durable tombstone before removing a linked Steam copy."""
+    """Compatibility entry point for callers that still hold a projected copy dict."""
     appid = int(owned_copy.get("steam_appid") or 0)
     if not appid:
         return None
-    catalog = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_appid=appid).first()
-    row = db.query(SteamCopyTrash).filter_by(user_id=user_id, steam_appid=appid).first()
+    copy_id = str(owned_copy.get("id") or "")
+    row = db.query(SteamCollectionLink).filter_by(
+        user_id=user_id, collection_game_id=game.id, copy_id=copy_id,
+    ).first()
     if row is None:
-        row = SteamCopyTrash(user_id=user_id, steam_appid=appid)
-        db.add(row)
-    row.name = owned_copy.get("name") or (catalog.name if catalog else None) or game.name
-    row.image_url = (catalog.image_url if catalog else None) or game.image_url
-    row.collection_game_id = game.id
-    row.collection_game_name = game.name
-    row.copy_data = json.dumps(owned_copy)
-    row.game_data = json.dumps({
-        key: getattr(game, key) for key in (
-            "name", "description", "comments", "image_url", "status", "playtime_hours",
-            "playtime_mode", "mark", "hype", "completion_date", "publication_year",
-            "release_date", "completion_percentage", "tags", "dlcs", "hidden",
-        )
-    })
-    row.deleted_at = datetime.utcnow()
-    return row
+        row = db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, collection_game_id=game.id, steam_appid=appid,
+        ).first()
+    return copy_store.suppress_copy(db, game, row) if row else None
 
 
 def find_parent_game(collection, parent_name):
@@ -325,39 +344,49 @@ def attach_owned_dlc(parent, item):
     parent.dlcs = json.dumps(dlcs)
 
 
-def upsert_steam_catalog(db, user_id, item):
-    row = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_appid=item["appid"]).first()
+def upsert_steam_catalog(db, user_id, item, steam_id=None, generation=0):
+    scope = steam_id if steam_id is not None else copy_store.steam_scope(db, user_id)
+    row = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope, steam_appid=item["appid"]).first()
     if row is None:
-        row = SteamOwnedGame(user_id=user_id, steam_appid=item["appid"])
+        row = SteamOwnedGame(user_id=user_id, steam_id=scope, steam_appid=item["appid"])
         db.add(row)
     row.name = item.get("name") or row.name or f"Steam app {item['appid']}"
     for key in ("playtime_hours", "image_url", "store_url", "igdb_id", "parent_game_name"):
         if item.get(key) is not None:
             setattr(row, key, item[key])
     row.is_dlc = bool(item.get("is_dlc", row.is_dlc))
+    row.active = True
+    row.last_seen_generation = generation
+    row.last_seen_at = datetime.utcnow()
     row.updated_at = datetime.utcnow()
     return row
 
 
 def reconcile_steam_library(db, user_id, items):
     """Persistently link owned Steam apps while collection fields remain authoritative."""
+    scope = copy_store.adopt_legacy_scope(db, user_id)
+    settings = db.get(DiscoverySettings, user_id)
+    generation = settings.owned_sync_generation if settings else 0
     collection = db.query(Videogame).filter_by(user_id=user_id).all()
     collection_by_id = {game.id: game for game in collection}
+    matchable_collection = [game for game in collection if not game.hidden and not game.merged_into_game_id and not game.is_dlc]
     wanted_by_app = {row.steam_appid: row for row in db.query(WantedGame).filter_by(user_id=user_id, deleted=False).all() if row.steam_appid}
-    links = db.query(SteamCollectionLink).filter_by(user_id=user_id).all()
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_id=scope).filter(
+        SteamCollectionLink.steam_appid.is_not(None)
+    ).all()
     links_by_game = {}
     for link in links:
         links_by_game.setdefault(link.collection_game_id, []).append(link)
     links_by_app = {}
     for link in links:
         links_by_app.setdefault(link.steam_appid, []).append(link)
-    reviews_by_app = {row.steam_appid: row for row in db.query(SteamMatchReview).filter_by(user_id=user_id).all()}
-    catalog = {row.steam_appid: row for row in db.query(SteamOwnedGame).filter_by(user_id=user_id).all()}
+    reviews_by_app = {row.steam_appid: row for row in db.query(SteamMatchReview).filter_by(user_id=user_id, steam_id=scope, match_kind="game").all()}
+    catalog = {row.steam_appid: row for row in db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope).all()}
     trashed_appids = {
-        row.steam_appid for row in db.query(SteamCopyTrash).filter_by(user_id=user_id).all()
+        row.steam_appid for row in db.query(SteamCopyTrash).filter_by(user_id=user_id, steam_id=scope).all()
     }
     for item in items:
-        catalog[item["appid"]] = upsert_steam_catalog(db, user_id, item)
+        catalog[item["appid"]] = upsert_steam_catalog(db, user_id, item, scope, generation)
     db.flush()
     imported = 0
     for item in items:
@@ -368,10 +397,25 @@ def reconcile_steam_library(db, user_id, items):
         app_links = links_by_app.get(appid, [])
         if catalog_row.is_dlc or item.get("is_dlc") or (wanted and wanted.is_dlc):
             parent_name = catalog_row.parent_game_name or item.get("parent_game_name") or (wanted.parent_game_name if wanted else None)
-            parent = find_parent_game(collection, parent_name)
+            parent = find_parent_game(matchable_collection, parent_name)
             if parent:
                 attach_owned_dlc(parent, {**item, "is_dlc": True, "parent_game_name": parent_name,
                                           "igdb_id": catalog_row.igdb_id or item.get("igdb_id")})
+                content_link = db.query(SteamContentLink).filter_by(
+                    user_id=user_id, steam_id=scope, steam_appid=appid,
+                ).first()
+                content_created = content_link is None
+                if content_link is None:
+                    content_link = SteamContentLink(user_id=user_id, steam_id=scope, steam_appid=appid,
+                                                    parent_game_id=parent.id, name=item["name"])
+                    db.add(content_link)
+                content_link.parent_game_id, content_link.name = parent.id, item["name"]
+                content_link.igdb_id, content_link.updated_at = catalog_row.igdb_id, datetime.utcnow()
+                if content_created:
+                    copy_store.record_audit(
+                        db, user_id, "dlc_auto_linked", steam_id=scope,
+                        steam_appid=appid, game_id=parent.id,
+                    )
                 if wanted:
                     wanted.status, wanted.collection_game_id = "Acquired", parent.id
                     wanted.steam_wishlist_missing, wanted.updated_at = False, datetime.utcnow()
@@ -386,7 +430,7 @@ def reconcile_steam_library(db, user_id, items):
         if app_links:
             for link in app_links:
                 game = collection_by_id.get(link.collection_game_id)
-                if game and attach_steam_copy(game, item, link.igdb_id or catalog_row.igdb_id, link.copy_id):
+                if game and attach_steam_copy(db, game, item, link.igdb_id or catalog_row.igdb_id, link.copy_id, scope):
                     imported += 1
             if wanted and app_links:
                 wanted.status, wanted.collection_game_id = "Acquired", app_links[0].collection_game_id
@@ -398,26 +442,37 @@ def reconcile_steam_library(db, user_id, items):
                 db.delete(review)
             continue
         if catalog_row.duplicate_of_appid:
-            continue
+            if links_by_app.get(catalog_row.duplicate_of_appid):
+                continue
+            # A canonical copy may have been removed or moved. Do not let an old
+            # duplicate marker make this entitlement disappear permanently.
+            catalog_row.duplicate_of_appid = None
         link = None
         game = None
         if game is None:
-            game = next((row for row in collection if _copy_has_steam_app(row, appid)), None)
+            game = next((row for row in matchable_collection if _copy_has_steam_app(row, appid)), None)
         if game is None and wanted and wanted.collection_game_id:
             game = collection_by_id.get(wanted.collection_game_id)
         target_igdb_id = ((wanted.igdb_id if wanted else None) or item.get("igdb_id")
                           or catalog_row.igdb_id)
         if game is None and target_igdb_id:
-            game = next((row for row in collection if _copy_has_igdb_game(row, target_igdb_id)), None)
+            igdb_candidates = [
+                row for row in matchable_collection
+                if row.igdb_id == target_igdb_id or _copy_has_igdb_game(row, target_igdb_id)
+            ]
+            if len(igdb_candidates) == 1:
+                game = igdb_candidates[0]
         if game is None:
             title_keys = {_collection_title_key(item["name"])}
             if wanted:
                 title_keys.add(_collection_title_key(wanted.name))
             title_keys.discard("")
-            game = next((row for row in collection if _collection_title_key(row.name) in title_keys), None)
+            exact_candidates = [row for row in matchable_collection if _collection_title_key(row.name) in title_keys]
+            if len(exact_candidates) == 1:
+                game = exact_candidates[0]
         if game is None:
             review = reviews_by_app.get(appid)
-            matches, automatic = _collection_title_matches(collection, [item["name"], wanted.name if wanted else ""])
+            matches, automatic = _collection_title_matches(matchable_collection, [item["name"], wanted.name if wanted else ""])
             try:
                 rejected = set(json.loads(review.rejected_candidate_ids or "[]")) if review else set()
             except (TypeError, ValueError):
@@ -427,9 +482,10 @@ def reconcile_steam_library(db, user_id, items):
                 game = matches[0][0]
                 # The automatic identity came from Steam, so Steam supplies its canonical title.
                 game.name = item["name"]
+                game.version = (game.version or 1) + 1
             elif matches:
                 if review is None:
-                    review = SteamMatchReview(user_id=user_id, steam_appid=appid)
+                    review = SteamMatchReview(user_id=user_id, steam_id=scope, steam_appid=appid, match_kind="game")
                     db.add(review)
                     reviews_by_app[appid] = review
                 candidate, confidence = matches[0]
@@ -453,14 +509,19 @@ def reconcile_steam_library(db, user_id, items):
             primary = next((row for row in existing_links if row.steam_appid != appid), None)
             if primary:
                 catalog_row.duplicate_of_appid = primary.steam_appid
-                if attach_steam_copy(game, item, target_igdb_id):
+                if attach_steam_copy(db, game, item, target_igdb_id, steam_id=scope):
                     imported += 1
-                copy_id = steam_copy_id(game, appid)
-                duplicate_link = SteamCollectionLink(
-                    user_id=user_id, steam_appid=appid, collection_game_id=game.id, copy_id=copy_id,
-                    igdb_id=target_igdb_id, created_collection_game=False, user_selected=False,
+                copy_id = steam_copy_id(db, game, appid, scope)
+                duplicate_link = db.query(SteamCollectionLink).filter_by(
+                    user_id=user_id, steam_id=scope, collection_game_id=game.id, copy_id=copy_id,
+                ).one()
+                duplicate_link.igdb_id = target_igdb_id
+                duplicate_link.created_collection_game = False
+                duplicate_link.user_selected = False
+                copy_store.record_audit(
+                    db, user_id, "duplicate_copy_auto_linked", steam_id=scope,
+                    steam_appid=appid, game_id=game.id, copy_id=copy_id,
                 )
-                db.add(duplicate_link)
                 links_by_game.setdefault(game.id, []).append(duplicate_link)
                 links_by_app.setdefault(appid, []).append(duplicate_link)
                 if wanted:
@@ -486,15 +547,19 @@ def reconcile_steam_library(db, user_id, items):
             created_collection_game = True
             collection.append(game)
             collection_by_id[game.id] = game
-        if attach_steam_copy(game, item, target_igdb_id):
+        if attach_steam_copy(db, game, item, target_igdb_id, steam_id=scope):
             imported += 1
-        copy_id = steam_copy_id(game, appid)
-        link = SteamCollectionLink(
-            user_id=user_id, steam_appid=appid, collection_game_id=game.id,
-            copy_id=copy_id, igdb_id=target_igdb_id, created_collection_game=created_collection_game,
-            user_selected=False,
+        copy_id = steam_copy_id(db, game, appid, scope)
+        link = db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, steam_id=scope, collection_game_id=game.id, copy_id=copy_id,
+        ).one()
+        link.igdb_id = target_igdb_id
+        link.created_collection_game = created_collection_game
+        link.user_selected = False
+        copy_store.record_audit(
+            db, user_id, "collection_game_created" if created_collection_game else "copy_auto_linked",
+            steam_id=scope, steam_appid=appid, game_id=game.id, copy_id=copy_id,
         )
-        db.add(link)
         links_by_game.setdefault(game.id, []).append(link)
         links_by_app.setdefault(appid, []).append(link)
         if wanted:
@@ -511,20 +576,22 @@ def reconcile_steam_library(db, user_id, items):
         for link in links_by_app.get(duplicate.duplicate_of_appid, []):
             game = collection_by_id.get(link.collection_game_id)
             if game:
-                if attach_steam_copy(game, item, duplicate.igdb_id):
+                if attach_steam_copy(db, game, item, duplicate.igdb_id, steam_id=scope):
                     imported += 1
-                copy_id = steam_copy_id(game, item["appid"])
+                copy_id = steam_copy_id(db, game, item["appid"], scope)
                 if not any(row.collection_game_id == game.id for row in links_by_app.get(item["appid"], [])):
-                    row = SteamCollectionLink(user_id=user_id, steam_appid=item["appid"],
-                                              collection_game_id=game.id, copy_id=copy_id,
-                                              igdb_id=duplicate.igdb_id)
-                    db.add(row)
+                    row = db.query(SteamCollectionLink).filter_by(
+                        user_id=user_id, steam_id=scope, collection_game_id=game.id, copy_id=copy_id,
+                    ).one()
+                    row.igdb_id = duplicate.igdb_id
                     links_by_app.setdefault(item["appid"], []).append(row)
     return imported
 
 
 def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_id):
-    review = db.query(SteamMatchReview).filter_by(id=review_id, user_id=user_id).first()
+    review = db.query(SteamMatchReview).filter_by(
+        id=review_id, user_id=user_id, steam_id=copy_store.steam_scope(db, user_id),
+    ).first()
     if review is None:
         raise HTTPException(404, "Steam match review not found.")
     try:
@@ -539,6 +606,37 @@ def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_
         candidate = db.query(Videogame).filter_by(id=candidate_game_id, user_id=user_id).first()
         if decision == "same" and candidate is None:
             raise HTTPException(409, "The suggested collection game no longer exists. Run the sync again.")
+    if review.match_kind == "dlc_parent":
+        if decision == "same" and candidate is not None:
+            attach_owned_dlc(candidate, item)
+            link = db.query(SteamContentLink).filter_by(
+                user_id=user_id, steam_id=review.steam_id, steam_appid=review.steam_appid,
+            ).first()
+            if link is None:
+                link = SteamContentLink(
+                    user_id=user_id, steam_id=review.steam_id, steam_appid=review.steam_appid,
+                    parent_game_id=candidate.id, name=review.steam_name,
+                )
+                db.add(link)
+            link.parent_game_id, link.name = candidate.id, review.steam_name
+            link.igdb_id, link.user_selected = item.get("igdb_id"), True
+            copy_store.record_audit(
+                db, user_id, "dlc_parent_selected", steam_id=review.steam_id,
+                steam_appid=review.steam_appid, game_id=candidate.id,
+            )
+        else:
+            suppression = SteamCopyTrash(
+                user_id=user_id, steam_id=review.steam_id, steam_appid=review.steam_appid,
+                collection_game_id=0, copy_id="", kind="dlc", name=review.steam_name,
+                collection_game_name=None, copy_data=json.dumps(item), game_data=None,
+            )
+            db.add(suppression)
+            copy_store.record_audit(
+                db, user_id, "dlc_suppressed", steam_id=review.steam_id,
+                steam_appid=review.steam_appid, details={"reason": "no_parent_selected"},
+            )
+        db.delete(review)
+        return {"resolved": True, "collection_game_id": candidate.id if candidate else None, "remaining_candidates": 0}
     if decision == "different":
         try:
             rejected = set(json.loads(review.rejected_candidate_ids or "[]"))
@@ -565,28 +663,36 @@ def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_
         # A confirmed identity uses Steam's canonical title while retaining every
         # other user-owned field on the collection record.
         candidate.name = review.steam_name
-    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, collection_game_id=candidate.id).all()
+    links = db.query(SteamCollectionLink).filter_by(
+        user_id=user_id, steam_id=review.steam_id, collection_game_id=candidate.id,
+    ).filter(SteamCollectionLink.steam_appid.is_not(None)).all()
     link = next((row for row in links if row.steam_appid == review.steam_appid), None)
     canonical = next((row for row in links if row.steam_appid != review.steam_appid), None)
     if decision == "same" and canonical is not None:
-        catalog = upsert_steam_catalog(db, user_id, item)
+        catalog = upsert_steam_catalog(db, user_id, item, review.steam_id)
         catalog.duplicate_of_appid = canonical.steam_appid
-        attach_steam_copy(candidate, item, item.get("igdb_id"))
-        db.add(SteamCollectionLink(user_id=user_id, steam_appid=review.steam_appid,
-                                   collection_game_id=candidate.id,
-                                   copy_id=steam_copy_id(candidate, review.steam_appid),
-                                   igdb_id=item.get("igdb_id"), user_selected=True))
+        attach_steam_copy(db, candidate, item, item.get("igdb_id"), steam_id=review.steam_id)
+        link = db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, steam_id=review.steam_id, collection_game_id=candidate.id,
+            steam_appid=review.steam_appid,
+        ).one()
+        link.user_selected = True
     elif link is None:
-        attach_steam_copy(candidate, item, item.get("igdb_id"))
-        db.add(SteamCollectionLink(
-            user_id=user_id, steam_appid=review.steam_appid,
-            collection_game_id=candidate.id, copy_id=steam_copy_id(candidate, review.steam_appid),
-            igdb_id=item.get("igdb_id"),
-            created_collection_game=decision in ("different", "none"), user_selected=True,
-        ))
+        attach_steam_copy(db, candidate, item, item.get("igdb_id"), steam_id=review.steam_id)
+        link = db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, steam_id=review.steam_id, collection_game_id=candidate.id,
+            steam_appid=review.steam_appid,
+        ).one()
+        link.created_collection_game = decision in ("different", "none")
+        link.user_selected = True
     else:
         link.user_selected = True
     db.delete(review)
+    copy_store.record_audit(
+        db, user_id, "match_resolved", steam_id=review.steam_id,
+        steam_appid=review.steam_appid, game_id=candidate.id,
+        details={"decision": decision},
+    )
     db.flush()
     reconcile_steam_library(db, user_id, [item])
     return {"resolved": True, "collection_game_id": candidate.id, "remaining_candidates": 0}
@@ -594,29 +700,39 @@ def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_
 
 def remove_steam_imports(db, user_id):
     """Remove synced Steam data while retaining local records and non-Steam copies."""
-    links = db.query(SteamCollectionLink).filter_by(user_id=user_id).all()
+    scope = copy_store.adopt_legacy_scope(db, user_id)
+    for game in db.query(Videogame).filter_by(user_id=user_id).all():
+        copy_store.ensure_copies(db, game)
+    db.flush()
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_id=scope).filter(
+        SteamCollectionLink.steam_appid.is_not(None)
+    ).all()
     linked_appids = {link.steam_appid for link in links}
     created_game_ids = {link.collection_game_id for link in links if link.created_collection_game}
     copies_removed = 0
     games_removed = 0
 
+    content_links = db.query(SteamContentLink).filter_by(user_id=user_id, steam_id=scope).all()
+    content_appids_by_game = {}
+    for content in content_links:
+        content_appids_by_game.setdefault(content.parent_game_id, set()).add(content.steam_appid)
+
     games = db.query(Videogame).filter_by(user_id=user_id).all()
     games_by_id = {game.id: game for game in games}
+    for link in links:
+        db.delete(link)
+        copies_removed += 1
+    db.flush()
     for game in games:
-        try:
-            copies = json.loads(game.copies or "[]")
-        except (TypeError, ValueError):
-            copies = []
-        kept = []
-        for copy in copies:
-            appid = copy.get("steam_appid")
-            is_steam = bool(appid) or normalized(copy.get("source")) == "steam"
-            if is_steam:
-                copies_removed += 1
-            else:
-                kept.append(copy)
-        if len(kept) != len(copies):
-            game.copies = json.dumps(kept) if kept else None
+        copy_store.project_game(db, game)
+        removed_content = content_appids_by_game.get(game.id, set())
+        if removed_content:
+            try:
+                dlcs = json.loads(game.dlcs or "[]")
+            except (TypeError, ValueError):
+                dlcs = []
+            dlcs = [row for row in dlcs if int(row.get("steam_appid") or 0) not in removed_content]
+            game.dlcs = json.dumps(dlcs) if dlcs else None
 
     wanted_removed = 0
     for wanted in db.query(WantedGame).filter_by(user_id=user_id).all():
@@ -629,9 +745,10 @@ def remove_steam_imports(db, user_id):
             if wanted.store_url and "steampowered.com" in wanted.store_url.casefold():
                 wanted.store_url = None
 
-    db.query(SteamMatchReview).filter_by(user_id=user_id).delete(synchronize_session=False)
-    db.query(SteamCollectionLink).filter_by(user_id=user_id).delete(synchronize_session=False)
-    db.query(SteamOwnedGame).filter_by(user_id=user_id).delete(synchronize_session=False)
+    db.query(SteamMatchReview).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
+    db.query(SteamContentLink).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
+    db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
+    db.query(SteamCopyTrash).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
     db.flush()
 
     for game_id in created_game_ids:
@@ -643,6 +760,13 @@ def remove_steam_imports(db, user_id):
         except (TypeError, ValueError):
             remaining = []
         if remaining:
+            continue
+        user_data = any((
+            game.user_modified_at, game.comments, game.mark is not None, game.hype is not None,
+            game.tags, game.playtime_hours is not None, game.description,
+        ))
+        if user_data:
+            game.hidden = False
             continue
         db.query(WantedGame).filter_by(user_id=user_id, collection_game_id=game.id).update(
             {"collection_game_id": None, "status": "Wanted"}, synchronize_session=False
@@ -660,6 +784,9 @@ def remove_steam_imports(db, user_id):
         settings.last_import_count = 0
         settings.last_owned_import_count = 0
         settings.last_igdb_match_count = 0
+    copy_store.record_audit(db, user_id, "steam_unsynced", steam_id=scope, details={
+        "copies_removed": copies_removed, "games_removed": games_removed, "wanted_removed": wanted_removed,
+    })
     return {
         "collection_games_removed": games_removed,
         "steam_copies_removed": copies_removed,
@@ -683,12 +810,57 @@ def _igdb_match_data(game):
 
 def nest_known_steam_dlcs(db, user_id):
     """Move identified Steam expansions under their parent and suppress legacy cards."""
+    scope = copy_store.steam_scope(db, user_id)
     collection = db.query(Videogame).filter_by(user_id=user_id).all()
+    matchable = [game for game in collection if not game.hidden and not game.is_dlc and not game.merged_into_game_id]
     by_id = {game.id: game for game in collection}
     moved = 0
-    for catalog in db.query(SteamOwnedGame).filter_by(user_id=user_id, is_dlc=True).all():
-        parent = find_parent_game(collection, catalog.parent_game_name)
+    for catalog in db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope, is_dlc=True, active=True).all():
+        if db.query(SteamCopyTrash).filter_by(
+            user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid, kind="dlc",
+        ).first():
+            continue
+        standalone_links = db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+        ).all()
+        # Once IGDB identifies an expansion, it must leave the top-level
+        # collection even when its parent still needs a user decision.
+        for link in standalone_links:
+            standalone = by_id.get(link.collection_game_id)
+            if standalone:
+                standalone.is_dlc = True
+                standalone.parent_game_name = catalog.parent_game_name
+                standalone.hidden = True
+        standalone_ids = {link.collection_game_id for link in standalone_links}
+        parent_candidates = [game for game in matchable if game.id not in standalone_ids]
+        parent = find_parent_game(parent_candidates, catalog.parent_game_name)
         if not parent:
+            matches, _automatic = _collection_title_matches(parent_candidates, [catalog.parent_game_name or catalog.name])
+            if matches:
+                review = db.query(SteamMatchReview).filter_by(
+                    user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+                    match_kind="dlc_parent",
+                ).first()
+                if review is None:
+                    review = SteamMatchReview(
+                        user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+                        match_kind="dlc_parent",
+                    )
+                    db.add(review)
+                review.steam_name = catalog.name
+                review.candidate_game_id, review.candidate_name = matches[0][0].id, matches[0][0].name
+                review.confidence = round(matches[0][1], 4)
+                review.candidates = json.dumps([
+                    {"game_id": game.id, "name": game.name, "confidence": round(score, 4)}
+                    for game, score in matches
+                ])
+                review.steam_data = json.dumps({
+                    "appid": catalog.steam_appid, "name": catalog.name,
+                    "playtime_hours": catalog.playtime_hours, "image_url": catalog.image_url,
+                    "store_url": catalog.store_url, "igdb_id": catalog.igdb_id,
+                    "is_dlc": True, "parent_game_name": catalog.parent_game_name,
+                })
+                review.updated_at = datetime.utcnow()
             continue
         item = {
             "appid": catalog.steam_appid, "name": catalog.name,
@@ -696,14 +868,31 @@ def nest_known_steam_dlcs(db, user_id):
             "store_url": catalog.store_url, "igdb_id": catalog.igdb_id,
         }
         attach_owned_dlc(parent, item)
+        content_link = db.query(SteamContentLink).filter_by(
+            user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+        ).first()
+        if content_link is None:
+            content_link = SteamContentLink(
+                user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+                parent_game_id=parent.id, name=catalog.name,
+            )
+            db.add(content_link)
+        content_link.parent_game_id, content_link.name = parent.id, catalog.name
+        content_link.igdb_id, content_link.updated_at = catalog.igdb_id, datetime.utcnow()
         for wanted in db.query(WantedGame).filter_by(user_id=user_id, steam_appid=catalog.steam_appid).all():
             wanted.status, wanted.collection_game_id = "Acquired", parent.id
             wanted.steam_wishlist_missing, wanted.updated_at = False, datetime.utcnow()
-        for link in db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_appid=catalog.steam_appid).all():
+        for link in standalone_links:
             old = by_id.get(link.collection_game_id)
             if old and old.id != parent.id:
                 old.is_dlc, old.parent_game_name, old.hidden = True, catalog.parent_game_name, True
             db.delete(link)
+            if old:
+                db.flush()
+                copy_store.project_game(db, old)
+        db.query(SteamMatchReview).filter_by(
+            user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid, match_kind="dlc_parent",
+        ).delete(synchronize_session=False)
         moved += 1
     return moved
 
@@ -739,22 +928,20 @@ def enrich_steam_with_igdb(db, client, user_id):
     if not client_id or not os.getenv("TWITCH_SECRET", "").strip():
         return 0, None
 
+    scope = copy_store.steam_scope(db, user_id)
     wanted_rows = db.query(WantedGame).filter_by(user_id=user_id, deleted=False).filter(WantedGame.steam_appid.is_not(None)).all()
     collection_rows = db.query(Videogame).filter_by(user_id=user_id).all()
-    catalog_rows = db.query(SteamOwnedGame).filter_by(user_id=user_id).all()
+    catalog_rows = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope, active=True).all()
     targets = {}
     for row in wanted_rows:
         if row.igdb_id is None:
             targets.setdefault(row.steam_appid, {"name": row.name, "is_dlc": row.is_dlc})
     for row in collection_rows:
-        try:
-            copies = json.loads(row.copies or "[]")
-        except (TypeError, ValueError):
-            continue
-        for copy in copies:
-            appid = copy.get("steam_appid")
-            if appid and not copy.get("igdb_id"):
-                targets.setdefault(int(appid), {"name": row.name, "is_dlc": row.is_dlc})
+        for owned_copy in db.query(SteamCollectionLink).filter_by(
+            user_id=user_id, steam_id=scope, collection_game_id=row.id,
+        ).filter(SteamCollectionLink.steam_appid.is_not(None)).all():
+            if not owned_copy.igdb_id:
+                targets.setdefault(int(owned_copy.steam_appid), {"name": row.name, "is_dlc": row.is_dlc})
     for row in catalog_rows:
         if row.igdb_id is None:
             targets.setdefault(row.steam_appid, {"name": row.name, "is_dlc": row.is_dlc})
@@ -845,29 +1032,29 @@ def enrich_steam_with_igdb(db, client, user_id):
                 catalog.image_url = catalog.image_url or match.get("image_url")
                 catalog.updated_at = datetime.utcnow()
         for row in collection_rows:
-            try:
-                copies = json.loads(row.copies or "[]")
-            except (TypeError, ValueError):
-                continue
             changed = False
-            for copy in copies:
-                try:
-                    appid = int(copy.get("steam_appid") or 0)
-                except (TypeError, ValueError):
-                    continue
-                match = matches.get(appid)
-                if match and not copy.get("igdb_id"):
-                    copy["igdb_id"] = match["igdb_id"]
+            owned_rows = db.query(SteamCollectionLink).filter_by(
+                user_id=user_id, steam_id=scope, collection_game_id=row.id,
+            ).filter(SteamCollectionLink.steam_appid.is_not(None)).all()
+            for owned_copy in owned_rows:
+                match = matches.get(owned_copy.steam_appid)
+                if match and not owned_copy.igdb_id:
+                    owned_copy.igdb_id = match["igdb_id"]
                     changed = True
-                    matched_appids.add(appid)
+                    matched_appids.add(owned_copy.steam_appid)
+                    row.igdb_id = row.igdb_id or match["igdb_id"]
                     for key in ("description", "image_url", "release_date", "publication_year", "parent_game_name"):
                         if getattr(row, key) in (None, "") and match.get(key) not in (None, ""):
                             setattr(row, key, match[key])
                     row.is_dlc = row.is_dlc or match["is_dlc"]
             if changed:
-                row.copies = json.dumps(copies)
+                copy_store.project_game(db, row, db.query(SteamCollectionLink).filter_by(
+                    user_id=user_id, collection_game_id=row.id,
+                ).order_by(SteamCollectionLink.position, SteamCollectionLink.id).all())
         if matches:
-            for link in db.query(SteamCollectionLink).filter_by(user_id=user_id).all():
+            for link in db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_id=scope).filter(
+                SteamCollectionLink.steam_appid.is_not(None)
+            ).all():
                 match = matches.get(link.steam_appid)
                 if match and link.igdb_id is None:
                     link.igdb_id = match["igdb_id"]
@@ -945,7 +1132,7 @@ def sync_steam(user_id, factory=SessionLocal):
             owned_items, owned_error = [], None
             if settings.sync_collection:
                 try:
-                    owned_items = steam_owned_games(client, steam_id, settings.steam_api_key)
+                    owned_items = steam_owned_games(client, steam_id, reveal_secret(settings.steam_api_key))
                 except (httpx.HTTPError, ValueError, KeyError) as exc:
                     owned_error = str(exc)[:500]
             wanted_rows = db.query(WantedGame).filter_by(user_id=user_id).all()
@@ -976,14 +1163,24 @@ def sync_steam(user_id, factory=SessionLocal):
                     # Attach the Steam identity without overwriting ANY local field.
                     if duplicate.steam_appid is None:
                         duplicate.steam_appid = appid
+                    duplicate.steam_id = steam_id
                     duplicate.steam_wishlist_missing = False
                 elif normalized(fields["name"]) not in owned_names:
-                    db.add(WantedGame(user_id=user_id, source="steam", **fields))
+                    db.add(WantedGame(user_id=user_id, steam_id=steam_id, source="steam", **fields))
                     count += 1
                 # Release SQLite's write lock between network requests. Completed
                 # rows are durable even if the process stops during a large import.
                 db.commit()
-            owned_count = reconcile_steam_library(db, user_id, owned_items) if settings.sync_collection else 0
+            if settings.sync_collection and owned_error is None:
+                settings.owned_sync_generation = (settings.owned_sync_generation or 0) + 1
+                db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=steam_id).update(
+                    {"active": False}, synchronize_session=False,
+                )
+                db.flush()
+            owned_count = reconcile_steam_library(db, user_id, owned_items) if settings.sync_collection and owned_error is None else 0
+            # Keep the owned snapshot transaction short. IGDB enrichment performs
+            # network I/O and must not hold SQLite's writer lock while waiting.
+            db.commit()
             igdb_count, igdb_error = enrich_steam_with_igdb(db, client, user_id)
             if settings.sync_collection:
                 nest_known_steam_dlcs(db, user_id)

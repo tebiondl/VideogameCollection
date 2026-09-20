@@ -8,13 +8,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from ..database import get_db
 from ..models import User, Videogame
-from ..discovery_models import WantedGame, PhysicalRelease, CopyOption, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame
+from ..discovery_models import (
+    WantedGame, PhysicalRelease, CopyOption, SteamCollectionLink, SteamCopyTrash,
+    SteamMatchReview, SteamOwnedGame, SteamContentLink, GameMergeRedirect, SteamAuditLog,
+)
 from ..discovery_schemas import (
     WantedInput, WantedResponse, AcquireInput, BatchInput, SettingsInput, SettingsResponse,
     CopyOptionsInput, CopyOptionsResponse, ReleaseInput, SteamMatchReviewResponse,
     SteamMatchDecision, SteamGameLinkInput, CollectionDuplicateInput,
 )
 from ..services import discovery as service
+from ..services import copy_store
+from ..services.secrets import protect_secret
 from .auth_router import get_current_user
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -61,6 +66,8 @@ def list_games(db: Session = Depends(get_db), user: User = Depends(get_current_u
 @router.post("/games", response_model=WantedResponse, status_code=201)
 def create_game(payload: WantedInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     fields = payload.model_dump()
+    if fields.get("steam_appid"):
+        fields["steam_id"] = copy_store.steam_scope(db, user.id)
     duplicate = service.find_duplicate(db, user.id, fields)
     if duplicate:
         if duplicate.deleted:
@@ -83,6 +90,8 @@ def import_games(payload: BatchInput, db: Session = Depends(get_db), user: User 
     added, skipped = 0, 0
     for item in payload.games:
         fields = item.model_dump()
+        if fields.get("steam_appid"):
+            fields["steam_id"] = copy_store.steam_scope(db, user.id)
         if service.find_duplicate(db, user.id, fields):
             skipped += 1
             continue
@@ -100,6 +109,7 @@ def edit_game(game_id: int, payload: WantedInput, db: Session = Depends(get_db),
         raise HTTPException(409, "Another entry already uses this identity or game/platform pair.")
     for key, value in payload.model_dump().items():
         setattr(game, key, value)
+    game.steam_id = copy_store.steam_scope(db, user.id) if game.steam_appid else None
     game.updated_at = datetime.utcnow()
     commit(db)
     return game
@@ -148,13 +158,33 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
             "playtime_hours": payload.playtime_hours, "image_url": payload.image_url,
         })
         parent.dlcs = json.dumps(dlcs)
+        if payload.steam_appid:
+            scope = copy_store.steam_scope(db, user.id)
+            content = db.query(SteamContentLink).filter_by(
+                user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid,
+            ).first()
+            if content is None:
+                content = SteamContentLink(
+                    user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid,
+                    parent_game_id=parent.id, name=payload.name,
+                )
+                db.add(content)
+            content.parent_game_id, content.name = parent.id, payload.name
+            content.igdb_id, content.user_selected = payload.igdb_id, True
+            db.query(SteamCopyTrash).filter_by(
+                user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, kind="dlc",
+            ).delete(synchronize_session=False)
+            copy_store.record_audit(
+                db, user.id, "dlc_parent_selected", steam_id=scope,
+                steam_appid=payload.steam_appid, game_id=parent.id,
+            )
         game.status, game.collection_game_id = "Acquired", parent.id
         game.steam_wishlist_missing, game.updated_at = False, datetime.utcnow()
         commit(db)
         return {"collection_game_id": parent.id}
     existing = db.query(Videogame).filter_by(id=game.collection_game_id, user_id=user.id).first() if game.collection_game_id else None
     if existing is None:
-        existing = next((row for row in db.query(Videogame).filter_by(user_id=user.id).all() if service.normalized(row.name) == service.normalized(payload.name)), None)
+        existing = next((row for row in db.query(Videogame).filter_by(user_id=user.id, hidden=False, is_dlc=False).all() if not row.merged_into_game_id and service.normalized(row.name) == service.normalized(payload.name)), None)
     steam_copy = service.normalized(payload.source) == "steam" and service.platform_key(payload.platform) in ("pc", "steam deck")
     settings = service.get_settings(db, user.id)
     if game.steam_appid and settings.sync_enabled and settings.sync_collection and steam_copy:
@@ -177,7 +207,8 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
         "price": payload.price,
         "currency": payload.currency,
     }
-    steam_catalog = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_appid=payload.steam_appid).first() if steam_copy and payload.steam_appid else None
+    scope = copy_store.steam_scope(db, user.id)
+    steam_catalog = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, active=True).first() if steam_copy and payload.steam_appid else None
     if steam_catalog:
         copy.update({"name": steam_catalog.name, "source": "Steam", "playtime_hours": steam_catalog.playtime_hours})
     if existing is None:
@@ -192,12 +223,32 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
             publication_year=payload.publication_year, release_date=payload.release_date,
             completion_percentage=payload.completion_percentage, tags=", ".join(tags) or None,
             dlcs=payload.dlcs, is_dlc=payload.is_dlc, parent_game_name=payload.parent_game_name,
-            copies=json.dumps([copy]),
+            igdb_id=payload.igdb_id, user_modified_at=datetime.utcnow(),
         )
         db.add(existing)
         db.flush()
+    if steam_copy and payload.steam_appid:
+        service.attach_steam_copy(db, existing, {
+            "appid": payload.steam_appid,
+            "name": steam_catalog.name if steam_catalog else payload.name,
+            "playtime_hours": steam_catalog.playtime_hours if steam_catalog else payload.playtime_hours,
+            "store_url": steam_catalog.store_url if steam_catalog else payload.store_url,
+            "igdb_id": payload.igdb_id,
+        }, payload.igdb_id, steam_id=scope)
+        owned_copy = db.query(SteamCollectionLink).filter_by(
+            user_id=user.id, steam_id=scope, collection_game_id=existing.id,
+            steam_appid=payload.steam_appid,
+        ).one()
+        owned_copy.user_selected = True
+        db.query(SteamCopyTrash).filter_by(
+            user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, kind="copy",
+        ).delete(synchronize_session=False)
+        copy_store.record_audit(
+            db, user.id, "copy_linked", steam_id=scope, steam_appid=payload.steam_appid,
+            game_id=existing.id, copy_id=owned_copy.copy_id, details={"source": "wanted_acquisition"},
+        )
     else:
-        copies = json.loads(existing.copies or "[]")
+        copies = copy_store.project_game(db, existing, copy_store.ensure_copies(db, existing))
         identity = (copy["platform"].casefold(), copy["format"], copy["steam_appid"], copy["store_url"])
         matched_copy = next((item for item in copies if (
             str(item.get("platform", "")).casefold(), item.get("format", "Any"),
@@ -205,31 +256,14 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
         ) == identity), None)
         if matched_copy is None:
             copies.append(copy)
-            existing.copies = json.dumps(copies)
+            copy_store.replace_from_payload(db, existing, copies)
         else:
             copy = matched_copy
+    if existing is not None:
         for key in ("description", "comments", "image_url", "publication_year", "release_date", "dlcs", "parent_game_name"):
             if getattr(existing, key, None) in (None, "") and getattr(payload, key, None) not in (None, ""):
                 setattr(existing, key, getattr(payload, key))
         existing.is_dlc = existing.is_dlc or payload.is_dlc
-    if steam_copy and payload.steam_appid:
-        trashed = db.query(SteamCopyTrash).filter_by(user_id=user.id, steam_appid=payload.steam_appid).first()
-        if trashed:
-            db.delete(trashed)
-        link = db.query(SteamCollectionLink).filter_by(
-            user_id=user.id, collection_game_id=existing.id, copy_id=copy["id"]
-        ).first()
-        if link is None:
-            db.add(SteamCollectionLink(
-                user_id=user.id, steam_appid=payload.steam_appid,
-                collection_game_id=existing.id, copy_id=copy["id"],
-                igdb_id=payload.igdb_id, user_selected=True,
-            ))
-        else:
-            link.steam_appid = payload.steam_appid
-            link.user_selected = True
-            if link.igdb_id is None:
-                link.igdb_id = payload.igdb_id
     game.status, game.collection_game_id, game.steam_wishlist_missing, game.updated_at = "Acquired", existing.id, False, datetime.utcnow()
     commit(db)
     return {"collection_game_id": existing.id}
@@ -257,6 +291,7 @@ def save_copy_options(payload: CopyOptionsInput, db: Session = Depends(get_db), 
 @router.put("/settings", response_model=SettingsResponse)
 def save_settings(payload: SettingsInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     settings = service.get_settings(db, user.id)
+    previous_steam_id = settings.steam_id or ""
     steam_id = service.normalize_steam_id(payload.steam_id)
     if payload.sync_enabled and not steam_id:
         raise HTTPException(422, "Connect a Steam profile before enabling sync.")
@@ -276,10 +311,20 @@ def save_settings(payload: SettingsInput, db: Session = Depends(get_db), user: U
     if payload.clear_steam_api_key:
         settings.steam_api_key = None
     elif payload.steam_api_key:
-        settings.steam_api_key = payload.steam_api_key.strip()
+        settings.steam_api_key = protect_secret(payload.steam_api_key.strip())
     if changed:
+        if previous_steam_id:
+            for wanted in db.query(WantedGame).filter_by(user_id=user.id, steam_id=previous_steam_id).all():
+                if service.normalized(wanted.source) == "steam":
+                    wanted.deleted = True
+                wanted.steam_appid = None
+                wanted.steam_id = None
         settings.last_sync_at, settings.sync_error, settings.last_import_count, settings.last_owned_import_count, settings.last_igdb_match_count = None, None, 0, 0, 0
-        db.query(SteamMatchReview).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(SteamMatchReview).filter_by(user_id=user.id, steam_id=steam_id or "").delete(synchronize_session=False)
+        copy_store.record_audit(
+            db, user.id, "steam_account_changed", steam_id=steam_id or "",
+            details={"previous_steam_id": previous_steam_id or None},
+        )
     settings.next_sync_at = (datetime.utcnow() if changed or modes_changed or enabled_now or not settings.last_sync_at else settings.last_sync_at + service.timedelta(hours=settings.sync_hours)) if settings.sync_enabled else None
     commit(db)
     return settings
@@ -310,7 +355,7 @@ def unsync_steam_imports(db: Session = Depends(get_db), user: User = Depends(get
 
 @router.get("/steam/reviews", response_model=list[SteamMatchReviewResponse])
 def steam_match_reviews(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    rows = db.query(SteamMatchReview).filter_by(user_id=user.id).order_by(
+    rows = db.query(SteamMatchReview).filter_by(user_id=user.id, steam_id=copy_store.steam_scope(db, user.id)).order_by(
         SteamMatchReview.confidence.desc(), SteamMatchReview.created_at, SteamMatchReview.id
     ).all()
     return [service.steam_review_response(row) for row in rows]
@@ -333,20 +378,19 @@ def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_
     game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
     if game is None:
         raise HTTPException(404, "Collection game not found.")
-    try:
-        copies = json.loads(game.copies or "[]")
-    except (TypeError, ValueError):
-        copies = []
-    owned_copy = next((copy for copy in copies if str(copy.get("id")) == copy_id), None)
+    copy_store.ensure_copies(db, game)
+    scope = copy_store.adopt_legacy_scope(db, user.id)
+    row_copy = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, collection_game_id=game.id, copy_id=copy_id,
+    ).first()
+    owned_copy = copy_store.copy_dict(db, row_copy) if row_copy else None
     if owned_copy is None:
         raise HTTPException(404, "Save this copy before linking it to Steam.")
-    current = db.query(SteamCollectionLink).filter_by(
-        user_id=user.id, collection_game_id=game.id, copy_id=copy_id
-    ).first()
+    current = row_copy if row_copy and row_copy.steam_appid else None
     linked_counts = dict(db.query(SteamCollectionLink.steam_appid, func.count(SteamCollectionLink.id)).filter_by(
-        user_id=user.id
+        user_id=user.id, steam_id=scope
     ).group_by(SteamCollectionLink.steam_appid).all())
-    rows = db.query(SteamOwnedGame).filter_by(user_id=user.id, is_dlc=False).all()
+    rows = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, is_dlc=False, active=True).all()
     candidates = []
     for row in rows:
         score = service.SequenceMatcher(None, service._collection_title_key(game.name), service._collection_title_key(row.name)).ratio()
@@ -367,37 +411,48 @@ def link_collection_game_to_steam(
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
-    steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_appid=payload.steam_appid).first()
+    if game is not None:
+        copy_store.ensure_copies(db, game)
+    scope = copy_store.adopt_legacy_scope(db, user.id)
+    steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, active=True).first()
     if game is None or steam is None:
         raise HTTPException(404, "The collection or Steam game is no longer available.")
-    try:
-        copies = json.loads(game.copies or "[]")
-    except (TypeError, ValueError):
-        copies = []
-    copy = next((row for row in copies if str(row.get("id")) == copy_id), None)
-    if copy is None:
-        raise HTTPException(404, "Save this copy before linking it to Steam.")
     current = db.query(SteamCollectionLink).filter_by(
-        user_id=user.id, collection_game_id=game.id, copy_id=copy_id
+        user_id=user.id, collection_game_id=game.id, copy_id=copy_id,
     ).first()
-    item = {"appid": steam.steam_appid, "name": steam.name, "playtime_hours": steam.playtime_hours,
-            "image_url": steam.image_url, "store_url": steam.store_url, "igdb_id": steam.igdb_id}
     if current is None:
-        current = SteamCollectionLink(user_id=user.id, collection_game_id=game.id,
-                                      copy_id=copy_id, steam_appid=steam.steam_appid)
-        db.add(current)
-    current.steam_appid, current.igdb_id = steam.steam_appid, steam.igdb_id
+        raise HTTPException(404, "Save this copy before linking it to Steam.")
+    collision = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, steam_id=scope, collection_game_id=game.id,
+        steam_appid=steam.steam_appid,
+    ).filter(SteamCollectionLink.id != current.id).first()
+    if collision:
+        raise HTTPException(409, "This Steam game is already linked to another copy on this collection card.")
+    old_appid, old_scope = current.steam_appid, current.steam_id
+    if old_appid and (old_appid != steam.steam_appid or old_scope != scope):
+        copy_store.suppress_copy(db, game, current, reason="link_changed")
+    has_counted_link = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=steam.steam_appid,
+        counts_toward_totals=True,
+    ).filter(SteamCollectionLink.id != current.id).first()
+    current.steam_id, current.steam_appid, current.igdb_id = scope, steam.steam_appid, steam.igdb_id
     current.user_selected = True
     current.created_collection_game = False
-    steam.duplicate_of_appid = None
-    copy.update({"name": steam.name, "platform": "PC", "format": "Digital", "source": "Steam",
-                 "steam_appid": steam.steam_appid, "igdb_id": steam.igdb_id,
-                 "playtime_hours": steam.playtime_hours,
-                 "store_url": steam.store_url or copy.get("store_url")})
-    trashed = db.query(SteamCopyTrash).filter_by(user_id=user.id, steam_appid=steam.steam_appid).first()
-    if trashed:
-        db.delete(trashed)
-    game.copies = json.dumps(copies)
+    current.name, current.platform, current.format, current.source = steam.name, "PC", "Digital", "Steam"
+    current.playtime_hours, current.store_url = steam.playtime_hours, steam.store_url
+    current.counts_toward_totals = not bool(has_counted_link) or bool(
+        old_appid == steam.steam_appid and old_scope == scope and current.counts_toward_totals
+    )
+    db.query(SteamCopyTrash).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=steam.steam_appid,
+        collection_game_id=game.id, kind="copy",
+    ).delete(synchronize_session=False)
+    copy_store.project_game(db, game)
+    copy_store.record_audit(
+        db, user.id, "copy_link_changed" if old_appid else "copy_linked",
+        steam_id=scope, steam_appid=steam.steam_appid, game_id=game.id, copy_id=copy_id,
+        details={"previous_steam_appid": old_appid},
+    )
     commit(db)
     db.refresh(game)
     return game
@@ -423,7 +478,7 @@ def merge_collection_duplicate(
     merge_fields = (
         "description", "comments", "image_url", "status", "playtime_hours", "playtime_mode",
         "mark", "hype", "completion_date", "publication_year", "release_date",
-        "completion_percentage", "tags", "dlcs",
+        "completion_percentage", "tags", "dlcs", "igdb_id",
     )
     for field in merge_fields:
         default_source = "current" if retained_game.id == current_game.id else "other"
@@ -431,67 +486,89 @@ def merge_collection_duplicate(
         source_game = current_game if source_name == "current" else other_game
         setattr(retained_game, field, getattr(source_game, field))
 
-    try:
-        duplicate_copies = json.loads(duplicate_game.copies or "[]")
-        retained_copies = json.loads(retained_game.copies or "[]")
-    except (TypeError, ValueError):
-        raise HTTPException(409, "One of these games has invalid copy data. Edit and save it before merging.")
-    if not duplicate_copies:
+    duplicate_rows = copy_store.ensure_copies(db, duplicate_game)
+    retained_rows = copy_store.ensure_copies(db, retained_game)
+    if not duplicate_rows:
         raise HTTPException(409, f"{duplicate_game.name} has no copies to merge.")
 
-    retained_appids = {int(copy.get("steam_appid")) for copy in retained_copies if copy.get("steam_appid")}
-    duplicate_appids = {int(copy.get("steam_appid")) for copy in duplicate_copies if copy.get("steam_appid")}
+    retained_appids = {row.steam_appid for row in retained_rows if row.steam_appid}
+    duplicate_appids = {row.steam_appid for row in duplicate_rows if row.steam_appid}
     overlap = retained_appids & duplicate_appids
     if overlap:
         raise HTTPException(409, "Both collection games already contain the same Steam copy.")
 
-    used_ids = {str(copy.get("id")) for copy in retained_copies if copy.get("id")}
+    used_ids = {row.copy_id for row in retained_rows}
     copy_id_map = {}
-    for owned_copy in retained_copies:
-        if not owned_copy.get("name"):
-            owned_copy["name"] = retained_game.name
-    for owned_copy in duplicate_copies:
-        old_id = str(owned_copy.get("id") or f"copy:{uuid4().hex}")
+    for owned_copy in retained_rows:
+        if not owned_copy.name:
+            owned_copy.name = retained_game.name
+    next_position = len(retained_rows)
+    for owned_copy in duplicate_rows:
+        old_id = owned_copy.copy_id
         new_id = old_id
         while new_id in used_ids:
             new_id = f"copy:{uuid4().hex}"
         used_ids.add(new_id)
         copy_id_map[old_id] = new_id
-        owned_copy["id"] = new_id
-        if not owned_copy.get("name"):
-            owned_copy["name"] = duplicate_game.name
-        retained_copies.append(owned_copy)
+        owned_copy.copy_id = new_id
+        owned_copy.collection_game_id = retained_game.id
+        owned_copy.position = next_position
+        next_position += 1
+        if not owned_copy.name:
+            owned_copy.name = duplicate_game.name
+        if owned_copy.steam_appid:
+            owned_copy.created_collection_game = False
+            owned_copy.user_selected = True
 
-    moved_links = db.query(SteamCollectionLink).filter_by(
-        user_id=user.id, collection_game_id=duplicate_game.id
-    ).all()
-    retained_links = db.query(SteamCollectionLink).filter_by(
-        user_id=user.id, collection_game_id=retained_game.id
-    ).all()
-    for link in moved_links:
-        link.collection_game_id = retained_game.id
-        link.copy_id = copy_id_map.get(link.copy_id, link.copy_id)
-        link.created_collection_game = False
-        link.user_selected = True
-
-    all_links = retained_links + moved_links
-    if all_links:
-        primary_appid = retained_links[0].steam_appid if retained_links else moved_links[0].steam_appid
-        for link in all_links:
-            catalog = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_appid=link.steam_appid).first()
+    all_rows = retained_rows + duplicate_rows
+    steam_rows = [row for row in all_rows if row.steam_appid]
+    if steam_rows:
+        available_appids = {row.steam_appid for row in steam_rows}
+        if payload.primary_steam_appid and payload.primary_steam_appid not in available_appids:
+            raise HTTPException(422, "Choose a primary Steam copy that belongs to one of these games.")
+        retained_primary = next((row.steam_appid for row in retained_rows if row.steam_appid), None)
+        primary_appid = payload.primary_steam_appid or retained_primary or min(available_appids)
+        scope = copy_store.steam_scope(db, user.id)
+        for link in steam_rows:
+            catalog = db.query(SteamOwnedGame).filter_by(
+                user_id=user.id, steam_id=link.steam_id or scope, steam_appid=link.steam_appid,
+            ).first()
             if catalog:
                 catalog.duplicate_of_appid = None if link.steam_appid == primary_appid else primary_appid
 
-    retained_game.copies = json.dumps(retained_copies)
+    db.flush()
+    copy_store.project_game(db, retained_game, all_rows)
     retained_game.hidden = False
-    duplicate_game.copies = None
+    copy_store.project_game(db, duplicate_game, [])
     duplicate_game.hidden = True
+    duplicate_game.merged_into_game_id = retained_game.id
+    redirect = db.query(GameMergeRedirect).filter_by(user_id=user.id, merged_game_id=duplicate_game.id).first()
+    if redirect is None:
+        redirect = GameMergeRedirect(
+            user_id=user.id, merged_game_id=duplicate_game.id, retained_game_id=retained_game.id,
+        )
+        db.add(redirect)
+    else:
+        redirect.retained_game_id = retained_game.id
+    for suppression in db.query(SteamCopyTrash).filter_by(
+        user_id=user.id, collection_game_id=duplicate_game.id,
+    ).all():
+        suppression.collection_game_id = retained_game.id
+        suppression.collection_game_name = retained_game.name
+        suppression.copy_id = copy_id_map.get(suppression.copy_id, suppression.copy_id)
+    db.query(SteamContentLink).filter_by(user_id=user.id, parent_game_id=duplicate_game.id).update(
+        {"parent_game_id": retained_game.id}, synchronize_session=False,
+    )
     db.query(WantedGame).filter_by(user_id=user.id, collection_game_id=duplicate_game.id).update(
         {"collection_game_id": retained_game.id}, synchronize_session=False
     )
     for review in db.query(SteamMatchReview).filter_by(user_id=user.id, candidate_game_id=duplicate_game.id).all():
         review.candidate_game_id = retained_game.id
         review.candidate_name = retained_game.name
+    copy_store.record_audit(
+        db, user.id, "games_merged", game_id=retained_game.id,
+        details={"merged_game_id": duplicate_game.id, "primary_steam_appid": payload.primary_steam_appid},
+    )
 
     commit(db)
     db.refresh(retained_game)
@@ -500,29 +577,70 @@ def merge_collection_duplicate(
 
 @router.get("/steam/trash")
 def steam_copy_trash(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    catalog = {row.steam_appid: row for row in db.query(SteamOwnedGame).filter_by(user_id=user.id).all()}
+    scope = copy_store.steam_scope(db, user.id)
+    catalog = {row.steam_appid: row for row in db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope).all()}
     result = []
-    for row in db.query(SteamCopyTrash).filter_by(user_id=user.id).order_by(SteamCopyTrash.deleted_at.desc()).all():
+    for row in db.query(SteamCopyTrash).filter_by(user_id=user.id, steam_id=scope).order_by(SteamCopyTrash.deleted_at.desc()).all():
         steam = catalog.get(row.steam_appid)
         result.append({
             "id": row.id, "steam_appid": row.steam_appid, "name": row.name,
             "image_url": row.image_url or (steam.image_url if steam else None),
             "collection_game_name": row.collection_game_name,
             "playtime_hours": steam.playtime_hours if steam else None,
-            "owned_on_steam": steam is not None, "deleted_at": row.deleted_at,
+            "owned_on_steam": bool(steam and steam.active), "deleted_at": row.deleted_at,
+            "kind": row.kind, "copy_id": row.copy_id,
         })
     return result
 
 
+@router.get("/steam/audit")
+def steam_audit(limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = copy_store.steam_scope(db, user.id)
+    rows = db.query(SteamAuditLog).filter_by(user_id=user.id, steam_id=scope).order_by(
+        SteamAuditLog.created_at.desc(), SteamAuditLog.id.desc(),
+    ).limit(limit).all()
+    return [{
+        "id": row.id, "action": row.action, "steam_appid": row.steam_appid,
+        "collection_game_id": row.collection_game_id, "copy_id": row.copy_id,
+        "details": json.loads(row.details) if row.details else None,
+        "created_at": row.created_at,
+    } for row in rows]
+
+
+@router.get("/steam/integrity")
+def steam_integrity(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return copy_store.integrity_report(db, user.id)
+
+
+@router.post("/steam/integrity/repair")
+def repair_steam_integrity(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    result = copy_store.integrity_report(db, user.id, repair=True)
+    copy_store.record_audit(db, user.id, "integrity_repaired", details=result)
+    commit(db)
+    return copy_store.integrity_report(db, user.id)
+
+
 @router.post("/steam/trash/{trash_id}/restore")
 def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    row = db.query(SteamCopyTrash).filter_by(id=trash_id, user_id=user.id).first()
+    row = db.query(SteamCopyTrash).filter_by(
+        id=trash_id, user_id=user.id, steam_id=copy_store.steam_scope(db, user.id),
+    ).first()
     if row is None:
         raise HTTPException(404, "Trashed Steam copy not found.")
-    steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_appid=row.steam_appid).first()
+    steam = db.query(SteamOwnedGame).filter_by(
+        user_id=user.id, steam_id=row.steam_id, steam_appid=row.steam_appid, active=True,
+    ).first()
     if steam is None:
         raise HTTPException(409, "This game is not in the latest Steam library snapshot. Run a sync before restoring it.")
-    game = db.query(Videogame).filter_by(id=row.collection_game_id, user_id=user.id, is_dlc=False).first()
+    target_game_id = copy_store.resolve_game_id(db, user.id, row.collection_game_id)
+    game = db.query(Videogame).filter_by(id=target_game_id, user_id=user.id, is_dlc=False).first()
+    if row.kind == "dlc" and game is None:
+        game = service.find_parent_game(
+            db.query(Videogame).filter_by(user_id=user.id, is_dlc=False, hidden=False).all(),
+            steam.parent_game_name,
+        )
+        if game is None:
+            raise HTTPException(409, "Choose this DLC's parent from Doubtful Steam matches before restoring it.")
     if game is None:
         try:
             snapshot = json.loads(row.game_data or "{}")
@@ -531,7 +649,7 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
         allowed = {
             "name", "description", "comments", "image_url", "status", "playtime_hours",
             "playtime_mode", "mark", "hype", "completion_date", "publication_year",
-            "release_date", "completion_percentage", "tags", "dlcs", "hidden",
+            "release_date", "completion_percentage", "tags", "dlcs", "hidden", "igdb_id",
         }
         fields = {key: value for key, value in snapshot.items() if key in allowed}
         fields.update({"name": fields.get("name") or row.collection_game_name or row.name,
@@ -539,46 +657,66 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
         game = Videogame(user_id=user.id, **fields)
         db.add(game)
         db.flush()
+    if row.kind == "dlc":
+        try:
+            item = json.loads(row.copy_data or "{}")
+        except (TypeError, ValueError):
+            raise HTTPException(409, "The trashed DLC data is invalid.")
+        service.attach_owned_dlc(game, {
+            **item, "appid": row.steam_appid, "name": steam.name,
+            "playtime_hours": steam.playtime_hours, "store_url": steam.store_url,
+            "igdb_id": steam.igdb_id,
+        })
+        link = db.query(SteamContentLink).filter_by(
+            user_id=user.id, steam_id=row.steam_id, steam_appid=row.steam_appid,
+        ).first()
+        if link is None:
+            link = SteamContentLink(
+                user_id=user.id, steam_id=row.steam_id, steam_appid=row.steam_appid,
+                parent_game_id=game.id, name=steam.name,
+            )
+            db.add(link)
+        link.parent_game_id, link.igdb_id, link.user_selected = game.id, steam.igdb_id, True
+        db.delete(row)
+        copy_store.record_audit(
+            db, user.id, "dlc_restored", steam_id=row.steam_id,
+            steam_appid=row.steam_appid, game_id=game.id,
+        )
+        commit(db)
+        return game
     try:
-        copies = json.loads(game.copies or "[]")
         saved_copy = json.loads(row.copy_data)
     except (TypeError, ValueError):
         raise HTTPException(409, "The trashed copy data is invalid.")
-    existing = next((copy for copy in copies if int(copy.get("steam_appid") or 0) == row.steam_appid), None)
+    existing = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, steam_id=row.steam_id, collection_game_id=game.id,
+        steam_appid=row.steam_appid,
+    ).first()
     if existing is None:
-        used_ids = {str(copy.get("id")) for copy in copies if copy.get("id")}
+        used_ids = {copy.copy_id for copy in copy_store.ensure_copies(db, game)}
         copy_id = str(saved_copy.get("id") or f"steam:{row.steam_appid}")
         while copy_id in used_ids:
             copy_id = f"copy:{uuid4().hex}"
-        saved_copy.update({
-            "id": copy_id, "name": steam.name, "platform": "PC", "format": "Digital",
-            "source": "Steam", "steam_appid": row.steam_appid,
-            "playtime_hours": steam.playtime_hours, "store_url": steam.store_url,
-            "igdb_id": steam.igdb_id,
-        })
-        copies.append(saved_copy)
+        existing = SteamCollectionLink(
+            user_id=user.id, steam_id=row.steam_id, steam_appid=row.steam_appid,
+            collection_game_id=game.id, copy_id=copy_id,
+            position=len(used_ids), counts_toward_totals=copy_store.next_shared_playtime_flag(
+                db, user.id, row.steam_id, row.steam_appid,
+            ),
+        )
+        db.add(existing)
     else:
-        copy_id = str(existing.get("id") or f"steam:{row.steam_appid}")
-        existing.update({
-            "id": copy_id, "name": steam.name, "platform": "PC", "format": "Digital",
-            "source": "Steam", "steam_appid": row.steam_appid,
-            "playtime_hours": steam.playtime_hours, "store_url": steam.store_url,
-            "igdb_id": steam.igdb_id,
-        })
-    game.copies = json.dumps(copies)
-    link = db.query(SteamCollectionLink).filter_by(
-        user_id=user.id, collection_game_id=game.id, copy_id=copy_id,
-    ).first()
-    if link is None:
-        db.add(SteamCollectionLink(
-            user_id=user.id, steam_appid=row.steam_appid, collection_game_id=game.id,
-            copy_id=copy_id, igdb_id=steam.igdb_id, user_selected=True,
-        ))
-    else:
-        link.steam_appid = row.steam_appid
-        link.igdb_id = steam.igdb_id
-        link.user_selected = True
+        copy_id = existing.copy_id
+    existing.name, existing.platform, existing.format, existing.source = steam.name, "PC", "Digital", "Steam"
+    existing.playtime_hours, existing.store_url, existing.igdb_id = steam.playtime_hours, steam.store_url, steam.igdb_id
+    existing.user_selected = True
+    db.flush()
+    copy_store.project_game(db, game)
     db.delete(row)
+    copy_store.record_audit(
+        db, user.id, "copy_restored", steam_id=row.steam_id,
+        steam_appid=row.steam_appid, game_id=game.id, copy_id=copy_id,
+    )
     commit(db)
     db.refresh(game)
     return game

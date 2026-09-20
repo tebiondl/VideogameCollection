@@ -34,6 +34,7 @@ class WantedGame(Base):
     deleted = Column(Boolean, nullable=False, default=False)
     collection_game_id = Column(Integer, ForeignKey("videogames.id"))
     steam_wishlist_missing = Column(Boolean, nullable=False, default=False)
+    steam_id = Column(String)
 
 
 class DiscoverySettings(Base):
@@ -53,33 +54,55 @@ class DiscoverySettings(Base):
     last_owned_import_count = Column(Integer, nullable=False, default=0)
     last_igdb_match_count = Column(Integer, nullable=False, default=0)
     region = Column(String, nullable=False, default="Europe")
+    owned_sync_generation = Column(Integer, nullable=False, default=0)
 
     @property
     def steam_api_key_configured(self):
         return bool(self.steam_api_key)
 
 
-class SteamCollectionLink(Base):
-    """A Steam identity belongs to one owned copy, not to the whole game card."""
-    __tablename__ = "steam_copy_links"
-    __table_args__ = (UniqueConstraint("user_id", "collection_game_id", "copy_id", name="uq_steam_copy_link_user_copy"),)
+class OwnedCopy(Base):
+    """Authoritative owned-copy row. ``videogames.copies`` is only an API projection."""
+    __tablename__ = "owned_copies"
+    __table_args__ = (
+        UniqueConstraint("user_id", "collection_game_id", "copy_id", name="uq_owned_copy_user_game_copy"),
+        UniqueConstraint("user_id", "steam_id", "collection_game_id", "steam_appid", name="uq_owned_copy_steam_game_app"),
+    )
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    steam_appid = Column(Integer, nullable=False)
     collection_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
     copy_id = Column(String, nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    name = Column(String)
+    platform = Column(String, nullable=False, default="")
+    format = Column(String, nullable=False, default="Any")
+    source = Column(String)
+    store_url = Column(String)
     igdb_id = Column(Integer)
+    price = Column(Float)
+    currency = Column(String, nullable=False, default="EUR")
+    playtime_hours = Column(Float)
+    steam_id = Column(String, nullable=False, default="")
+    steam_appid = Column(Integer, nullable=True, index=True)
     created_collection_game = Column(Boolean, nullable=False, default=False)
     user_selected = Column(Boolean, nullable=False, default=False)
+    counts_toward_totals = Column(Boolean, nullable=False, default=True)
+    user_modified = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+# Compatibility name retained while callers migrate from the old link-only model.
+SteamCollectionLink = OwnedCopy
 
 
 class SteamOwnedGame(Base):
     """Last successful Steam library snapshot used for manual linking and duplicate choices."""
-    __tablename__ = "steam_owned_games"
-    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_owned_game_user_app"),)
+    __tablename__ = "steam_entitlements"
+    __table_args__ = (UniqueConstraint("user_id", "steam_id", "steam_appid", name="uq_steam_entitlement_account_app"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_id = Column(String, nullable=False, default="", index=True)
     steam_appid = Column(Integer, nullable=False)
     name = Column(String, nullable=False)
     playtime_hours = Column(Float)
@@ -89,19 +112,26 @@ class SteamOwnedGame(Base):
     is_dlc = Column(Boolean, nullable=False, default=False)
     parent_game_name = Column(String)
     duplicate_of_appid = Column(Integer)
+    active = Column(Boolean, nullable=False, default=True)
+    last_seen_generation = Column(Integer, nullable=False, default=0)
+    first_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class SteamCopyTrash(Base):
     """A deliberately removed Steam copy that collection sync must not recreate."""
-    __tablename__ = "steam_copy_trash"
-    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_copy_trash_user_app"),)
+    __tablename__ = "steam_copy_suppressions"
+    __table_args__ = (UniqueConstraint("user_id", "steam_id", "steam_appid", "collection_game_id", "copy_id", "kind", name="uq_steam_suppression_target"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_id = Column(String, nullable=False, default="", index=True)
     steam_appid = Column(Integer, nullable=False)
     name = Column(String, nullable=False)
     image_url = Column(String)
-    collection_game_id = Column(Integer)
+    collection_game_id = Column(Integer, nullable=False, default=0)
+    copy_id = Column(String, nullable=False, default="")
+    kind = Column(String, nullable=False, default="copy")
     collection_game_name = Column(String)
     copy_data = Column(String, nullable=False)
     game_data = Column(String)
@@ -110,10 +140,12 @@ class SteamCopyTrash(Base):
 
 class SteamMatchReview(Base):
     """A possible Steam/collection match that requires the user's decision."""
-    __tablename__ = "steam_match_reviews"
-    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_match_review_user_app"),)
+    __tablename__ = "steam_match_reviews_v2"
+    __table_args__ = (UniqueConstraint("user_id", "steam_id", "steam_appid", "match_kind", name="uq_steam_review_account_app_kind"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_id = Column(String, nullable=False, default="", index=True)
+    match_kind = Column(String, nullable=False, default="game")
     steam_appid = Column(Integer, nullable=False)
     steam_name = Column(String, nullable=False)
     candidate_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -124,6 +156,44 @@ class SteamMatchReview(Base):
     steam_data = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SteamContentLink(Base):
+    """Durable identity for a Steam DLC nested below a collection game."""
+    __tablename__ = "steam_content_links"
+    __table_args__ = (UniqueConstraint("user_id", "steam_id", "steam_appid", name="uq_steam_content_account_app"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_id = Column(String, nullable=False, default="", index=True)
+    steam_appid = Column(Integer, nullable=False)
+    parent_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    igdb_id = Column(Integer)
+    user_selected = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class GameMergeRedirect(Base):
+    __tablename__ = "game_merge_redirects"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    merged_game_id = Column(Integer, nullable=False, index=True)
+    retained_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
+    merged_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SteamAuditLog(Base):
+    __tablename__ = "steam_audit_log"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_id = Column(String, nullable=False, default="", index=True)
+    action = Column(String, nullable=False, index=True)
+    steam_appid = Column(Integer)
+    collection_game_id = Column(Integer)
+    copy_id = Column(String)
+    details = Column(String)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class CopyOption(Base):

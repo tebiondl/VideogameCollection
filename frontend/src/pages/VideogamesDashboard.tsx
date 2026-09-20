@@ -336,6 +336,7 @@ export function VideogamesDashboard() {
         completion_date: editingGame.completion_date || null,
         publication_year: editingGame.publication_year || null,
         release_date: editingGame.release_date || null,
+        igdb_id: editingGame.igdb_id || null,
         completion_percentage: editingGame.completion_percentage ?? null,
         tags: editingGame.tags || null,
         dlcs: editingGame.dlcs || null,
@@ -343,6 +344,7 @@ export function VideogamesDashboard() {
         parent_game_name: editingGame.parent_game_name || null,
         copies: editingGame.copies || null,
         hidden: !!editingGame.hidden,
+        version: editingGame.version ?? null,
       };
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
         method: 'PUT',

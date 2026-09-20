@@ -9,7 +9,7 @@ const code = ts.transpileModule(readFileSync(new URL('../src/lib/ownedCopies.ts'
 }).outputText;
 const exports = {};
 vm.runInNewContext(code, { exports });
-const { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters } = exports;
+const { analyticsPlaytimeHours, copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters } = exports;
 
 const copies = JSON.stringify([
   { id: 'switch', platform: 'Nintendo Switch', format: 'Physical', source: 'Retail' },
@@ -39,4 +39,12 @@ test('playtime mode selects user, copy, or combined hours', () => {
   assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'user' }), 4);
   assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'copies' }), 15.5);
   assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'combined' }), 19.5);
+});
+
+test('shared Steam entitlements count once in account analytics', () => {
+  const seen = new Set();
+  const primary = { copies: JSON.stringify([{ steam_appid: 42, playtime_hours: 12, counts_toward_totals: true }]), playtime_mode: 'copies' };
+  const shared = { copies: JSON.stringify([{ steam_appid: 42, playtime_hours: 12, counts_toward_totals: false }]), playtime_mode: 'copies' };
+  assert.equal(analyticsPlaytimeHours(primary, seen), 12);
+  assert.equal(analyticsPlaytimeHours(shared, seen), null);
 });

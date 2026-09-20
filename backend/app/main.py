@@ -1,10 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from .database import engine, Base
 from .database import SessionLocal
 from .models import AppSetting, Videogame
-from .discovery_models import SteamCollectionLink, SteamOwnedGame, WantedGame, SteamCopyTrash
+from .discovery_models import (
+    DiscoverySettings, SteamCollectionLink, SteamOwnedGame, WantedGame, SteamCopyTrash, SteamMatchReview,
+    SteamContentLink,
+)
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router
 from .services.discovery import scheduler
 from .services.backups import scheduler as backup_scheduler
@@ -31,12 +34,18 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN parent_game_name VARCHAR",
         "ALTER TABLE videogames ADD COLUMN copies TEXT",
         "ALTER TABLE videogames ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE videogames ADD COLUMN igdb_id INTEGER",
+        "ALTER TABLE videogames ADD COLUMN merged_into_game_id INTEGER",
+        "ALTER TABLE videogames ADD COLUMN user_modified_at DATETIME",
+        "ALTER TABLE videogames ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN last_owned_import_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN steam_api_key VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_igdb_match_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN sync_wishlist BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN sync_collection BOOLEAN NOT NULL DEFAULT 1",
+        "ALTER TABLE discovery_settings ADD COLUMN owned_sync_generation INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",
         "ALTER TABLE steam_collection_links ADD COLUMN created_collection_game BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE steam_match_reviews ADD COLUMN candidates TEXT",
         "ALTER TABLE steam_match_reviews ADD COLUMN rejected_candidate_ids TEXT",
@@ -51,12 +60,21 @@ def _run_migrations():
         "ALTER TABLE boardgame_matches ADD COLUMN import_key VARCHAR",
     ]
     with engine.connect() as conn:
+        tables = set(inspect(conn).get_table_names())
+        columns = {
+            table: {column["name"] for column in inspect(conn).get_columns(table)}
+            for table in tables
+        }
         for stmt in migrations:
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass  # Column already exists — silently skip
+            parts = stmt.split()
+            table, column = parts[2], parts[5]
+            # Some entries only apply when upgrading installations old enough
+            # to contain the retired Steam tables.
+            if table not in tables or column in columns[table]:
+                continue
+            conn.execute(text(stmt))
+            conn.commit()
+            columns[table].add(column)
 
 _run_migrations()
 
@@ -274,6 +292,203 @@ def _separate_legacy_steam_playtime_v6():
         db.close()
 
 _separate_legacy_steam_playtime_v6()
+
+
+def _migrate_steam_integrity_v7():
+    """Move legacy JSON/link state into account-scoped authoritative tables."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_integrity_v7").first():
+            return
+        import json
+        from datetime import datetime
+        from sqlalchemy import inspect
+        from .services.copy_store import project_game
+
+        inspector = inspect(engine)
+        table_names = set(inspector.get_table_names())
+
+        def as_datetime(value):
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+                except ValueError:
+                    pass
+            return datetime.utcnow()
+        scopes = {
+            row.user_id: row.steam_id or ""
+            for row in db.query(DiscoverySettings).all()
+        }
+        legacy_links = {}
+        if "steam_copy_links" in table_names:
+            with engine.connect() as conn:
+                rows = conn.execute(text("SELECT * FROM steam_copy_links ORDER BY id")).mappings().all()
+            legacy_links = {
+                (int(row["user_id"]), int(row["collection_game_id"]), str(row["copy_id"])): row
+                for row in rows
+            }
+        existing = {
+            (row.user_id, row.collection_game_id, row.copy_id): row
+            for row in db.query(SteamCollectionLink).all()
+        }
+        for game in db.query(Videogame).all():
+            try:
+                copies = json.loads(game.copies or "[]")
+            except (TypeError, ValueError):
+                copies = []
+            seen_ids = set()
+            seen_apps = set()
+            rows = []
+            for position, value in enumerate(copies if isinstance(copies, list) else []):
+                if not isinstance(value, dict):
+                    continue
+                copy_id = str(value.get("id") or f"copy:{game.id}:{position + 1}")
+                if copy_id in seen_ids:
+                    copy_id = f"copy:{game.id}:{position + 1}"
+                seen_ids.add(copy_id)
+                legacy = legacy_links.get((game.user_id, game.id, copy_id))
+                appid = int(value.get("steam_appid") or (legacy["steam_appid"] if legacy else 0) or 0) or None
+                if appid in seen_apps:
+                    appid = None
+                if appid:
+                    seen_apps.add(appid)
+                row = existing.get((game.user_id, game.id, copy_id))
+                if row is None:
+                    row = SteamCollectionLink(
+                        user_id=game.user_id, collection_game_id=game.id, copy_id=copy_id,
+                    )
+                    db.add(row)
+                    existing[(game.user_id, game.id, copy_id)] = row
+                row.position = position
+                row.name = value.get("name") or (game.name if appid else None)
+                row.platform = value.get("platform") or ("PC" if appid else "")
+                row.format = value.get("format") or ("Digital" if appid else "Any")
+                row.source = "Steam" if appid else value.get("source")
+                row.store_url, row.igdb_id = value.get("store_url"), value.get("igdb_id")
+                row.price, row.currency = value.get("price"), value.get("currency") or "EUR"
+                row.playtime_hours = value.get("playtime_hours")
+                row.steam_id, row.steam_appid = scopes.get(game.user_id, "") if appid else "", appid
+                row.created_collection_game = bool(legacy and legacy.get("created_collection_game"))
+                row.user_selected = bool(legacy and legacy.get("user_selected"))
+                row.counts_toward_totals = bool(value.get("counts_toward_totals", True))
+                rows.append(row)
+            try:
+                dlcs = json.loads(game.dlcs or "[]")
+            except (TypeError, ValueError):
+                dlcs = []
+            for value in dlcs if isinstance(dlcs, list) else []:
+                if not isinstance(value, dict) or not value.get("steam_appid"):
+                    continue
+                appid = int(value["steam_appid"])
+                content = db.query(SteamContentLink).filter_by(
+                    user_id=game.user_id, steam_id=scopes.get(game.user_id, ""), steam_appid=appid,
+                ).first()
+                if content is None:
+                    db.add(SteamContentLink(
+                        user_id=game.user_id, steam_id=scopes.get(game.user_id, ""),
+                        steam_appid=appid, parent_game_id=game.id,
+                        name=value.get("name") or f"Steam app {appid}", igdb_id=value.get("igdb_id"),
+                    ))
+
+        if "steam_owned_games" in table_names:
+            with engine.connect() as conn:
+                old_entitlements = conn.execute(text("SELECT * FROM steam_owned_games ORDER BY id")).mappings().all()
+            for old in old_entitlements:
+                scope = scopes.get(int(old["user_id"]), "")
+                row = db.query(SteamOwnedGame).filter_by(
+                    user_id=old["user_id"], steam_id=scope, steam_appid=old["steam_appid"],
+                ).first()
+                if row is None:
+                    row = SteamOwnedGame(user_id=old["user_id"], steam_id=scope, steam_appid=old["steam_appid"])
+                    db.add(row)
+                for field in ("name", "playtime_hours", "image_url", "store_url", "igdb_id", "is_dlc", "parent_game_name", "duplicate_of_appid"):
+                    if field in old:
+                        setattr(row, field, old[field])
+                row.active, row.last_seen_at = True, as_datetime(old.get("updated_at"))
+
+        if "steam_copy_trash" in table_names:
+            with engine.connect() as conn:
+                old_trash = conn.execute(text("SELECT * FROM steam_copy_trash ORDER BY id")).mappings().all()
+            for old in old_trash:
+                scope = scopes.get(int(old["user_id"]), "")
+                copy_id = ""
+                try:
+                    copy_id = str(json.loads(old["copy_data"] or "{}").get("id") or "")
+                except (TypeError, ValueError):
+                    pass
+                row = SteamCopyTrash(
+                    user_id=old["user_id"], steam_id=scope, steam_appid=old["steam_appid"],
+                    collection_game_id=old.get("collection_game_id") or 0, copy_id=copy_id,
+                    kind="copy", name=old["name"], image_url=old.get("image_url"),
+                    collection_game_name=old.get("collection_game_name"), copy_data=old["copy_data"],
+                    game_data=old.get("game_data"), deleted_at=as_datetime(old.get("deleted_at")),
+                )
+                db.add(row)
+
+        if "steam_match_reviews" in table_names:
+            with engine.connect() as conn:
+                old_reviews = conn.execute(text("SELECT * FROM steam_match_reviews ORDER BY id")).mappings().all()
+            for old in old_reviews:
+                db.add(SteamMatchReview(
+                    user_id=old["user_id"], steam_id=scopes.get(int(old["user_id"]), ""),
+                    steam_appid=old["steam_appid"], match_kind="game",
+                    steam_name=old["steam_name"], candidate_game_id=old["candidate_game_id"],
+                    candidate_name=old["candidate_name"], confidence=old["confidence"],
+                    candidates=old.get("candidates"), rejected_candidate_ids=old.get("rejected_candidate_ids"),
+                    steam_data=old["steam_data"], created_at=as_datetime(old.get("created_at")),
+                    updated_at=as_datetime(old.get("updated_at")),
+                ))
+
+        db.flush()
+        copy_groups = {}
+        for row in db.query(SteamCollectionLink).filter(
+            SteamCollectionLink.steam_appid.is_not(None)
+        ).order_by(SteamCollectionLink.id).all():
+            copy_groups.setdefault((row.user_id, row.steam_id, row.steam_appid), []).append(row)
+        for group in copy_groups.values():
+            for index, row in enumerate(group):
+                row.counts_toward_totals = index == 0
+        for game in db.query(Videogame).all():
+            rows = db.query(SteamCollectionLink).filter_by(
+                user_id=game.user_id, collection_game_id=game.id,
+            ).order_by(SteamCollectionLink.position, SteamCollectionLink.id).all()
+            if rows:
+                project_game(db, game, rows)
+        db.add(AppSetting(key="steam_integrity_v7", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam integrity v7 migration failed")
+        raise
+    finally:
+        db.close()
+
+
+_migrate_steam_integrity_v7()
+
+
+def _encrypt_saved_api_keys_v8():
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_api_keys_encrypted_v8").first():
+            return
+        from .services.secrets import protect_secret
+        for settings in db.query(DiscoverySettings).all():
+            if settings.steam_api_key:
+                settings.steam_api_key = protect_secret(settings.steam_api_key)
+        db.add(AppSetting(key="steam_api_keys_encrypted_v8", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam API-key encryption migration failed")
+        raise
+    finally:
+        db.close()
+
+
+_encrypt_saved_api_keys_v8()
 
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():

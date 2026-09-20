@@ -32,6 +32,15 @@ export interface DiscoverySettings {
 export interface SteamMatchReview {
   id: number; steam_appid: number; steam_name: string; candidate_game_id: number;
   candidate_name: string; confidence: number; candidates: SteamMatchCandidate[]; created_at: string;
+  match_kind: 'game' | 'dlc_parent';
+}
+export interface SteamAuditEntry {
+  id: number; action: string; steam_appid: number | null; collection_game_id: number | null;
+  copy_id: string | null; details: Record<string, unknown> | null; created_at: string;
+}
+export interface SteamIntegrity {
+  games: number; copies: number; steam_entitlements: number; healthy: boolean; repaired: number;
+  issues: Record<string, number>;
 }
 export interface SteamMatchCandidate { game_id: number; name: string; confidence: number }
 export interface CopyOptions { platforms: string[]; sources: string[] }

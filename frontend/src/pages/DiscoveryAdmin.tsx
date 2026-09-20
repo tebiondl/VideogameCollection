@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Settings2, RefreshCw, Unplug, Download, GitCompareArrows, Trash2, X } from 'lucide-react';
+import { Settings2, RefreshCw, Unplug, Download, GitCompareArrows, Trash2, X, History, ShieldCheck, Wrench } from 'lucide-react';
 import { discoveryApi, errorMessage, timestamp, payload, syncIsRunning } from '../lib/discovery';
-import type { DiscoverySettings, SteamMatchReview, WantedGame } from '../lib/discovery';
+import type { DiscoverySettings, SteamAuditEntry, SteamIntegrity, SteamMatchReview, WantedGame } from '../lib/discovery';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import './Discovery.css';
 
@@ -16,6 +16,9 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
   const [reviewBusy, setReviewBusy] = useState<number | null>(null);
   const [showUnsync, setShowUnsync] = useState(false);
   const [showReviews, setShowReviews] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
+  const [audit, setAudit] = useState<SteamAuditEntry[]>([]);
+  const [integrity, setIntegrity] = useState<SteamIntegrity | null>(null);
   const [selectedCandidates, setSelectedCandidates] = useState<Record<number, number>>({});
   const syncing = syncIsRunning(settings?.sync_started_at);
   useEffect(() => {
@@ -52,9 +55,9 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
       setSelectedCandidates(current => { const next = { ...current }; delete next[review.id]; return next; });
       if (pending.length === 0) setShowReviews(false);
       if (decision === 'same') {
-        setMessage(`${candidate!.name} is now linked and renamed to ${review.steam_name}; its other collection data was preserved.`);
+        setMessage(review.match_kind === 'dlc_parent' ? `${review.steam_name} is now inside ${candidate!.name}.` : `${candidate!.name} is now linked and renamed to ${review.steam_name}; its other collection data was preserved.`);
       } else {
-        setMessage(`${review.steam_name} was saved as a separate collection game.`);
+        setMessage(review.match_kind === 'dlc_parent' ? `${review.steam_name} will stay ignored until you restore it from Trash.` : `${review.steam_name} was saved as a separate collection game.`);
       }
     } catch (e) { setError(errorMessage(e)); } finally { setReviewBusy(null); }
   }
@@ -74,6 +77,21 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
       const url = URL.createObjectURL(new Blob([JSON.stringify(games.map(payload), null, 2)], { type: 'application/json' }));
       const link = document.createElement('a'); link.href = url; link.download = 'games-i-want.json'; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  }
+  async function openAudit() {
+    setBusy(true); setError('');
+    try {
+      const [entries, health] = await Promise.all([
+        discoveryApi<SteamAuditEntry[]>('/steam/audit?limit=150'),
+        discoveryApi<SteamIntegrity>('/steam/integrity'),
+      ]);
+      setAudit(entries); setIntegrity(health); setShowAudit(true);
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  }
+  async function repairIntegrity() {
+    setBusy(true); setError('');
+    try { setIntegrity(await discoveryApi<SteamIntegrity>('/steam/integrity/repair', { method: 'POST' })); setMessage('Steam copy projections and playtime ownership were repaired.'); }
+    catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   }
   const content = <>
     {error && <p className="disc-alert error" role="alert">{error}</p>}{message && <p className="disc-alert success" role="status">{message}</p>}
@@ -98,6 +116,10 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
           <div><h3><GitCompareArrows size={18} /> Doubtful Steam matches</h3><p>Review possible matches without filling the Admin page with game entries.</p></div>
           <button className="btn btn-secondary" onClick={() => setShowReviews(true)}><GitCompareArrows size={16} /> Review matches <span className="disc-count">{reviews.length}</span></button>
         </div>
+        <div className="disc-match-launch">
+          <div><h3><History size={18} /> Sync history & integrity</h3><p>Inspect link decisions and verify that every copy, entitlement and projection agrees.</p></div>
+          <button className="btn btn-secondary" disabled={busy} onClick={openAudit}><ShieldCheck size={16} /> Open audit</button>
+        </div>
         <p className="disc-source-note">Each enabled Steam list syncs independently while preserving your edits. Exact identities and strong, unambiguous title matches link automatically; doubtful matches wait in the review popup. Choosing a collection game links the copy and uses Steam’s title. Existing console copies remain attached. If wishlist sync is enabled without collection sync, games that disappear from Steam’s wishlist stay in Games I want and are marked for review.</p>
       </section>
       <div><section className="disc-panel"><h2>Your data</h2><p className="disc-muted">Download an editable backup of Games I want. Restore it through Smart Add as JSON.</p><button className="btn btn-secondary" disabled={busy} onClick={exportGames}><Download size={17} /> Export wanted games</button></section><section className="disc-panel"><h2>Release sources</h2><p className="disc-muted">Europe combines Nintendo’s public catalog with Nintendo Life’s monthly retail guide, cached for 24 hours. IGDB remains the fallback when both sources are unavailable.</p><p className="disc-muted">Switch and Switch 2 releases are identified separately, including Game-Key Card and code-in-box listings. Regional and limited-print releases can still differ.</p></section></div>
@@ -119,15 +141,26 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
         <div className="disc-review-dialog-heading"><div><h2 id="reviews-title">Doubtful Steam matches</h2><p>Choose one collection game for each Steam title, or choose None of these.</p></div><span className="disc-count">{reviews.length}</span></div>
         <div className="disc-review-dialog-list">
           {reviews.length === 0 ? <p className="disc-review-empty">No doubtful Steam matches right now.</p> : reviews.map(review => <article className="disc-match-review" key={review.id}>
-            <div className="disc-review-steam-title"><small>STEAM GAME</small><strong>{review.steam_name}</strong><span>{review.candidates.length} possible {review.candidates.length === 1 ? 'match' : 'matches'}</span></div>
+            <div className="disc-review-steam-title"><small>{review.match_kind === 'dlc_parent' ? 'STEAM DLC · CHOOSE PARENT' : 'STEAM GAME'}</small><strong>{review.steam_name}</strong><span>{review.candidates.length} possible {review.candidates.length === 1 ? 'match' : 'matches'}</span></div>
             <div className="disc-candidate-list" role="radiogroup" aria-label={`Collection match for ${review.steam_name}`}>{review.candidates.map(candidate => <label className={`disc-candidate ${selectedCandidates[review.id] === candidate.game_id ? 'selected' : ''}`} key={candidate.game_id}>
               <input type="radio" name={`review-${review.id}`} value={candidate.game_id} checked={selectedCandidates[review.id] === candidate.game_id} disabled={reviewBusy !== null} onChange={() => setSelectedCandidates(current => ({ ...current, [review.id]: candidate.game_id }))} />
               <span className="disc-candidate-copy"><small>COLLECTION CANDIDATE</small><strong>{candidate.name}</strong><span>{Math.round(candidate.confidence * 100)}% title similarity</span></span>
             </label>)}</div>
-            <div className="disc-match-choice-actions"><button className="btn btn-primary" disabled={reviewBusy !== null || !selectedCandidates[review.id]} onClick={() => resolveReview(review, 'same')}>Choose selected game</button><button className="btn btn-secondary" disabled={reviewBusy !== null} onClick={() => resolveReview(review, 'none')}>None of these</button></div>
+            <div className="disc-match-choice-actions"><button className="btn btn-primary" disabled={reviewBusy !== null || !selectedCandidates[review.id]} onClick={() => resolveReview(review, 'same')}>{review.match_kind === 'dlc_parent' ? 'Choose parent game' : 'Choose selected game'}</button><button className="btn btn-secondary" disabled={reviewBusy !== null} onClick={() => resolveReview(review, 'none')}>{review.match_kind === 'dlc_parent' ? 'Keep DLC ignored' : 'None of these'}</button></div>
           </article>)}
         </div>
         <div className="disc-actions"><button className="btn btn-secondary" disabled={reviewBusy !== null} onClick={() => setShowReviews(false)}>Close</button></div>
+      </section>
+    </div>}
+    {showAudit && <div className="disc-confirm-backdrop" onMouseDown={() => !busy && setShowAudit(false)}>
+      <section className="disc-confirm-dialog disc-review-dialog" role="dialog" aria-modal="true" aria-labelledby="audit-title" onMouseDown={event => event.stopPropagation()}>
+        <button className="disc-confirm-close" aria-label="Close" disabled={busy} onClick={() => setShowAudit(false)}><X size={19} /></button>
+        <div className="disc-confirm-icon review"><History size={24} /></div>
+        <div className="disc-review-dialog-heading"><div><h2 id="audit-title">Steam sync history</h2><p>Persistent decisions for this connected Steam account.</p></div></div>
+        {integrity && <div className={`disc-alert ${integrity.healthy ? 'success' : 'error'}`}><strong>{integrity.healthy ? 'Integrity check passed' : 'Integrity issues found'}</strong><br />{integrity.copies} copies · {integrity.steam_entitlements} Steam entitlements{!integrity.healthy && <> · {Object.values(integrity.issues).reduce((sum, value) => sum + value, 0)} issues</>}</div>}
+        {integrity && !integrity.healthy && <button className="btn btn-secondary" disabled={busy} onClick={repairIntegrity}><Wrench size={16} /> Repair safe inconsistencies</button>}
+        <div className="disc-review-dialog-list">{audit.length === 0 ? <p className="disc-review-empty">No Steam decisions recorded yet.</p> : audit.map(entry => <article className="disc-match-review" key={entry.id}><div className="disc-review-steam-title"><small>{timestamp(entry.created_at)}</small><strong>{entry.action.replaceAll('_', ' ')}</strong><span>{entry.steam_appid ? `Steam app ${entry.steam_appid}` : 'Account event'}{entry.collection_game_id ? ` · Collection game ${entry.collection_game_id}` : ''}</span></div></article>)}</div>
+        <div className="disc-actions"><button className="btn btn-secondary" onClick={() => setShowAudit(false)}>Close</button></div>
       </section>
     </div>}
   </>;

@@ -169,6 +169,7 @@ class SteamMatchReviewResponse(BaseModel):
     confidence: float
     candidates: list[SteamMatchCandidate]
     created_at: datetime
+    match_kind: Literal["game", "dlc_parent"] = "game"
 
 
 class SteamMatchDecision(BaseModel):
@@ -184,6 +185,7 @@ class CollectionDuplicateInput(BaseModel):
     other_game_id: int = Field(gt=0)
     direction: Literal["current_into_other", "other_into_current"]
     field_sources: dict[str, Literal["current", "other"]] = Field(default_factory=dict)
+    primary_steam_appid: int | None = Field(default=None, gt=0)
 
 
 class CopyOptionsInput(BaseModel):

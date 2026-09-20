@@ -35,6 +35,7 @@ class Videogame(Base):
     completion_date = Column(String, nullable=True) # string to support just '2024' or '2024-05'
     publication_year = Column(Integer, nullable=True)
     release_date = Column(String, nullable=True)
+    igdb_id = Column(Integer, nullable=True, index=True)
     completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True) # JSON encoded string or comma separated
     dlcs = Column(String, nullable=True) # JSON array: [{name, state: not_owned|not_started|finished}]
@@ -42,6 +43,9 @@ class Videogame(Base):
     parent_game_name = Column(String, nullable=True)
     copies = Column(String, nullable=True) # JSON array of owned platform / format copies
     hidden = Column(Boolean, nullable=False, default=False)
+    merged_into_game_id = Column(Integer, nullable=True, index=True)
+    user_modified_at = Column(DateTime, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
 
     owner = relationship("User", back_populates="videogames")
 

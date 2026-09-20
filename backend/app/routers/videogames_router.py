@@ -7,11 +7,13 @@ import os
 import logging
 import httpx
 from uuid import uuid4
+from datetime import datetime
 from openai import OpenAI
 
 from .. import schemas, models, database
 from .auth_router import get_current_user
 from .igdb_router import _get_twitch_token
+from ..services import copy_store
 
 logger = logging.getLogger(__name__)
 
@@ -40,30 +42,13 @@ def _copies_with_stable_ids(raw_copies: str | None) -> str | None:
 
 
 def _protect_linked_steam_copies(db: Session, user_id: int, game: models.Videogame, raw_copies: str | None) -> str | None:
-    """Lock Steam identity/time and tombstone intentionally removed copies."""
-    from ..discovery_models import SteamCollectionLink, SteamOwnedGame
-    from ..services import discovery as discovery_service
+    """Compatibility wrapper around the authoritative relational copy store."""
     try:
-        original = json.loads(game.copies or "[]")
         incoming = json.loads(raw_copies or "[]")
     except (TypeError, ValueError):
-        return raw_copies
-    original_by_id = {str(copy.get("id")): copy for copy in original if isinstance(copy, dict) and copy.get("id")}
-    incoming_by_id = {str(copy.get("id")): copy for copy in incoming if isinstance(copy, dict) and copy.get("id")}
-    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, collection_game_id=game.id).all()
-    for link in links:
-        saved_copy = original_by_id.get(link.copy_id, {"id": link.copy_id, "steam_appid": link.steam_appid})
-        edited_copy = incoming_by_id.get(link.copy_id)
-        if edited_copy is None:
-            discovery_service.trash_steam_copy(db, user_id, game, saved_copy)
-            db.delete(link)
-            continue
-        if int(edited_copy.get("steam_appid") or 0) != link.steam_appid:
-            raise HTTPException(status_code=409, detail="A linked Steam copy cannot be unlinked or changed here. Delete the copy or use Change linked Steam game.")
-        catalog = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_appid=link.steam_appid).first()
-        edited_copy["source"] = "Steam"
-        edited_copy["playtime_hours"] = catalog.playtime_hours if catalog else saved_copy.get("playtime_hours")
-    return json.dumps(incoming) if incoming else None
+        incoming = []
+    copy_store.replace_from_payload(db, game, incoming)
+    return game.copies
 
 
 def _read_tag_names(raw_tags: str | None) -> tuple[list[str], bool]:
@@ -555,6 +540,10 @@ def get_videogames(
         models.Videogame.user_id == current_user.id,
         models.Videogame.is_dlc.is_(False),
     ).all()
+    for game in games:
+        rows = copy_store.ensure_copies(db, game)
+        if rows:
+            copy_store.project_game(db, game, rows)
     return games
 
 @router.post("/check-similar", response_model=List[schemas.VideogameResponse])
@@ -593,9 +582,17 @@ def create_videogame(
     if game.is_dlc:
         raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
     game_data = game.model_dump()
-    game_data["copies"] = _copies_with_stable_ids(game_data.get("copies"))
+    game_data.pop("version", None)
+    raw_copies = _copies_with_stable_ids(game_data.pop("copies", None))
+    game_data["user_modified_at"] = datetime.utcnow()
     new_game = models.Videogame(**game_data, user_id=current_user.id)
     db.add(new_game)
+    db.flush()
+    try:
+        values = json.loads(raw_copies or "[]")
+    except (TypeError, ValueError):
+        values = []
+    copy_store.replace_from_payload(db, new_game, values)
     db.commit()
     db.refresh(new_game)
     return new_game
@@ -619,13 +616,20 @@ def update_videogame(
         raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
 
     update_data = game_update.model_dump(exclude_unset=True)
+    expected_version = update_data.pop("version", None)
+    if expected_version is not None and expected_version != db_game.version:
+        raise HTTPException(status_code=409, detail="This game changed after you opened it. Reload it before saving your edits.")
     if "copies" in update_data:
         update_data["copies"] = _copies_with_stable_ids(update_data.get("copies"))
         update_data["copies"] = _protect_linked_steam_copies(
             db, current_user.id, db_game, update_data.get("copies")
         )
+    if "dlcs" in update_data:
+        update_data["dlcs"] = copy_store.protect_linked_dlcs(db, db_game, update_data.get("dlcs"))
     for key, value in update_data.items():
         setattr(db_game, key, value)
+    db_game.user_modified_at = datetime.utcnow()
+    db_game.version = (db_game.version or 1) + 1
         
     db.commit()
     db.refresh(db_game)
@@ -646,24 +650,16 @@ def delete_videogame(
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.
-    from ..discovery_models import SteamCollectionLink, SteamMatchReview
-    from ..services import discovery as discovery_service
-    try:
-        copies = json.loads(db_game.copies or "[]")
-    except (TypeError, ValueError):
-        copies = []
-    copies_by_id = {str(copy.get("id")): copy for copy in copies if isinstance(copy, dict) and copy.get("id")}
-    for steam_link in db.query(SteamCollectionLink).filter_by(
-        user_id=current_user.id, collection_game_id=db_game.id
-    ).all():
-        discovery_service.trash_steam_copy(
-            db, current_user.id, db_game,
-            copies_by_id.get(steam_link.copy_id, {"id": steam_link.copy_id, "steam_appid": steam_link.steam_appid}),
-        )
-        db.delete(steam_link)
+    from ..discovery_models import SteamCollectionLink, SteamMatchReview, WantedGame
+    for owned_copy in copy_store.ensure_copies(db, db_game):
+        copy_store.suppress_copy(db, db_game, owned_copy, reason="game_deleted")
+        db.delete(owned_copy)
     db.query(SteamMatchReview).filter_by(
         user_id=current_user.id, candidate_game_id=db_game.id
     ).delete(synchronize_session=False)
+    db.query(WantedGame).filter_by(user_id=current_user.id, collection_game_id=db_game.id).update(
+        {"collection_game_id": None, "status": "Wanted"}, synchronize_session=False,
+    )
     db.delete(db_game)
     db.commit()
     return {"status": "ok"}

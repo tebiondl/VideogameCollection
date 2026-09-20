@@ -10,6 +10,7 @@ export interface OwnedCopy {
   price?: number | null;
   currency?: string;
   playtime_hours?: number | null;
+  counts_toward_totals?: boolean;
 }
 
 export type PlaytimeMode = 'user' | 'copies' | 'combined';
@@ -24,6 +25,23 @@ export function displayPlaytimeHours(game: { copies?: string | null; playtime_ho
   const mode = game.playtime_mode || 'user';
   const total = mode === 'copies' ? copiesHours : mode === 'combined' ? userHours + copiesHours : userHours;
   return total || (game.playtime_hours != null || copiesHours > 0 ? 0 : null);
+}
+
+export function analyticsPlaytimeHours(
+  game: { copies?: string | null; playtime_hours?: number | null; playtime_mode?: PlaytimeMode | string | null },
+  seenSteamApps: Set<number>,
+): number | null {
+  const userHours = Math.max(0, Number(game.playtime_hours) || 0);
+  const copyHours = parseCopies(game.copies).reduce((sum, copy) => {
+    if (copy.steam_appid) {
+      if (copy.counts_toward_totals === false || seenSteamApps.has(copy.steam_appid)) return sum;
+      seenSteamApps.add(copy.steam_appid);
+    }
+    return sum + Math.max(0, Number(copy.playtime_hours) || 0);
+  }, 0);
+  const mode = game.playtime_mode || 'user';
+  const total = mode === 'copies' ? copyHours : mode === 'combined' ? userHours + copyHours : userHours;
+  return total || (game.playtime_hours != null || copyHours > 0 ? 0 : null);
 }
 
 export interface OwnedCopyFilters {

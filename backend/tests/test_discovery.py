@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.database import Base, get_db
 from backend.app.models import User, Videogame
-from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame
+from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, SteamContentLink
 from backend.app.routers import discovery_router as router, videogames_router
 from backend.app.services import discovery as service
 
@@ -317,7 +317,9 @@ class DiscoveryTests(unittest.TestCase):
         wanted.deleted = True
         collection.copies = json.dumps([json.loads(collection.copies)[0]])
         self.db.commit()
-        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 1)
+        # The relational copy remains authoritative even if a stale client
+        # edits only the backwards-compatible JSON projection.
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
         self.db.commit()
         self.assertEqual(self.db.query(Videogame).count(), 1)
         self.assertEqual(json.loads(collection.copies)[1]['steam_appid'], 101)
@@ -386,10 +388,10 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.db.refresh(game)
         switch_copy, pc_copy = json.loads(game.copies)
-        self.assertNotIn('steam_appid', switch_copy)
+        self.assertIsNone(switch_copy['steam_appid'])
         self.assertEqual(switch_copy['platform'], 'Nintendo Switch')
         self.assertEqual(pc_copy['steam_appid'], 901)
-        link = self.db.query(SteamCollectionLink).one()
+        link = self.db.query(SteamCollectionLink).filter(SteamCollectionLink.steam_appid.is_not(None)).one()
         self.assertEqual(link.copy_id, 'pc-copy')
         self.assertEqual(link.collection_game_id, game.id)
 
@@ -408,8 +410,8 @@ class DiscoveryTests(unittest.TestCase):
             SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=canonical.id, copy_id='steam:1'),
             SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=duplicate_card.id, copy_id='steam:2', created_collection_game=True),
         ])
-        service.attach_steam_copy(canonical, {'appid': 1, 'name': apps[0].name})
-        service.attach_steam_copy(duplicate_card, {'appid': 2, 'name': apps[1].name})
+        service.attach_steam_copy(self.db, canonical, {'appid': 1, 'name': apps[0].name})
+        service.attach_steam_copy(self.db, duplicate_card, {'appid': 2, 'name': apps[1].name})
         self.db.commit()
         response = self.client.post(f'/api/discovery/steam/collection-games/{duplicate_card.id}/merge-duplicate', json={
             'other_game_id': canonical.id, 'direction': 'current_into_other',
@@ -452,7 +454,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertFalse(current.hidden)
         self.assertTrue(other.hidden)
         self.assertEqual([copy.get('name') for copy in json.loads(current.copies)], ['Current', 'Other Steam Edition'])
-        link = self.db.query(SteamCollectionLink).one()
+        link = self.db.query(SteamCollectionLink).filter(SteamCollectionLink.steam_appid.is_not(None)).one()
         self.assertEqual(link.collection_game_id, current.id)
         self.assertEqual(link.copy_id, 'steam:44')
 
@@ -667,7 +669,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(manual.name, 'Manual wanted')
         self.assertIsNone(manual.steam_appid)
         self.assertEqual(manual.collection_game_id, local.id)
-        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(user_id=self.user.id).count(), 0)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(user_id=self.user.id).filter(
+            SteamCollectionLink.steam_appid.is_not(None)
+        ).count(), 0)
         self.assertEqual(self.db.query(SteamMatchReview).filter_by(user_id=self.user.id).count(), 0)
         self.assertEqual(self.db.query(SteamCollectionLink).filter_by(user_id=self.users[1].id).count(), 1)
         self.assertFalse(settings.sync_enabled)
@@ -835,6 +839,102 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(data['average_hype'], 8)
         self.assertEqual(data['nested_dlcs'], 1)
         self.assertEqual(data['dlcs'], 1)
+
+    def test_collection_edits_reject_a_stale_version(self):
+        created = self.client.post('/api/videogames/', json={'name': 'Concurrent edit'})
+        self.assertEqual(created.status_code, 200, created.text)
+        game = created.json()
+        first = self.client.put(f"/api/videogames/{game['id']}", json={
+            'name': 'First edit', 'version': game['version'],
+        })
+        self.assertEqual(first.status_code, 200, first.text)
+        stale = self.client.put(f"/api/videogames/{game['id']}", json={
+            'name': 'Lost edit', 'version': game['version'],
+        })
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(self.db.get(Videogame, game['id']).name, 'First edit')
+
+    def test_one_collection_card_cannot_link_the_same_steam_app_twice(self):
+        game = Videogame(user_id=self.user.id, name='Two copies', status='Not Started', copies=json.dumps([
+            {'id': 'one', 'platform': 'PC', 'format': 'Digital'},
+            {'id': 'two', 'platform': 'PC', 'format': 'Digital'},
+        ]))
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=501, name='Steam title')
+        self.db.add_all([game, steam]); self.db.commit()
+        first = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/copies/one/link', json={
+            'steam_appid': 501, 'mode': 'primary',
+        })
+        second = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/copies/two/link', json={
+            'steam_appid': 501, 'mode': 'primary',
+        })
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 409, second.text)
+
+    def test_shared_steam_app_uses_one_account_total_and_scoped_trash(self):
+        first = Videogame(user_id=self.user.id, name='Edition A', status='Not Started', copies=json.dumps([
+            {'id': 'a', 'platform': 'PC', 'format': 'Digital'},
+        ]))
+        second = Videogame(user_id=self.user.id, name='Edition B', status='Not Started', copies=json.dumps([
+            {'id': 'b', 'platform': 'PC', 'format': 'Digital'},
+        ]))
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=502, name='Shared Steam title', playtime_hours=12)
+        self.db.add_all([first, second, steam]); self.db.commit()
+        for game, copy_id in ((first, 'a'), (second, 'b')):
+            response = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/copies/{copy_id}/link', json={
+                'steam_appid': 502, 'mode': 'primary',
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+        rows = self.db.query(SteamCollectionLink).filter_by(steam_appid=502).all()
+        self.assertEqual(sum(bool(row.counts_toward_totals) for row in rows), 1)
+
+        removed = self.client.put(f'/api/videogames/{first.id}', json={
+            'name': first.name, 'copies': None,
+        })
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(self.db.query(SteamCopyTrash).filter_by(collection_game_id=first.id).count(), 1)
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 502, 'name': steam.name, 'playtime_hours': 12,
+        }]), 0)
+        self.db.flush()
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(collection_game_id=first.id, steam_appid=502).count(), 0)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(collection_game_id=second.id, steam_appid=502).count(), 1)
+
+    def test_ambiguous_exact_titles_require_review(self):
+        self.db.add_all([
+            Videogame(user_id=self.user.id, name='Same title', status='Not Started'),
+            Videogame(user_id=self.user.id, name='Same title', status='Not Started'),
+        ])
+        self.db.commit()
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 503, 'name': 'Same title', 'playtime_hours': 0,
+        }])
+        self.db.flush()
+        review = self.db.query(SteamMatchReview).filter_by(steam_appid=503).one()
+        self.assertEqual(imported, 0)
+        self.assertEqual(len(service.steam_review_candidates(review)), 2)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=503).count(), 0)
+
+    def test_identified_expansion_is_only_nested_under_its_parent(self):
+        parent = Videogame(user_id=self.user.id, name='Base Saga', status='Not Started')
+        expansion_card = Videogame(user_id=self.user.id, name='Base Saga Expansion', status='Not Started')
+        steam = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=504, name='Base Saga Expansion',
+            is_dlc=True, parent_game_name='Base Saga', active=True,
+        )
+        self.db.add_all([parent, expansion_card, steam]); self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=expansion_card.id,
+            copy_id='steam:504', steam_appid=504, name=steam.name,
+            platform='PC', format='Digital', source='Steam',
+        ))
+        self.db.commit()
+        self.assertEqual(service.nest_known_steam_dlcs(self.db, self.user.id), 1)
+        self.db.flush()
+        self.assertTrue(expansion_card.hidden)
+        self.assertTrue(expansion_card.is_dlc)
+        self.assertEqual(json.loads(parent.dlcs)[0]['steam_appid'], 504)
+        self.assertEqual(self.db.query(SteamContentLink).filter_by(steam_appid=504).one().parent_game_id, parent.id)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=504).count(), 0)
 
 
 if __name__ == '__main__':
