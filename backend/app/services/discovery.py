@@ -17,7 +17,7 @@ from lxml import html as lxml_html
 from sqlalchemy import or_
 from ..database import SessionLocal
 from ..models import Videogame
-from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamMatchReview, SteamOwnedGame, WantedGame
+from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
 
 logger = logging.getLogger(__name__)
 
@@ -241,13 +241,17 @@ def attach_steam_copy(game, item, igdb_id=None, copy_id=None):
             if not copy.get("name") and item.get("name"):
                 copy["name"] = item["name"]
                 changed = True
+            # Steam owns this value. Refresh it on every successful library sync.
+            if item.get("playtime_hours") is not None and copy.get("playtime_hours") != item["playtime_hours"]:
+                copy["playtime_hours"] = item["playtime_hours"]
+                changed = True
             if changed:
                 game.copies = json.dumps(copies)
             return False
+    if not copies and game.playtime_hours is None and getattr(game, "playtime_mode", "user") == "user":
+        game.playtime_mode = "copies"
     copies.append(steam_copy(item, igdb_id, copy_id))
     game.copies = json.dumps(copies)
-    if item.get("playtime_hours") is not None and game.playtime_hours is None:
-        game.playtime_hours = item["playtime_hours"]
     return True
 
 
@@ -261,6 +265,32 @@ def detach_steam_copy(game, appid):
         return False
     game.copies = json.dumps(kept) if kept else None
     return True
+
+
+def trash_steam_copy(db, user_id, game, owned_copy):
+    """Create a durable tombstone before removing a linked Steam copy."""
+    appid = int(owned_copy.get("steam_appid") or 0)
+    if not appid:
+        return None
+    catalog = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_appid=appid).first()
+    row = db.query(SteamCopyTrash).filter_by(user_id=user_id, steam_appid=appid).first()
+    if row is None:
+        row = SteamCopyTrash(user_id=user_id, steam_appid=appid)
+        db.add(row)
+    row.name = owned_copy.get("name") or (catalog.name if catalog else None) or game.name
+    row.image_url = (catalog.image_url if catalog else None) or game.image_url
+    row.collection_game_id = game.id
+    row.collection_game_name = game.name
+    row.copy_data = json.dumps(owned_copy)
+    row.game_data = json.dumps({
+        key: getattr(game, key) for key in (
+            "name", "description", "comments", "image_url", "status", "playtime_hours",
+            "playtime_mode", "mark", "hype", "completion_date", "publication_year",
+            "release_date", "completion_percentage", "tags", "dlcs", "hidden",
+        )
+    })
+    row.deleted_at = datetime.utcnow()
+    return row
 
 
 def find_parent_game(collection, parent_name):
@@ -323,6 +353,9 @@ def reconcile_steam_library(db, user_id, items):
         links_by_app.setdefault(link.steam_appid, []).append(link)
     reviews_by_app = {row.steam_appid: row for row in db.query(SteamMatchReview).filter_by(user_id=user_id).all()}
     catalog = {row.steam_appid: row for row in db.query(SteamOwnedGame).filter_by(user_id=user_id).all()}
+    trashed_appids = {
+        row.steam_appid for row in db.query(SteamCopyTrash).filter_by(user_id=user_id).all()
+    }
     for item in items:
         catalog[item["appid"]] = upsert_steam_catalog(db, user_id, item)
     db.flush()
@@ -331,8 +364,6 @@ def reconcile_steam_library(db, user_id, items):
         created_collection_game = False
         appid = item["appid"]
         catalog_row = catalog[appid]
-        if catalog_row.duplicate_of_appid:
-            continue
         wanted = wanted_by_app.get(appid)
         app_links = links_by_app.get(appid, [])
         if catalog_row.is_dlc or item.get("is_dlc") or (wanted and wanted.is_dlc):
@@ -360,6 +391,13 @@ def reconcile_steam_library(db, user_id, items):
             if wanted and app_links:
                 wanted.status, wanted.collection_game_id = "Acquired", app_links[0].collection_game_id
                 wanted.steam_wishlist_missing, wanted.updated_at = False, datetime.utcnow()
+            continue
+        if appid in trashed_appids:
+            review = reviews_by_app.get(appid)
+            if review is not None:
+                db.delete(review)
+            continue
+        if catalog_row.duplicate_of_appid:
             continue
         link = None
         game = None
@@ -437,7 +475,7 @@ def reconcile_steam_library(db, user_id, items):
                 user_id=user_id, name=item["name"],
                 description=wanted.description if wanted else None, comments=wanted.comments if wanted else None,
                 image_url=(wanted.image_url if wanted else None) or item.get("image_url"), status="Not Started",
-                playtime_hours=item.get("playtime_hours"), hype=wanted.hype if wanted else None,
+                playtime_hours=None, playtime_mode="copies", hype=wanted.hype if wanted else None,
                 publication_year=wanted.publication_year if wanted else None,
                 release_date=wanted.release_date if wanted else None, tags=wanted.tags if wanted else None,
                 dlcs=wanted.dlcs if wanted else None, is_dlc=wanted.is_dlc if wanted else False,
@@ -467,7 +505,8 @@ def reconcile_steam_library(db, user_id, items):
     # Duplicate apps are represented as extra copies under the canonical app's cards.
     for item in items:
         duplicate = catalog[item["appid"]]
-        if not duplicate.duplicate_of_appid:
+        if (item["appid"] in trashed_appids or links_by_app.get(item["appid"])
+                or not duplicate.duplicate_of_appid):
             continue
         for link in links_by_app.get(duplicate.duplicate_of_appid, []):
             game = collection_by_id.get(link.collection_game_id)

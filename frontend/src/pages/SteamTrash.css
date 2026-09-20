@@ -1,0 +1,11 @@
+.steam-trash-page { padding-bottom:3rem; }
+.steam-trash-grid { display:grid; gap:1rem; }
+.steam-trash-card { display:grid; grid-template-columns:64px minmax(0,1fr) auto; align-items:center; gap:1rem; padding:1rem; }
+.steam-trash-card > img, .steam-trash-cover { width:64px; height:86px; object-fit:cover; border-radius:8px; background:var(--bg-tertiary); }
+.steam-trash-cover { display:grid; place-items:center; color:var(--text-muted); }
+.steam-trash-card h2 { margin:0 0 .25rem; font-size:1.05rem; }
+.steam-trash-card p { margin:0 0 .3rem; color:var(--text-secondary); }
+.steam-trash-card small { color:var(--text-muted); }
+.steam-trash-card .trash-warning { margin-top:.45rem; color:#fbbf24; font-size:.82rem; }
+.trash-empty { display:grid; place-items:center; gap:.5rem; padding:3rem; text-align:center; }
+@media(max-width:620px) { .steam-trash-card { grid-template-columns:52px minmax(0,1fr); } .steam-trash-card > img, .steam-trash-cover { width:52px; height:70px; } .steam-trash-card .btn { grid-column:1 / -1; } }

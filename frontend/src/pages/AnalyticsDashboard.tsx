@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, Target, Clock, Trophy, Gamepad2, Sparkles, BarChart3 } from 'lucide-react';
 import { YearlyRewind, type RewindGame } from '../components/YearlyRewind';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
+import { displayPlaytimeHours } from '../lib/ownedCopies';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
@@ -18,7 +19,10 @@ export function AnalyticsDashboard() {
     const loadGames = async () => {
       try {
         const res = await fetchWithAuth('/videogames/');
-        if (res.ok) setGames(await res.json());
+        if (res.ok) {
+          const rows = await res.json();
+          setGames(rows.map((game: RewindGame & { copies?: string | null; playtime_mode?: string | null }) => ({ ...game, playtime_hours: displayPlaytimeHours(game) })));
+        }
       } catch (e) {
         console.error(e);
       } finally {

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { Compass, Heart, Library, Sparkles, BarChart3, Settings2 } from 'lucide-react';
+import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './CollectionNavigation.css';
 
@@ -41,6 +41,7 @@ export function CollectionNavigation() {
     </nav>
     {!discovery && <nav className="collection-tools" aria-label={`${tab} tools`}>
       <Link to={`${toolsBase}/smart`} aria-current={context === 'smart' ? 'page' : undefined}><Sparkles size={16} /> Smart Add</Link>
+      {!wanted && <Link to={`${base}/trash`} aria-current={pathname.endsWith('/trash') ? 'page' : undefined}><Trash2 size={16} /> Trash</Link>}
       <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Analytics</Link>
       {(wanted || user.is_admin) && <Link to={wanted ? `${toolsBase}/admin` : '/dashboard/admin'}><Settings2 size={16} /> Admin</Link>}
     </nav>}

@@ -92,6 +92,22 @@ class SteamOwnedGame(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class SteamCopyTrash(Base):
+    """A deliberately removed Steam copy that collection sync must not recreate."""
+    __tablename__ = "steam_copy_trash"
+    __table_args__ = (UniqueConstraint("user_id", "steam_appid", name="uq_steam_copy_trash_user_app"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    steam_appid = Column(Integer, nullable=False)
+    name = Column(String, nullable=False)
+    image_url = Column(String)
+    collection_game_id = Column(Integer)
+    collection_game_name = Column(String)
+    copy_data = Column(String, nullable=False)
+    game_data = Column(String)
+    deleted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class SteamMatchReview(Base):
     """A possible Steam/collection match that requires the user's decision."""
     __tablename__ = "steam_match_reviews"

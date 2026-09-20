@@ -11,9 +11,25 @@ interface CollectionGame {
   copies?: string | null;
   hidden?: boolean;
   is_dlc?: boolean;
+  [key: string]: unknown;
 }
 
 type Direction = 'current_into_other' | 'other_into_current';
+type FieldSource = 'current' | 'other';
+
+const MERGE_FIELDS = [
+  ['description', 'Description'], ['comments', 'Comments / review'], ['image_url', 'Cover'],
+  ['status', 'Status'], ['playtime_hours', 'My added time'], ['playtime_mode', 'Time display mode'],
+  ['mark', 'Rating'], ['hype', 'Anticipation'], ['completion_date', 'Completion date'],
+  ['completion_percentage', 'Completion %'], ['publication_year', 'Publication year'],
+  ['release_date', 'Release date'], ['tags', 'Tags'], ['dlcs', 'DLC list'],
+] as const;
+
+function shownValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return 'Empty';
+  if (typeof value === 'string' && value.length > 90) return `${value.slice(0, 87)}…`;
+  return String(value);
+}
 
 export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
   game: CollectionGame;
@@ -25,6 +41,7 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [direction, setDirection] = useState<Direction>('current_into_other');
+  const [fieldSources, setFieldSources] = useState<Record<string, FieldSource>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -34,6 +51,15 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
     (!query.trim() || candidate.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   ), [game.id, games, query]);
   const selected = games.find(candidate => candidate.id === selectedId) || null;
+  const dataFields = useMemo(() => selected ? MERGE_FIELDS.filter(([key]) =>
+    shownValue(game[key]) !== shownValue(selected[key]) &&
+    (shownValue(game[key]) !== 'Empty' || shownValue(selected[key]) !== 'Empty')
+  ) : [], [game, selected]);
+
+  useEffect(() => {
+    const retained: FieldSource = direction === 'other_into_current' ? 'current' : 'other';
+    setFieldSources(Object.fromEntries(MERGE_FIELDS.map(([key]) => [key, retained])));
+  }, [direction, selectedId]);
 
   async function merge() {
     if (!selectedId) return;
@@ -41,7 +67,7 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
     try {
       const response = await fetchWithAuth(`/discovery/steam/collection-games/${game.id}/merge-duplicate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ other_game_id: selectedId, direction }),
+        body: JSON.stringify({ other_game_id: selectedId, direction, field_sources: fieldSources }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'The duplicate games could not be merged.');
       onMerged(await response.json());
@@ -71,6 +97,13 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
       <label className={direction === 'current_into_other' ? 'selected' : ''}><input type="radio" name="duplicate-direction" checked={direction === 'current_into_other'} onChange={() => setDirection('current_into_other')} /><span><strong>{game.name}</strong> is the duplicate<small>Keep {selected.name}; move this game’s copies into it.</small></span></label>
       <label className={direction === 'other_into_current' ? 'selected' : ''}><input type="radio" name="duplicate-direction" checked={direction === 'other_into_current'} onChange={() => setDirection('other_into_current')} /><span><strong>{selected.name}</strong> is the duplicate<small>Keep {game.name}; move the selected game’s copies here.</small></span></label>
     </fieldset>}
+    {selected && dataFields.length > 0 && <section className="duplicate-data-picker">
+      <div><h3>Choose the data to keep</h3><p className="disc-muted">Choose each field independently. Copies and Steam links are always combined.</p></div>
+      {dataFields.map(([key, label]) => <fieldset key={key}><legend>{label}</legend>
+        <label className={fieldSources[key] === 'current' ? 'selected' : ''}><input type="radio" name={`merge-${key}`} checked={fieldSources[key] === 'current'} onChange={() => setFieldSources(current => ({ ...current, [key]: 'current' }))} /><span><strong>{game.name}</strong><small>{shownValue(game[key])}</small></span></label>
+        <label className={fieldSources[key] === 'other' ? 'selected' : ''}><input type="radio" name={`merge-${key}`} checked={fieldSources[key] === 'other'} onChange={() => setFieldSources(current => ({ ...current, [key]: 'other' }))} /><span><strong>{selected.name}</strong><small>{shownValue(selected[key])}</small></span></label>
+      </fieldset>)}
+    </section>}
     <div className="modal-actions duplicate-modal-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={merge} disabled={!selected || busy}>{busy ? <Loader2 className="spinner" size={17} /> : <GitMerge size={17} />} Merge collection games</button></div>
   </dialog>;
 }

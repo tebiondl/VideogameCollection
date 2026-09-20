@@ -16,7 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
-import { matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
+import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -330,6 +330,7 @@ export function VideogamesDashboard() {
         image_url: editingGame.image_url || null,
         status: editingGame.status,
         playtime_hours: editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : null,
+        playtime_mode: editingGame.playtime_mode || 'user',
         mark: editingGame.mark || null,
         hype: editingGame.hype || null,
         completion_date: editingGame.completion_date || null,
@@ -349,7 +350,8 @@ export function VideogamesDashboard() {
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        setGames(games.map(g => g.id === editingGame.id ? editingGame : g));
+        const saved = await res.json();
+        setGames(games.map(g => g.id === editingGame.id ? saved : g));
         setEditingGame(null);
       }
     } catch (err) {
@@ -475,8 +477,9 @@ export function VideogamesDashboard() {
          if (filterState.completionRange.max !== '' && p > filterState.completionRange.max) return false;
      }
 
-     if (filterState.playtimeRange.min !== '' && (g.playtime_hours === null || g.playtime_hours < filterState.playtimeRange.min)) return false;
-     if (filterState.playtimeRange.max !== '' && (g.playtime_hours === null || g.playtime_hours > filterState.playtimeRange.max)) return false;
+     const visiblePlaytime = displayPlaytimeHours(g);
+     if (filterState.playtimeRange.min !== '' && (visiblePlaytime === null || visiblePlaytime < filterState.playtimeRange.min)) return false;
+     if (filterState.playtimeRange.max !== '' && (visiblePlaytime === null || visiblePlaytime > filterState.playtimeRange.max)) return false;
 
      if (filterState.dateRange.min !== '' || filterState.dateRange.max !== '') {
          const year = g.completion_date ? parseInt(g.completion_date, 10) : null;
@@ -692,7 +695,7 @@ export function VideogamesDashboard() {
                 <h3>{game.name}</h3>
                 <div className="vg-player-data">
                   <span className="badge">{game.status}</span>
-                  {game.playtime_hours != null && <span><strong>{game.playtime_hours}</strong> hrs</span>}
+                  {displayPlaytimeHours(game) != null && <span><strong>{displayPlaytimeHours(game)}</strong> hrs</span>}
                   {game.mark != null && <span className="vg-score mark"><strong>{game.mark}/10</strong> rating</span>}
                   {game.hype != null && <span className="vg-score hype"><strong>{game.hype}/10</strong> anticipation</span>}
                 </div>
@@ -822,8 +825,12 @@ export function VideogamesDashboard() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Playtime (Hours)</label>
+                <label className="form-label">My added playtime (hours)</label>
                 <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={editingGame.playtime_hours !== null && editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : ''} onChange={e => setEditingGame({...editingGame, playtime_hours: e.target.value ? Number(e.target.value) : null})} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Copies playtime</label><input className="form-input" value={`${copyPlaytimeHours(editingGame.copies).toFixed(1)} hours`} disabled /></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={editingGame.playtime_mode || 'user'} onChange={event => setEditingGame({ ...editingGame, playtime_mode: event.target.value })}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
               </div>
 
               {(editingGame.status === 'Finished' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') && (

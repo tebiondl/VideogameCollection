@@ -39,6 +39,33 @@ def _copies_with_stable_ids(raw_copies: str | None) -> str | None:
     return json.dumps(copies) if copies else None
 
 
+def _protect_linked_steam_copies(db: Session, user_id: int, game: models.Videogame, raw_copies: str | None) -> str | None:
+    """Lock Steam identity/time and tombstone intentionally removed copies."""
+    from ..discovery_models import SteamCollectionLink, SteamOwnedGame
+    from ..services import discovery as discovery_service
+    try:
+        original = json.loads(game.copies or "[]")
+        incoming = json.loads(raw_copies or "[]")
+    except (TypeError, ValueError):
+        return raw_copies
+    original_by_id = {str(copy.get("id")): copy for copy in original if isinstance(copy, dict) and copy.get("id")}
+    incoming_by_id = {str(copy.get("id")): copy for copy in incoming if isinstance(copy, dict) and copy.get("id")}
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, collection_game_id=game.id).all()
+    for link in links:
+        saved_copy = original_by_id.get(link.copy_id, {"id": link.copy_id, "steam_appid": link.steam_appid})
+        edited_copy = incoming_by_id.get(link.copy_id)
+        if edited_copy is None:
+            discovery_service.trash_steam_copy(db, user_id, game, saved_copy)
+            db.delete(link)
+            continue
+        if int(edited_copy.get("steam_appid") or 0) != link.steam_appid:
+            raise HTTPException(status_code=409, detail="A linked Steam copy cannot be unlinked or changed here. Delete the copy or use Change linked Steam game.")
+        catalog = db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_appid=link.steam_appid).first()
+        edited_copy["source"] = "Steam"
+        edited_copy["playtime_hours"] = catalog.playtime_hours if catalog else saved_copy.get("playtime_hours")
+    return json.dumps(incoming) if incoming else None
+
+
 def _read_tag_names(raw_tags: str | None) -> tuple[list[str], bool]:
     """Return normalized tag values and whether the source used JSON storage."""
     if not raw_tags:
@@ -594,19 +621,9 @@ def update_videogame(
     update_data = game_update.model_dump(exclude_unset=True)
     if "copies" in update_data:
         update_data["copies"] = _copies_with_stable_ids(update_data.get("copies"))
-        try:
-            retained_copy_ids = {
-                str(item["id"]) for item in json.loads(update_data["copies"] or "[]")
-                if isinstance(item, dict) and item.get("id")
-            }
-        except (TypeError, ValueError):
-            retained_copy_ids = set()
-        from ..discovery_models import SteamCollectionLink
-        for steam_link in db.query(SteamCollectionLink).filter_by(
-            user_id=current_user.id, collection_game_id=db_game.id
-        ).all():
-            if steam_link.copy_id not in retained_copy_ids:
-                db.delete(steam_link)
+        update_data["copies"] = _protect_linked_steam_copies(
+            db, current_user.id, db_game, update_data.get("copies")
+        )
     for key, value in update_data.items():
         setattr(db_game, key, value)
         
@@ -630,9 +647,20 @@ def delete_videogame(
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.
     from ..discovery_models import SteamCollectionLink, SteamMatchReview
-    db.query(SteamCollectionLink).filter_by(
+    from ..services import discovery as discovery_service
+    try:
+        copies = json.loads(db_game.copies or "[]")
+    except (TypeError, ValueError):
+        copies = []
+    copies_by_id = {str(copy.get("id")): copy for copy in copies if isinstance(copy, dict) and copy.get("id")}
+    for steam_link in db.query(SteamCollectionLink).filter_by(
         user_id=current_user.id, collection_game_id=db_game.id
-    ).delete(synchronize_session=False)
+    ).all():
+        discovery_service.trash_steam_copy(
+            db, current_user.id, db_game,
+            copies_by_id.get(steam_link.copy_id, {"id": steam_link.copy_id, "steam_appid": steam_link.steam_appid}),
+        )
+        db.delete(steam_link)
     db.query(SteamMatchReview).filter_by(
         user_id=current_user.id, candidate_game_id=db_game.id
     ).delete(synchronize_session=False)

@@ -9,7 +9,7 @@ const code = ts.transpileModule(readFileSync(new URL('../src/lib/ownedCopies.ts'
 }).outputText;
 const exports = {};
 vm.runInNewContext(code, { exports });
-const { matchesOwnedCopyFilters } = exports;
+const { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters } = exports;
 
 const copies = JSON.stringify([
   { id: 'switch', platform: 'Nintendo Switch', format: 'Physical', source: 'Retail' },
@@ -31,4 +31,12 @@ test('all active copy categories must match the same owned copy', () => {
 test('steam app identity matches the Steam source even when legacy source is empty', () => {
   const legacy = JSON.stringify([{ platform: 'PC', format: 'Digital', steam_appid: 10 }]);
   assert.equal(matchesOwnedCopyFilters(legacy, { platforms: [], sources: ['Steam'], formats: [] }), true);
+});
+
+test('playtime mode selects user, copy, or combined hours', () => {
+  const timedCopies = JSON.stringify([{ playtime_hours: 12.5 }, { playtime_hours: 3 }]);
+  assert.equal(copyPlaytimeHours(timedCopies), 15.5);
+  assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'user' }), 4);
+  assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'copies' }), 15.5);
+  assert.equal(displayPlaytimeHours({ copies: timedCopies, playtime_hours: 4, playtime_mode: 'combined' }), 19.5);
 });

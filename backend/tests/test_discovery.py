@@ -13,8 +13,8 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.database import Base, get_db
 from backend.app.models import User, Videogame
-from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamMatchReview, SteamOwnedGame
-from backend.app.routers import discovery_router as router
+from backend.app.discovery_models import WantedGame, DiscoverySettings, DiscoveryCache, PhysicalRelease, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame
+from backend.app.routers import discovery_router as router, videogames_router
 from backend.app.services import discovery as service
 
 
@@ -30,6 +30,7 @@ class DiscoveryTests(unittest.TestCase):
         self.user = self.users[0]
         app = FastAPI()
         app.include_router(router.router)
+        app.include_router(videogames_router.router)
         app.dependency_overrides[get_db] = lambda: self.db
         app.dependency_overrides[router.get_current_user] = lambda: self.user
         self.client = TestClient(app)
@@ -393,9 +394,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(link.collection_game_id, game.id)
 
     def test_collection_duplicate_moves_named_copies_and_links_to_selected_card(self):
-        canonical = Videogame(user_id=self.user.id, name='Final Fantasy VII', status='Not Started',
+        canonical = Videogame(user_id=self.user.id, name='Final Fantasy VII', status='Playing', mark=9, comments='canonical notes',
                               copies=json.dumps([{'id': 'steam:1', 'platform': 'PC', 'format': 'Digital', 'steam_appid': 1}]))
-        duplicate_card = Videogame(user_id=self.user.id, name='Final Fantasy VII (2013)', status='Not Started',
+        duplicate_card = Videogame(user_id=self.user.id, name='Final Fantasy VII (2013)', status='Finished', mark=7, comments='edition notes',
                                    copies=json.dumps([{'id': 'steam:2', 'platform': 'PC', 'format': 'Digital', 'steam_appid': 2}]))
         apps = [
             SteamOwnedGame(user_id=self.user.id, steam_appid=1, name='Final Fantasy VII'),
@@ -412,6 +413,7 @@ class DiscoveryTests(unittest.TestCase):
         self.db.commit()
         response = self.client.post(f'/api/discovery/steam/collection-games/{duplicate_card.id}/merge-duplicate', json={
             'other_game_id': canonical.id, 'direction': 'current_into_other',
+            'field_sources': {'status': 'current', 'mark': 'other', 'comments': 'current'},
         })
         self.assertEqual(response.status_code, 200, response.text)
         self.db.refresh(canonical)
@@ -419,6 +421,9 @@ class DiscoveryTests(unittest.TestCase):
         copies = json.loads(canonical.copies)
         self.assertEqual({copy['steam_appid'] for copy in copies}, {1, 2})
         self.assertEqual({copy['name'] for copy in copies}, {'Final Fantasy VII', 'Final Fantasy VII (2013)'})
+        self.assertEqual(canonical.status, 'Finished')
+        self.assertEqual(canonical.mark, 9)
+        self.assertEqual(canonical.comments, 'edition notes')
         self.assertTrue(duplicate_card.hidden)
         self.assertIsNone(duplicate_card.copies)
         self.assertEqual(self.db.get(SteamOwnedGame, apps[1].id).duplicate_of_appid, 1)
@@ -450,6 +455,45 @@ class DiscoveryTests(unittest.TestCase):
         link = self.db.query(SteamCollectionLink).one()
         self.assertEqual(link.collection_game_id, current.id)
         self.assertEqual(link.copy_id, 'steam:44')
+
+    def test_deleted_steam_copy_is_locked_trashed_and_not_recreated_by_sync(self):
+        game = Videogame(user_id=self.user.id, name='Steam game', status='Not Started', playtime_mode='copies', copies=json.dumps([
+            {'id': 'steam:77', 'name': 'Steam game', 'platform': 'PC', 'format': 'Digital',
+             'source': 'Steam', 'steam_appid': 77, 'playtime_hours': 2.0},
+        ]))
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=77, name='Steam game', playtime_hours=8.5)
+        self.db.add_all([game, steam])
+        self.db.flush()
+        self.db.add(SteamCollectionLink(user_id=self.user.id, steam_appid=77, collection_game_id=game.id, copy_id='steam:77'))
+        self.db.commit()
+
+        locked = self.client.put(f'/api/videogames/{game.id}', json={'name': game.name, 'copies': json.dumps([
+            {'id': 'steam:77', 'name': 'Steam game', 'platform': 'PC', 'format': 'Digital',
+             'source': 'Other', 'steam_appid': 77, 'playtime_hours': 999},
+        ])})
+        self.assertEqual(locked.status_code, 200, locked.text)
+        locked_copy = json.loads(locked.json()['copies'])[0]
+        self.assertEqual(locked_copy['source'], 'Steam')
+        self.assertEqual(locked_copy['playtime_hours'], 8.5)
+
+        removed = self.client.put(f'/api/videogames/{game.id}', json={'name': game.name, 'copies': None})
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 0)
+        trash = self.db.query(SteamCopyTrash).one()
+        self.assertEqual(trash.steam_appid, 77)
+
+        item = {'appid': 77, 'name': 'Steam game', 'playtime_hours': 10.0, 'image_url': None, 'store_url': None}
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [item]), 0)
+        self.db.commit()
+        self.assertIsNone(game.copies)
+
+        restored = self.client.post(f'/api/discovery/steam/trash/{trash.id}/restore')
+        self.assertEqual(restored.status_code, 200, restored.text)
+        restored_copy = json.loads(restored.json()['copies'])[0]
+        self.assertEqual(restored_copy['steam_appid'], 77)
+        self.assertEqual(restored_copy['playtime_hours'], 10.0)
+        self.assertEqual(self.db.query(SteamCopyTrash).count(), 0)
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 1)
 
     def test_owned_steam_dlc_is_nested_and_never_creates_a_collection_card(self):
         parent = Videogame(user_id=self.user.id, name='Base Game', status='Not Started')

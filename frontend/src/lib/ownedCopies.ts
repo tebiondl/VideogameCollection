@@ -9,6 +9,21 @@ export interface OwnedCopy {
   igdb_id?: number | null;
   price?: number | null;
   currency?: string;
+  playtime_hours?: number | null;
+}
+
+export type PlaytimeMode = 'user' | 'copies' | 'combined';
+
+export function copyPlaytimeHours(value: string | null | undefined): number {
+  return parseCopies(value).reduce((sum, copy) => sum + Math.max(0, Number(copy.playtime_hours) || 0), 0);
+}
+
+export function displayPlaytimeHours(game: { copies?: string | null; playtime_hours?: number | null; playtime_mode?: PlaytimeMode | string | null }): number | null {
+  const userHours = Math.max(0, Number(game.playtime_hours) || 0);
+  const copiesHours = copyPlaytimeHours(game.copies);
+  const mode = game.playtime_mode || 'user';
+  const total = mode === 'copies' ? copiesHours : mode === 'combined' ? userHours + copiesHours : userHours;
+  return total || (game.playtime_hours != null || copiesHours > 0 ? 0 : null);
 }
 
 export interface OwnedCopyFilters {

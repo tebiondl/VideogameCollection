@@ -4,7 +4,7 @@ from sqlalchemy import text
 from .database import engine, Base
 from .database import SessionLocal
 from .models import AppSetting, Videogame
-from .discovery_models import SteamCollectionLink, SteamOwnedGame, WantedGame
+from .discovery_models import SteamCollectionLink, SteamOwnedGame, WantedGame, SteamCopyTrash
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router
 from .services.discovery import scheduler
 from .services.backups import scheduler as backup_scheduler
@@ -24,6 +24,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN dlcs TEXT",
         "ALTER TABLE smart_import_items ADD COLUMN dlcs TEXT",
         "ALTER TABLE videogames ADD COLUMN playtime_hours FLOAT",
+        "ALTER TABLE videogames ADD COLUMN playtime_mode VARCHAR NOT NULL DEFAULT 'user'",
         "ALTER TABLE smart_import_items ADD COLUMN playtime_hours FLOAT",
         "ALTER TABLE videogames ADD COLUMN release_date VARCHAR",
         "ALTER TABLE videogames ADD COLUMN is_dlc BOOLEAN NOT NULL DEFAULT 0",
@@ -198,6 +199,81 @@ def _backfill_steam_copy_names_v4():
         db.close()
 
 _backfill_steam_copy_names_v4()
+
+def _backfill_steam_copy_time_v5():
+    """Normalize linked copy ownership and seed Steam-controlled playtime."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_copy_time_backfilled_v5").first():
+            return
+        import json
+        catalog = {(row.user_id, row.steam_appid): row for row in db.query(SteamOwnedGame).all()}
+        links_by_game = {}
+        for link in db.query(SteamCollectionLink).all():
+            links_by_game.setdefault((link.user_id, link.collection_game_id), {})[link.copy_id] = link
+        for game in db.query(Videogame).all():
+            links = links_by_game.get((game.user_id, game.id), {})
+            if not links:
+                continue
+            try:
+                copies = json.loads(game.copies or "[]")
+            except (TypeError, ValueError):
+                continue
+            changed = False
+            for owned_copy in copies:
+                link = links.get(str(owned_copy.get("id")))
+                if link is None:
+                    continue
+                steam = catalog.get((game.user_id, link.steam_appid))
+                if owned_copy.get("source") != "Steam":
+                    owned_copy["source"] = "Steam"
+                    changed = True
+                if steam and steam.playtime_hours is not None and owned_copy.get("playtime_hours") != steam.playtime_hours:
+                    owned_copy["playtime_hours"] = steam.playtime_hours
+                    changed = True
+            if changed:
+                game.copies = json.dumps(copies)
+        db.add(AppSetting(key="steam_copy_time_backfilled_v5", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam copy-time v5 backfill failed")
+    finally:
+        db.close()
+
+_backfill_steam_copy_time_v5()
+
+def _separate_legacy_steam_playtime_v6():
+    """Move legacy auto-imported Steam hours out of the user's personal time field."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_playtime_separated_v6").first():
+            return
+        import json
+        game_ids = {
+            row.collection_game_id for row in db.query(SteamCollectionLink).filter_by(created_collection_game=True).all()
+        }
+        for game in db.query(Videogame).filter(Videogame.id.in_(game_ids)).all() if game_ids else []:
+            try:
+                copies = json.loads(game.copies or "[]")
+            except (TypeError, ValueError):
+                copies = []
+            if game.playtime_hours is not None:
+                target = next((copy for copy in copies if copy.get("steam_appid") and copy.get("playtime_hours") is None), None)
+                if target is not None:
+                    target["playtime_hours"] = game.playtime_hours
+                    game.copies = json.dumps(copies)
+                game.playtime_hours = None
+            game.playtime_mode = "copies"
+        db.add(AppSetting(key="steam_playtime_separated_v6", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Steam playtime v6 separation failed")
+    finally:
+        db.close()
+
+_separate_legacy_steam_playtime_v6()
 
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():

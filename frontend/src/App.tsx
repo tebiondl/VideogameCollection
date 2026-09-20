@@ -17,6 +17,7 @@ import { DiscoveryDashboard } from './pages/DiscoveryDashboard';
 import { DiscoveryAnalytics } from './pages/DiscoveryAnalytics';
 import { DiscoverySmartAdd } from './pages/DiscoverySmartAdd';
 import { WantedGames } from './pages/WantedGames';
+import { SteamTrash } from './pages/SteamTrash';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -42,6 +43,7 @@ function AppRoutes() {
         <CollectionNavigation />
         <Routes>
           <Route path="/dashboard/videogames/collection" element={<ProtectedRoute><VideogamesDashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/trash" element={<ProtectedRoute><SteamTrash /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/discovery" element={<ProtectedRoute><DiscoveryDashboard /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/wanted" element={<ProtectedRoute><WantedGames /></ProtectedRoute>} />

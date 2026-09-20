@@ -183,6 +183,7 @@ class SteamGameLinkInput(BaseModel):
 class CollectionDuplicateInput(BaseModel):
     other_game_id: int = Field(gt=0)
     direction: Literal["current_into_other", "other_into_current"]
+    field_sources: dict[str, Literal["current", "other"]] = Field(default_factory=dict)
 
 
 class CopyOptionsInput(BaseModel):

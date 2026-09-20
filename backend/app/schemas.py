@@ -1,6 +1,6 @@
 import json
 from pydantic import BaseModel, Field, field_validator
-from typing import List
+from typing import List, Literal
 
 class UserCreate(BaseModel):
     username: str
@@ -35,6 +35,7 @@ class VideogameBase(BaseModel):
     status: str = "Not Started"
     time_spent: str | None = None
     playtime_hours: float | None = None
+    playtime_mode: Literal["user", "copies", "combined"] = "user"
     mark: int | None = None
     hype: int | None = None
     completion_date: str | None = None
