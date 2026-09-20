@@ -43,6 +43,7 @@ class Videogame(Base):
     parent_game_name = Column(String, nullable=True)
     copies = Column(String, nullable=True) # JSON array of owned platform / format copies
     hidden = Column(Boolean, nullable=False, default=False)
+    reviewed = Column(Boolean, nullable=False, default=False)
     merged_into_game_id = Column(Integer, nullable=True, index=True)
     user_modified_at = Column(DateTime, nullable=True)
     version = Column(Integer, nullable=False, default=1)

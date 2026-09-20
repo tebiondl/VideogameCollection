@@ -29,6 +29,7 @@ export interface FilterState {
   playtimeRange: { min: number | ''; max: number | '' };
   dateRange: { min: number | ''; max: number | '' };
   hiddenOnly: boolean;
+  reviewedState: 'all' | 'reviewed' | 'unreviewed';
 }
 
 export const DEFAULT_FILTER_STATE: FilterState = {
@@ -42,6 +43,7 @@ export const DEFAULT_FILTER_STATE: FilterState = {
   playtimeRange: { min: '', max: '' },
   dateRange: { min: '', max: '' },
   hiddenOnly: false,
+  reviewedState: 'all',
 };
 
 interface Props {
@@ -253,6 +255,25 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                  </div>
                  <p className="text-muted" style={{ margin: '.65rem 0 0', fontSize: '.82rem' }}>
                    Hidden Steam betas and network tests stay out of the collection until this filter is selected.
+                 </p>
+               </div>
+
+               <div className="filter-section">
+                 <h3>Review progress</h3>
+                 <div className="status-pills">
+                   {([
+                     ['all', 'All games'],
+                     ['reviewed', 'Checked'],
+                     ['unreviewed', 'Not checked'],
+                   ] as const).map(([value, label]) => <button
+                     type="button"
+                     key={value}
+                     className={`status-pill ${filterState.reviewedState === value ? 'active' : ''}`}
+                     onClick={() => onChange({ ...filterState, reviewedState: value })}
+                   >{label}</button>)}
+                 </div>
+                 <p className="text-muted" style={{ margin: '.65rem 0 0', fontSize: '.82rem' }}>
+                   Use “Not checked” to continue reviewing your collection where you left off.
                  </p>
                </div>
 

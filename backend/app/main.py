@@ -34,6 +34,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN parent_game_name VARCHAR",
         "ALTER TABLE videogames ADD COLUMN copies TEXT",
         "ALTER TABLE videogames ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE videogames ADD COLUMN reviewed BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN igdb_id INTEGER",
         "ALTER TABLE videogames ADD COLUMN merged_into_game_id INTEGER",
         "ALTER TABLE videogames ADD COLUMN user_modified_at DATETIME",

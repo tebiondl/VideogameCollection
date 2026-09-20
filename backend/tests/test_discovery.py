@@ -898,14 +898,16 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(created.status_code, 200, created.text)
         game = created.json()
         first = self.client.put(f"/api/videogames/{game['id']}", json={
-            'name': 'First edit', 'version': game['version'],
+            'name': 'First edit', 'reviewed': True, 'version': game['version'],
         })
         self.assertEqual(first.status_code, 200, first.text)
+        self.assertTrue(first.json()['reviewed'])
         stale = self.client.put(f"/api/videogames/{game['id']}", json={
             'name': 'Lost edit', 'version': game['version'],
         })
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(self.db.get(Videogame, game['id']).name, 'First edit')
+        self.assertTrue(self.db.get(Videogame, game['id']).reviewed)
 
     def test_one_collection_card_cannot_link_the_same_steam_app_twice(self):
         game = Videogame(user_id=self.user.id, name='Two copies', status='Not Started', copies=json.dumps([

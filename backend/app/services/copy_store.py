@@ -176,7 +176,7 @@ def _snapshot(game: Videogame) -> str:
     fields = (
         "name", "description", "comments", "image_url", "status", "playtime_hours",
         "playtime_mode", "mark", "hype", "completion_date", "publication_year",
-        "release_date", "completion_percentage", "tags", "dlcs", "hidden", "igdb_id",
+        "release_date", "completion_percentage", "tags", "dlcs", "hidden", "reviewed", "igdb_id",
     )
     return json.dumps({key: getattr(game, key, None) for key in fields})
 

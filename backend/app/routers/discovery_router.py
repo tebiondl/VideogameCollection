@@ -478,7 +478,7 @@ def merge_collection_duplicate(
     merge_fields = (
         "description", "comments", "image_url", "status", "playtime_hours", "playtime_mode",
         "mark", "hype", "completion_date", "publication_year", "release_date",
-        "completion_percentage", "tags", "dlcs", "igdb_id",
+        "completion_percentage", "tags", "dlcs", "reviewed", "igdb_id",
     )
     for field in merge_fields:
         default_source = "current" if retained_game.id == current_game.id else "other"
@@ -766,7 +766,7 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
         allowed = {
             "name", "description", "comments", "image_url", "status", "playtime_hours",
             "playtime_mode", "mark", "hype", "completion_date", "publication_year",
-            "release_date", "completion_percentage", "tags", "dlcs", "hidden", "igdb_id",
+            "release_date", "completion_percentage", "tags", "dlcs", "hidden", "reviewed", "igdb_id",
         }
         fields = {key: value for key, value in snapshot.items() if key in allowed}
         fields.update({"name": fields.get("name") or row.collection_game_name or row.name,

@@ -175,7 +175,7 @@ export function VideogamesDashboard() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly };
+        return { ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly, reviewedState: parsed.reviewedState || 'all' };
       } catch (e) {}
     }
     return DEFAULT_FILTER_STATE;
@@ -344,6 +344,7 @@ export function VideogamesDashboard() {
         parent_game_name: editingGame.parent_game_name || null,
         copies: editingGame.copies || null,
         hidden: !!editingGame.hidden,
+        reviewed: !!editingGame.reviewed,
         version: editingGame.version ?? null,
       };
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
@@ -377,7 +378,7 @@ export function VideogamesDashboard() {
   const handleLoadFilter = (sf: any) => {
     try {
        const parsed = JSON.parse(sf.filter_data);
-       setFilterState({ ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly });
+       setFilterState({ ...DEFAULT_FILTER_STATE, ...parsed, hiddenOnly: !!parsed.hiddenOnly, reviewedState: parsed.reviewedState || 'all' });
     } catch {}
   };
 
@@ -456,6 +457,8 @@ export function VideogamesDashboard() {
 
   const filteredGames = games.filter(g => {
      if (!!g.hidden !== !!filterState.hiddenOnly) return false;
+     if (filterState.reviewedState === 'reviewed' && !g.reviewed) return false;
+     if (filterState.reviewedState === 'unreviewed' && !!g.reviewed) return false;
      if (g.is_dlc) return false;
      if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
      
@@ -811,6 +814,13 @@ export function VideogamesDashboard() {
 
             <div className="data-section-user">
               <h3 className="section-title">User Data</h3>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!editingGame.reviewed} onChange={event => setEditingGame({ ...editingGame, reviewed: event.target.checked })} />
+                  Checked / reviewed
+                </label>
+                <p className="text-muted" style={{ margin: '.35rem 0 0', fontSize: '.82rem' }}>Mark this after you finish reviewing its information. It stays saved between sessions.</p>
+              </div>
               <div className="form-row">
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Status</label>

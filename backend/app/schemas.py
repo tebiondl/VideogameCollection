@@ -82,14 +82,16 @@ class VideogameBase(BaseModel):
         return json.dumps(items)
 
 class VideogameCreate(VideogameBase):
-    pass
+    reviewed: bool = False
 
 class VideogameUpdate(VideogameBase):
     id: int
+    reviewed: bool = False
 
 class VideogameResponse(VideogameBase):
     id: int
     user_id: int
+    reviewed: bool = False
 
     class Config:
         from_attributes = True
