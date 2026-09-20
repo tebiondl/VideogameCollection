@@ -346,13 +346,15 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.db.query(SteamCollectionLink).one().collection_game_id, original.id)
 
     def test_manual_link_allows_one_steam_app_for_multiple_collection_games(self):
-        first = Videogame(user_id=self.user.id, name='Edition One', status='Not Started')
-        second = Videogame(user_id=self.user.id, name='Edition Two', status='Not Started')
+        first = Videogame(user_id=self.user.id, name='Edition One', status='Not Started',
+                          copies=json.dumps([{'id': 'first-copy', 'platform': 'PC', 'format': 'Digital'}]))
+        second = Videogame(user_id=self.user.id, name='Edition Two', status='Not Started',
+                           copies=json.dumps([{'id': 'second-copy', 'platform': 'PC', 'format': 'Digital'}]))
         steam = SteamOwnedGame(user_id=self.user.id, steam_appid=900, name='Steam Complete Edition', playtime_hours=2.0)
         self.db.add_all([first, second, steam])
         self.db.commit()
-        for game in (first, second):
-            response = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/link', json={
+        for game, copy_id in ((first, 'first-copy'), (second, 'second-copy')):
+            response = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/copies/{copy_id}/link', json={
                 'steam_appid': 900, 'mode': 'primary',
             })
             self.assertEqual(response.status_code, 200, response.text)
@@ -361,9 +363,40 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(first.copies)[0]['steam_appid'], 900)
         self.assertEqual(json.loads(second.copies)[0]['steam_appid'], 900)
 
+    def test_manual_link_targets_one_copy_without_changing_the_other_owned_copy(self):
+        game = Videogame(
+            user_id=self.user.id, name='Owned twice', status='Not Started',
+            copies=json.dumps([
+                {'id': 'switch-copy', 'platform': 'Nintendo Switch', 'format': 'Physical'},
+                {'id': 'pc-copy', 'platform': 'PC', 'format': 'Digital'},
+            ]),
+        )
+        steam = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=901, name='Owned twice on Steam',
+            store_url='https://store.steampowered.com/app/901/',
+        )
+        self.db.add_all([game, steam])
+        self.db.commit()
+
+        response = self.client.post(
+            f'/api/discovery/steam/collection-games/{game.id}/copies/pc-copy/link',
+            json={'steam_appid': 901, 'mode': 'primary'},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(game)
+        switch_copy, pc_copy = json.loads(game.copies)
+        self.assertNotIn('steam_appid', switch_copy)
+        self.assertEqual(switch_copy['platform'], 'Nintendo Switch')
+        self.assertEqual(pc_copy['steam_appid'], 901)
+        link = self.db.query(SteamCollectionLink).one()
+        self.assertEqual(link.copy_id, 'pc-copy')
+        self.assertEqual(link.collection_game_id, game.id)
+
     def test_manual_duplicate_keeps_one_visible_card_and_two_steam_copies(self):
-        canonical = Videogame(user_id=self.user.id, name='Final Fantasy VII', status='Not Started')
-        duplicate_card = Videogame(user_id=self.user.id, name='Final Fantasy VII (2013)', status='Not Started')
+        canonical = Videogame(user_id=self.user.id, name='Final Fantasy VII', status='Not Started',
+                              copies=json.dumps([{'id': 'steam:1', 'platform': 'PC', 'format': 'Digital', 'steam_appid': 1}]))
+        duplicate_card = Videogame(user_id=self.user.id, name='Final Fantasy VII (2013)', status='Not Started',
+                                   copies=json.dumps([{'id': 'steam:2', 'platform': 'PC', 'format': 'Digital', 'steam_appid': 2}]))
         apps = [
             SteamOwnedGame(user_id=self.user.id, steam_appid=1, name='Final Fantasy VII'),
             SteamOwnedGame(user_id=self.user.id, steam_appid=2, name='Final Fantasy VII (2013)'),
@@ -371,13 +404,13 @@ class DiscoveryTests(unittest.TestCase):
         self.db.add_all([canonical, duplicate_card, *apps])
         self.db.flush()
         self.db.add_all([
-            SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=canonical.id),
-            SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=duplicate_card.id, created_collection_game=True),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=canonical.id, copy_id='steam:1'),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=duplicate_card.id, copy_id='steam:2', created_collection_game=True),
         ])
         service.attach_steam_copy(canonical, {'appid': 1, 'name': apps[0].name})
         service.attach_steam_copy(duplicate_card, {'appid': 2, 'name': apps[1].name})
         self.db.commit()
-        response = self.client.post(f'/api/discovery/steam/collection-games/{canonical.id}/link', json={
+        response = self.client.post(f'/api/discovery/steam/collection-games/{canonical.id}/copies/steam%3A1/link', json={
             'steam_appid': 2, 'mode': 'duplicate',
         })
         self.assertEqual(response.status_code, 200, response.text)
@@ -386,7 +419,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual({copy['steam_appid'] for copy in json.loads(canonical.copies)}, {1, 2})
         self.assertTrue(duplicate_card.hidden)
         self.assertEqual(self.db.get(SteamOwnedGame, apps[1].id).duplicate_of_appid, 1)
-        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=2).count(), 0)
+        duplicate_link = self.db.query(SteamCollectionLink).filter_by(steam_appid=2).one()
+        self.assertEqual(duplicate_link.collection_game_id, canonical.id)
+        self.assertEqual(duplicate_link.copy_id, 'steam:2')
 
     def test_owned_steam_dlc_is_nested_and_never_creates_a_collection_card(self):
         parent = Videogame(user_id=self.user.id, name='Base Game', status='Not Started')
@@ -533,10 +568,10 @@ class DiscoveryTests(unittest.TestCase):
         self.db.add_all([settings, local, imported, mixed_import, other_user_game])
         self.db.flush()
         self.db.add_all([
-            SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=local.id, created_collection_game=False),
-            SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=imported.id, created_collection_game=True),
-            SteamCollectionLink(user_id=self.user.id, steam_appid=3, collection_game_id=mixed_import.id, created_collection_game=True),
-            SteamCollectionLink(user_id=self.users[1].id, steam_appid=99, collection_game_id=other_user_game.id, created_collection_game=True),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=1, collection_game_id=local.id, copy_id='steam:1', created_collection_game=False),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=2, collection_game_id=imported.id, copy_id='steam:2', created_collection_game=True),
+            SteamCollectionLink(user_id=self.user.id, steam_appid=3, collection_game_id=mixed_import.id, copy_id='steam:3', created_collection_game=True),
+            SteamCollectionLink(user_id=self.users[1].id, steam_appid=99, collection_game_id=other_user_game.id, copy_id='steam:99', created_collection_game=True),
             WantedGame(user_id=self.user.id, name='Steam wishlist', source='steam', steam_appid=4),
             WantedGame(user_id=self.user.id, name='Manual wanted', source='manual', steam_appid=1, collection_game_id=local.id, status='Acquired'),
             SteamMatchReview(user_id=self.user.id, steam_appid=5, steam_name='Maybe', candidate_game_id=local.id, candidate_name=local.name, confidence=.8, steam_data='{}'),

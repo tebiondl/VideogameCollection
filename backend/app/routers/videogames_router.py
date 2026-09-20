@@ -6,6 +6,7 @@ import json
 import os
 import logging
 import httpx
+from uuid import uuid4
 from openai import OpenAI
 
 from .. import schemas, models, database
@@ -18,6 +19,24 @@ router = APIRouter(prefix="/api/videogames", tags=["videogames"])
 
 # In-memory progress tracker { user_id: { total, completed, status } }
 auto_fill_progress = {}
+
+
+def _copies_with_stable_ids(raw_copies: str | None) -> str | None:
+    """Ensure every owned copy can carry an independent external identity."""
+    if not raw_copies:
+        return None
+    try:
+        copies = json.loads(raw_copies)
+    except (TypeError, ValueError):
+        return raw_copies
+    if not isinstance(copies, list):
+        return raw_copies
+    for owned_copy in copies:
+        if not isinstance(owned_copy, dict) or owned_copy.get("id"):
+            continue
+        appid = owned_copy.get("steam_appid")
+        owned_copy["id"] = f"steam:{appid}" if appid else f"copy:{uuid4()}"
+    return json.dumps(copies) if copies else None
 
 
 def _read_tag_names(raw_tags: str | None) -> tuple[list[str], bool]:
@@ -546,7 +565,9 @@ def create_videogame(
 ):
     if game.is_dlc:
         raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
-    new_game = models.Videogame(**game.model_dump(), user_id=current_user.id)
+    game_data = game.model_dump()
+    game_data["copies"] = _copies_with_stable_ids(game_data.get("copies"))
+    new_game = models.Videogame(**game_data, user_id=current_user.id)
     db.add(new_game)
     db.commit()
     db.refresh(new_game)
@@ -567,7 +588,25 @@ def update_videogame(
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
         
+    if game_update.is_dlc:
+        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
+
     update_data = game_update.model_dump(exclude_unset=True)
+    if "copies" in update_data:
+        update_data["copies"] = _copies_with_stable_ids(update_data.get("copies"))
+        try:
+            retained_copy_ids = {
+                str(item["id"]) for item in json.loads(update_data["copies"] or "[]")
+                if isinstance(item, dict) and item.get("id")
+            }
+        except (TypeError, ValueError):
+            retained_copy_ids = set()
+        from ..discovery_models import SteamCollectionLink
+        for steam_link in db.query(SteamCollectionLink).filter_by(
+            user_id=current_user.id, collection_game_id=db_game.id
+        ).all():
+            if steam_link.copy_id not in retained_copy_ids:
+                db.delete(steam_link)
     for key, value in update_data.items():
         setattr(db_game, key, value)
         
@@ -588,9 +627,6 @@ def delete_videogame(
     
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
-    if game_update.is_dlc:
-        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
-
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.
     from ..discovery_models import SteamCollectionLink, SteamMatchReview

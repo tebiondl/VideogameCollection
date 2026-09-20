@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CopyPlus, Link2, Loader2, Search, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import './SteamLinkModal.css';
+import type { OwnedCopy } from '../lib/ownedCopies';
 
 interface SteamCandidate {
   steam_appid: number;
@@ -15,8 +16,9 @@ interface SteamCandidate {
   duplicate_of_appid: number | null;
 }
 
-export function SteamLinkModal({ game, onClose, onLinked }: {
+export function SteamLinkModal({ game, copy, onClose, onLinked }: {
   game: { id: number; name: string };
+  copy: OwnedCopy;
   onClose: () => void;
   onLinked: (updatedGame: unknown) => void;
 }) {
@@ -29,14 +31,14 @@ export function SteamLinkModal({ game, onClose, onLinked }: {
 
   useEffect(() => {
     dialog.current?.showModal();
-    fetchWithAuth(`/discovery/steam/collection-games/${game.id}/candidates`)
+    fetchWithAuth(`/discovery/steam/collection-games/${game.id}/copies/${encodeURIComponent(copy.id!)}/candidates`)
       .then(async response => {
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Could not load the Steam library.');
         return response.json();
       })
       .then(data => { setItems(data.candidates); setCurrentAppid(data.current_steam_appid); })
       .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load the Steam library.'));
-  }, [game.id]);
+  }, [game.id, copy.id]);
 
   const visible = useMemo(() => {
     const key = query.trim().toLowerCase();
@@ -46,7 +48,7 @@ export function SteamLinkModal({ game, onClose, onLinked }: {
   async function link(item: SteamCandidate, mode: 'primary' | 'duplicate') {
     setBusy(item.steam_appid); setError('');
     try {
-      const response = await fetchWithAuth(`/discovery/steam/collection-games/${game.id}/link`, {
+      const response = await fetchWithAuth(`/discovery/steam/collection-games/${game.id}/copies/${encodeURIComponent(copy.id!)}/link`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ steam_appid: item.steam_appid, mode }),
       });
@@ -59,8 +61,8 @@ export function SteamLinkModal({ game, onClose, onLinked }: {
   }
 
   return <dialog ref={dialog} className="discovery-dialog discovery steam-link-dialog" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="steam-link-title">
-    <div className="disc-section-heading"><div><p className="disc-eyebrow">STEAM IDENTITY</p><h2 id="steam-link-title">Link {game.name}</h2></div><button className="disc-icon-button" onClick={onClose} disabled={busy !== null} aria-label="Close"><X /></button></div>
-    <p className="disc-muted">Choose the closest game from the Steam account. One Steam game may be linked to several collection entries.</p>
+    <div className="disc-section-heading"><div><p className="disc-eyebrow">STEAM COPY IDENTITY</p><h2 id="steam-link-title">Link {game.name}</h2></div><button className="disc-icon-button" onClick={onClose} disabled={busy !== null} aria-label="Close"><X /></button></div>
+    <p className="disc-muted">Link the {copy.platform || 'selected'} · {copy.format || 'Any'} copy. Other copies of this game keep their own platform, source, and Steam link.</p>
     {currentAppid && <p className="disc-alert success"><Check size={16} /> Primary Steam app: {currentAppid}</p>}
     {error && <p className="disc-alert error" role="alert">{error}</p>}
     <label className="steam-link-search"><Search size={18} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search owned Steam games…" /></label>

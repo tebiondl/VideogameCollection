@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, Link2, EyeOff } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -117,7 +117,7 @@ export function VideogamesDashboard() {
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
-  const [steamLinkGame, setSteamLinkGame] = useState<any>(null);
+  const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>({ platforms: [], sources: [] });
 
@@ -756,15 +756,10 @@ export function VideogamesDashboard() {
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
                 <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
-                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} />
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} />
               </div>
 
               <div className="form-row" style={{ alignItems: 'stretch' }}>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Steam link</label>
-                  <button type="button" className="btn btn-secondary" onClick={() => setSteamLinkGame(editingGame)}><Link2 size={17} /> Link or change Steam game</button>
-                  <p className="text-muted" style={{ margin: '.55rem 0 0', fontSize: '.82rem' }}>You can also merge another Steam app as a duplicate copy.</p>
-                </div>
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Visibility</label>
                   <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center' }}><input type="checkbox" checked={!!editingGame.hidden} onChange={event => setEditingGame({ ...editingGame, hidden: event.target.checked })} /><EyeOff size={17} /> Hide from collection</label>
@@ -834,7 +829,7 @@ export function VideogamesDashboard() {
         </div>
       )}
 
-      {steamLinkGame && <SteamLinkModal game={steamLinkGame} onClose={() => setSteamLinkGame(null)} onLinked={updated => {
+      {steamLinkTarget && <SteamLinkModal game={steamLinkTarget.game} copy={steamLinkTarget.copy} onClose={() => setSteamLinkTarget(null)} onLinked={updated => {
         const game = updated as any;
         setGames(current => current.map(row => row.id === game.id ? game : row));
         setEditingGame(game);

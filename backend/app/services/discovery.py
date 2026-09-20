@@ -206,23 +206,38 @@ def steam_review_response(review):
     }
 
 
-def steam_copy(item, igdb_id=None):
+def steam_copy(item, igdb_id=None, copy_id=None):
     return {
-        "id": f"steam:{item['appid']}", "platform": "PC", "format": "Digital", "source": "Steam",
+        "id": copy_id or f"steam:{item['appid']}", "platform": "PC", "format": "Digital", "source": "Steam",
         "store_url": item.get("store_url") or f"https://store.steampowered.com/app/{item['appid']}/",
         "steam_appid": item["appid"], "igdb_id": igdb_id or item.get("igdb_id"),
         "playtime_hours": item.get("playtime_hours"), "price": None, "currency": "EUR",
     }
 
 
-def attach_steam_copy(game, item, igdb_id=None):
+def steam_copy_id(game, appid):
+    try:
+        copies = json.loads(game.copies or "[]")
+    except (TypeError, ValueError):
+        return None
+    for copy in copies:
+        if int(copy.get("steam_appid") or 0) == int(appid):
+            return str(copy.get("id") or f"steam:{appid}")
+    return None
+
+
+def attach_steam_copy(game, item, igdb_id=None, copy_id=None):
     try:
         copies = json.loads(game.copies or "[]")
     except (TypeError, ValueError):
         copies = []
-    if any(int(copy.get("steam_appid") or 0) == item["appid"] for copy in copies):
-        return False
-    copies.append(steam_copy(item, igdb_id))
+    for copy in copies:
+        if int(copy.get("steam_appid") or 0) == item["appid"]:
+            if not copy.get("id"):
+                copy["id"] = copy_id or f"steam:{item['appid']}"
+                game.copies = json.dumps(copies)
+            return False
+    copies.append(steam_copy(item, igdb_id, copy_id))
     game.copies = json.dumps(copies)
     if item.get("playtime_hours") is not None and game.playtime_hours is None:
         game.playtime_hours = item["playtime_hours"]
@@ -293,7 +308,9 @@ def reconcile_steam_library(db, user_id, items):
     collection_by_id = {game.id: game for game in collection}
     wanted_by_app = {row.steam_appid: row for row in db.query(WantedGame).filter_by(user_id=user_id, deleted=False).all() if row.steam_appid}
     links = db.query(SteamCollectionLink).filter_by(user_id=user_id).all()
-    links_by_game = {link.collection_game_id: link for link in links}
+    links_by_game = {}
+    for link in links:
+        links_by_game.setdefault(link.collection_game_id, []).append(link)
     links_by_app = {}
     for link in links:
         links_by_app.setdefault(link.steam_appid, []).append(link)
@@ -331,7 +348,7 @@ def reconcile_steam_library(db, user_id, items):
         if app_links:
             for link in app_links:
                 game = collection_by_id.get(link.collection_game_id)
-                if game and attach_steam_copy(game, item, link.igdb_id or catalog_row.igdb_id):
+                if game and attach_steam_copy(game, item, link.igdb_id or catalog_row.igdb_id, link.copy_id):
                     imported += 1
             if wanted and app_links:
                 wanted.status, wanted.collection_game_id = "Acquired", app_links[0].collection_game_id
@@ -387,11 +404,20 @@ def reconcile_steam_library(db, user_id, items):
             db.delete(review)
             reviews_by_app.pop(appid, None)
         if game is not None:
-            primary = links_by_game.get(game.id)
-            if primary and primary.steam_appid != appid:
+            existing_links = links_by_game.get(game.id, [])
+            primary = next((row for row in existing_links if row.steam_appid != appid), None)
+            if primary:
                 catalog_row.duplicate_of_appid = primary.steam_appid
                 if attach_steam_copy(game, item, target_igdb_id):
                     imported += 1
+                copy_id = steam_copy_id(game, appid)
+                duplicate_link = SteamCollectionLink(
+                    user_id=user_id, steam_appid=appid, collection_game_id=game.id, copy_id=copy_id,
+                    igdb_id=target_igdb_id, created_collection_game=False, user_selected=False,
+                )
+                db.add(duplicate_link)
+                links_by_game.setdefault(game.id, []).append(duplicate_link)
+                links_by_app.setdefault(appid, []).append(duplicate_link)
                 if wanted:
                     wanted.status, wanted.collection_game_id = "Acquired", game.id
                     wanted.steam_wishlist_missing, wanted.updated_at = False, datetime.utcnow()
@@ -417,13 +443,14 @@ def reconcile_steam_library(db, user_id, items):
             collection_by_id[game.id] = game
         if attach_steam_copy(game, item, target_igdb_id):
             imported += 1
+        copy_id = steam_copy_id(game, appid)
         link = SteamCollectionLink(
             user_id=user_id, steam_appid=appid, collection_game_id=game.id,
-            igdb_id=target_igdb_id, created_collection_game=created_collection_game,
+            copy_id=copy_id, igdb_id=target_igdb_id, created_collection_game=created_collection_game,
             user_selected=False,
         )
         db.add(link)
-        links_by_game[game.id] = link
+        links_by_game.setdefault(game.id, []).append(link)
         links_by_app.setdefault(appid, []).append(link)
         if wanted:
             wanted.status = "Acquired"
@@ -437,8 +464,16 @@ def reconcile_steam_library(db, user_id, items):
             continue
         for link in links_by_app.get(duplicate.duplicate_of_appid, []):
             game = collection_by_id.get(link.collection_game_id)
-            if game and attach_steam_copy(game, item, duplicate.igdb_id):
-                imported += 1
+            if game:
+                if attach_steam_copy(game, item, duplicate.igdb_id):
+                    imported += 1
+                copy_id = steam_copy_id(game, item["appid"])
+                if not any(row.collection_game_id == game.id for row in links_by_app.get(item["appid"], [])):
+                    row = SteamCollectionLink(user_id=user_id, steam_appid=item["appid"],
+                                              collection_game_id=game.id, copy_id=copy_id,
+                                              igdb_id=duplicate.igdb_id)
+                    db.add(row)
+                    links_by_app.setdefault(item["appid"], []).append(row)
     return imported
 
 
@@ -484,19 +519,26 @@ def resolve_steam_match_review(db, user_id, review_id, decision, candidate_game_
         # A confirmed identity uses Steam's canonical title while retaining every
         # other user-owned field on the collection record.
         candidate.name = review.steam_name
-    link = db.query(SteamCollectionLink).filter_by(user_id=user_id, collection_game_id=candidate.id).first()
-    if decision == "same" and link is not None and link.steam_appid != review.steam_appid:
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, collection_game_id=candidate.id).all()
+    link = next((row for row in links if row.steam_appid == review.steam_appid), None)
+    canonical = next((row for row in links if row.steam_appid != review.steam_appid), None)
+    if decision == "same" and canonical is not None:
         catalog = upsert_steam_catalog(db, user_id, item)
-        catalog.duplicate_of_appid = link.steam_appid
+        catalog.duplicate_of_appid = canonical.steam_appid
         attach_steam_copy(candidate, item, item.get("igdb_id"))
+        db.add(SteamCollectionLink(user_id=user_id, steam_appid=review.steam_appid,
+                                   collection_game_id=candidate.id,
+                                   copy_id=steam_copy_id(candidate, review.steam_appid),
+                                   igdb_id=item.get("igdb_id"), user_selected=True))
     elif link is None:
+        attach_steam_copy(candidate, item, item.get("igdb_id"))
         db.add(SteamCollectionLink(
             user_id=user_id, steam_appid=review.steam_appid,
-            collection_game_id=candidate.id, igdb_id=item.get("igdb_id"),
+            collection_game_id=candidate.id, copy_id=steam_copy_id(candidate, review.steam_appid),
+            igdb_id=item.get("igdb_id"),
             created_collection_game=decision in ("different", "none"), user_selected=True,
         ))
     else:
-        link.steam_appid = review.steam_appid
         link.user_selected = True
     db.delete(review)
     db.flush()

@@ -60,13 +60,14 @@ class DiscoverySettings(Base):
 
 
 class SteamCollectionLink(Base):
-    """Stable ownership link; collection data remains authoritative across Steam syncs."""
-    __tablename__ = "steam_game_links"
-    __table_args__ = (UniqueConstraint("user_id", "collection_game_id", name="uq_steam_game_link_user_game"),)
+    """A Steam identity belongs to one owned copy, not to the whole game card."""
+    __tablename__ = "steam_copy_links"
+    __table_args__ = (UniqueConstraint("user_id", "collection_game_id", "copy_id", name="uq_steam_copy_link_user_copy"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     steam_appid = Column(Integer, nullable=False)
     collection_game_id = Column(Integer, ForeignKey("videogames.id", ondelete="CASCADE"), nullable=False, index=True)
+    copy_id = Column(String, nullable=False)
     igdb_id = Column(Integer)
     created_collection_game = Column(Boolean, nullable=False, default=False)
     user_selected = Column(Boolean, nullable=False, default=False)

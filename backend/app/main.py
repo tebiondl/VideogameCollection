@@ -112,115 +112,58 @@ def _backfill_owned_copies():
 
 _backfill_owned_copies()
 
-def _backfill_steam_collection_links():
-    """Turn existing Steam copies/acquisitions into durable sync identities."""
+def _backfill_steam_copy_links_v3():
+    """Give every copy a stable ID and preserve Steam identities at copy level."""
     db = SessionLocal()
     try:
-        if db.query(AppSetting).filter_by(key="steam_collection_links_backfilled_v1").first():
+        if db.query(AppSetting).filter_by(key="steam_copy_links_backfilled_v3").first():
             return
         import json
-        games = {game.id: game for game in db.query(Videogame).all()}
-        linked_apps = {(link.user_id, link.steam_appid) for link in db.query(SteamCollectionLink).all()}
-        # A reviewed Games I Want acquisition is the strongest legacy signal.
-        for wanted in db.query(WantedGame).filter(
-            WantedGame.steam_appid.is_not(None), WantedGame.collection_game_id.is_not(None)
-        ).all():
-            game = games.get(wanted.collection_game_id)
-            key = (wanted.user_id, wanted.steam_appid)
-            if not game or game.user_id != wanted.user_id or key in linked_apps:
-                continue
-            db.add(SteamCollectionLink(
-                user_id=wanted.user_id, steam_appid=wanted.steam_appid,
-                collection_game_id=game.id, igdb_id=wanted.igdb_id,
-            ))
-            linked_apps.add(key)
-        # Older collection rows already carry the Steam App ID in copy JSON.
-        for game in games.values():
-            try:
-                copies = json.loads(game.copies or "[]")
-            except (TypeError, ValueError):
-                continue
-            for copy in copies:
-                appid = copy.get("steam_appid")
-                key = (game.user_id, appid)
-                if not appid or key in linked_apps:
-                    continue
-                db.add(SteamCollectionLink(
-                    user_id=game.user_id, steam_appid=appid,
-                    collection_game_id=game.id, igdb_id=copy.get("igdb_id"),
-                ))
-                linked_apps.add(key)
-        db.add(AppSetting(key="steam_collection_links_backfilled_v1", value="1"))
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Steam collection-link backfill failed")
-    finally:
-        db.close()
-
-_backfill_steam_collection_links()
-
-def _backfill_steam_links_v2():
-    """Copy legacy one-app/one-game links into the collection-owned link model."""
-    db = SessionLocal()
-    try:
-        if db.query(AppSetting).filter_by(key="steam_game_links_backfilled_v2").first():
-            return
-        import json
-        existing_games = {(row.user_id, row.collection_game_id) for row in db.query(SteamCollectionLink).all()}
+        legacy = {}
         with engine.connect() as conn:
             try:
-                legacy = conn.execute(text(
-                    "SELECT user_id, steam_appid, collection_game_id, igdb_id, created_collection_game "
-                    "FROM steam_collection_links ORDER BY id"
+                rows = conn.execute(text(
+                    "SELECT user_id, steam_appid, collection_game_id, igdb_id, "
+                    "created_collection_game, user_selected FROM steam_game_links ORDER BY id"
                 )).mappings().all()
+                legacy = {(row["user_id"], row["collection_game_id"], row["steam_appid"]): row for row in rows}
             except Exception:
-                legacy = []
-        for row in legacy:
-            key = (row["user_id"], row["collection_game_id"])
-            if key in existing_games:
-                continue
-            db.add(SteamCollectionLink(
-                user_id=row["user_id"], steam_appid=row["steam_appid"],
-                collection_game_id=row["collection_game_id"], igdb_id=row["igdb_id"],
-                created_collection_game=bool(row["created_collection_game"]),
-            ))
-            existing_games.add(key)
-        catalog_keys = {(row.user_id, row.steam_appid) for row in db.query(SteamOwnedGame).all()}
+                pass
+        seen = {(row.user_id, row.collection_game_id, row.copy_id) for row in db.query(SteamCollectionLink).all()}
         for game in db.query(Videogame).all():
             try:
                 copies = json.loads(game.copies or "[]")
             except (TypeError, ValueError):
                 copies = []
-            for copy in copies:
+            changed = False
+            for index, copy in enumerate(copies):
+                if not copy.get("id"):
+                    appid = copy.get("steam_appid")
+                    copy["id"] = f"steam:{appid}" if appid else f"copy:{game.id}:{index + 1}"
+                    changed = True
                 appid = copy.get("steam_appid")
-                if not appid:
+                key = (game.user_id, game.id, str(copy["id"]))
+                if not appid or key in seen:
                     continue
-                key = (game.user_id, int(appid))
-                if key not in catalog_keys:
-                    db.add(SteamOwnedGame(
-                        user_id=game.user_id, steam_appid=int(appid), name=game.name,
-                        playtime_hours=copy.get("playtime_hours"), image_url=game.image_url,
-                        store_url=copy.get("store_url"), igdb_id=copy.get("igdb_id"),
-                    ))
-                    catalog_keys.add(key)
-                link_key = (game.user_id, game.id)
-                if link_key not in existing_games:
-                    db.add(SteamCollectionLink(
-                        user_id=game.user_id, steam_appid=int(appid), collection_game_id=game.id,
-                        igdb_id=copy.get("igdb_id"),
-                    ))
-                    existing_games.add(link_key)
-                    break
-        db.add(AppSetting(key="steam_game_links_backfilled_v2", value="1"))
+                old = legacy.get((game.user_id, game.id, int(appid)))
+                db.add(SteamCollectionLink(
+                    user_id=game.user_id, steam_appid=int(appid), collection_game_id=game.id,
+                    copy_id=str(copy["id"]), igdb_id=copy.get("igdb_id") or (old["igdb_id"] if old else None),
+                    created_collection_game=bool(old["created_collection_game"]) if old else False,
+                    user_selected=bool(old["user_selected"]) if old else False,
+                ))
+                seen.add(key)
+            if changed:
+                game.copies = json.dumps(copies)
+        db.add(AppSetting(key="steam_copy_links_backfilled_v3", value="1"))
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("Steam game-link v2 backfill failed")
+        logger.exception("Steam copy-link v3 backfill failed")
     finally:
         db.close()
 
-_backfill_steam_links_v2()
+_backfill_steam_copy_links_v3()
 
 # Idempotently convert legacy played_with JSON/text into canonical player rows.
 def _migrate_boardgame_players():

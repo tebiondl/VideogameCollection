@@ -194,19 +194,28 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
     else:
         copies = json.loads(existing.copies or "[]")
         identity = (copy["platform"].casefold(), copy["format"], copy["steam_appid"], copy["store_url"])
-        if not any((str(item.get("platform", "")).casefold(), item.get("format", "Any"), item.get("steam_appid"), item.get("store_url")) == identity for item in copies):
+        matched_copy = next((item for item in copies if (
+            str(item.get("platform", "")).casefold(), item.get("format", "Any"),
+            item.get("steam_appid"), item.get("store_url")
+        ) == identity), None)
+        if matched_copy is None:
             copies.append(copy)
             existing.copies = json.dumps(copies)
+        else:
+            copy = matched_copy
         for key in ("description", "comments", "image_url", "publication_year", "release_date", "dlcs", "parent_game_name"):
             if getattr(existing, key, None) in (None, "") and getattr(payload, key, None) not in (None, ""):
                 setattr(existing, key, getattr(payload, key))
         existing.is_dlc = existing.is_dlc or payload.is_dlc
     if steam_copy and payload.steam_appid:
-        link = db.query(SteamCollectionLink).filter_by(user_id=user.id, collection_game_id=existing.id).first()
+        link = db.query(SteamCollectionLink).filter_by(
+            user_id=user.id, collection_game_id=existing.id, copy_id=copy["id"]
+        ).first()
         if link is None:
             db.add(SteamCollectionLink(
                 user_id=user.id, steam_appid=payload.steam_appid,
-                collection_game_id=existing.id, igdb_id=payload.igdb_id, user_selected=True,
+                collection_game_id=existing.id, copy_id=copy["id"],
+                igdb_id=payload.igdb_id, user_selected=True,
             ))
         else:
             link.steam_appid = payload.steam_appid
@@ -311,12 +320,21 @@ def decide_steam_match(
     return result
 
 
-@router.get("/steam/collection-games/{game_id}/candidates")
-def steam_link_candidates(game_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+@router.get("/steam/collection-games/{game_id}/copies/{copy_id}/candidates")
+def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
     if game is None:
         raise HTTPException(404, "Collection game not found.")
-    current = db.query(SteamCollectionLink).filter_by(user_id=user.id, collection_game_id=game.id).first()
+    try:
+        copies = json.loads(game.copies or "[]")
+    except (TypeError, ValueError):
+        copies = []
+    owned_copy = next((copy for copy in copies if str(copy.get("id")) == copy_id), None)
+    if owned_copy is None:
+        raise HTTPException(404, "Save this copy before linking it to Steam.")
+    current = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, collection_game_id=game.id, copy_id=copy_id
+    ).first()
     linked_counts = dict(db.query(SteamCollectionLink.steam_appid, func.count(SteamCollectionLink.id)).filter_by(
         user_id=user.id
     ).group_by(SteamCollectionLink.steam_appid).all())
@@ -332,19 +350,28 @@ def steam_link_candidates(game_id: int, db: Session = Depends(get_db), user: Use
             "duplicate_of_appid": row.duplicate_of_appid,
         })
     candidates.sort(key=lambda row: (not row["current"], -row["similarity"], row["name"].casefold()))
-    return {"current_steam_appid": current.steam_appid if current else None, "candidates": candidates}
+    return {"current_steam_appid": current.steam_appid if current else None, "copy": owned_copy, "candidates": candidates}
 
 
-@router.post("/steam/collection-games/{game_id}/link")
+@router.post("/steam/collection-games/{game_id}/copies/{copy_id}/link")
 def link_collection_game_to_steam(
-    game_id: int, payload: SteamGameLinkInput,
+    game_id: int, copy_id: str, payload: SteamGameLinkInput,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
     steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_appid=payload.steam_appid).first()
     if game is None or steam is None:
         raise HTTPException(404, "The collection or Steam game is no longer available.")
-    current = db.query(SteamCollectionLink).filter_by(user_id=user.id, collection_game_id=game.id).first()
+    try:
+        copies = json.loads(game.copies or "[]")
+    except (TypeError, ValueError):
+        copies = []
+    copy = next((row for row in copies if str(row.get("id")) == copy_id), None)
+    if copy is None:
+        raise HTTPException(404, "Save this copy before linking it to Steam.")
+    current = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, collection_game_id=game.id, copy_id=copy_id
+    ).first()
     item = {"appid": steam.steam_appid, "name": steam.name, "playtime_hours": steam.playtime_hours,
             "image_url": steam.image_url, "store_url": steam.store_url, "igdb_id": steam.igdb_id}
     if payload.mode == "duplicate":
@@ -354,6 +381,7 @@ def link_collection_game_to_steam(
             raise HTTPException(409, "That is already the primary Steam game for this entry.")
         steam.duplicate_of_appid = current.steam_appid
         service.attach_steam_copy(game, item, steam.igdb_id)
+        duplicate_copy_id = service.steam_copy_id(game, steam.steam_appid)
         for old_link in db.query(SteamCollectionLink).filter_by(user_id=user.id, steam_appid=steam.steam_appid).all():
             old_game = db.query(Videogame).filter_by(id=old_link.collection_game_id, user_id=user.id).first()
             if old_game and old_game.id != game.id:
@@ -363,17 +391,22 @@ def link_collection_game_to_steam(
                     {"collection_game_id": game.id}, synchronize_session=False
                 )
             db.delete(old_link)
+        db.add(SteamCollectionLink(
+            user_id=user.id, steam_appid=steam.steam_appid, collection_game_id=game.id,
+            copy_id=duplicate_copy_id, igdb_id=steam.igdb_id, user_selected=True,
+        ))
     else:
-        if current and current.steam_appid != steam.steam_appid:
-            service.detach_steam_copy(game, current.steam_appid)
         if current is None:
-            current = SteamCollectionLink(user_id=user.id, collection_game_id=game.id, steam_appid=steam.steam_appid)
+            current = SteamCollectionLink(user_id=user.id, collection_game_id=game.id,
+                                          copy_id=copy_id, steam_appid=steam.steam_appid)
             db.add(current)
         current.steam_appid, current.igdb_id = steam.steam_appid, steam.igdb_id
         current.user_selected = True
         current.created_collection_game = False
         steam.duplicate_of_appid = None
-        service.attach_steam_copy(game, item, steam.igdb_id)
+        copy.update({"steam_appid": steam.steam_appid, "igdb_id": steam.igdb_id,
+                     "store_url": steam.store_url or copy.get("store_url")})
+        game.copies = json.dumps(copies)
     commit(db)
     db.refresh(game)
     return game
