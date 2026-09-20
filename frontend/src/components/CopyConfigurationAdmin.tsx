@@ -29,6 +29,25 @@ function EditableList({ title, values, onRename, onAdd, onRemove }: {
   </section>;
 }
 
+function RuleRow({ label, selected, options, itemLabel, onAdd, onRemove }: {
+  label: string;
+  selected: string[];
+  options: string[];
+  itemLabel: string;
+  onAdd: (value: string) => void;
+  onRemove: (value: string) => void;
+}) {
+  const available = options.filter(value => !selected.includes(value));
+  return <div className="admin-rule-row">
+    <strong>{label}</strong>
+    <div className="admin-rule-tags">
+      {selected.map(value => <button type="button" key={value} className="admin-rule-chip" onClick={() => onRemove(value)} title={`Remove ${value}`}><span>{value}</span><span aria-hidden="true">×</span></button>)}
+      {selected.length === 0 && <span className="admin-rule-empty">No {itemLabel}s added</span>}
+      {available.length > 0 && <label className="admin-rule-add"><Plus size={14} /><select aria-label={`Add ${itemLabel} to ${label}`} value="" onChange={event => { if (event.target.value) onAdd(event.target.value); }}><option value="">Add {itemLabel}…</option>{available.map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
+    </div>
+  </div>;
+}
+
 export function CopyConfigurationAdmin() {
   const [draft, setDraft] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
   const [saving, setSaving] = useState(false);
@@ -120,12 +139,12 @@ export function CopyConfigurationAdmin() {
         <EditableList title="Types" values={draft.types} onRename={(index, value) => rename('types', index, value)} onAdd={() => add('types')} onRemove={index => remove('types', index)} />
       </div>
       <div className="admin-compatibility-section">
-        <h3>Platform × Source</h3><p className="text-secondary">Each row is a platform. Click source tags to add or remove them.</p>
-        <div className="admin-rule-rows">{draft.platforms.map((platform, index) => <div className="admin-rule-row" key={`${platform}-${index}`}><strong>{platform}</strong><div className="admin-rule-tags">{draft.sources.map((source, sourceIndex) => <button type="button" key={`${source}-${sourceIndex}`} className={`admin-rule-tag ${(draft.platform_sources[platform] || []).includes(source) ? 'selected' : ''}`} onClick={() => toggle('platform_sources', platform, source)}>{source}</button>)}</div></div>)}</div>
+        <h3>Platform × Source</h3><p className="text-secondary">Each row shows only the sources currently assigned. Add another from the compact selector or click a tag to remove it.</p>
+        <div className="admin-rule-rows">{draft.platforms.map((platform, index) => <RuleRow key={`${platform}-${index}`} label={platform} selected={draft.platform_sources[platform] || []} options={draft.sources} itemLabel="source" onAdd={source => toggle('platform_sources', platform, source)} onRemove={source => toggle('platform_sources', platform, source)} />)}</div>
       </div>
       <div className="admin-compatibility-section">
-        <h3>Source × Type</h3><p className="text-secondary">Each row is a source. Click type tags to add or remove them.</p>
-        <div className="admin-rule-rows">{draft.sources.map((source, index) => <div className="admin-rule-row" key={`${source}-${index}`}><strong>{source}</strong><div className="admin-rule-tags">{draft.types.map((type, typeIndex) => <button type="button" key={`${type}-${typeIndex}`} className={`admin-rule-tag ${(draft.source_types[source] || []).includes(type) ? 'selected' : ''}`} onClick={() => toggle('source_types', source, type)}>{type}</button>)}</div></div>)}</div>
+        <h3>Source × Type</h3><p className="text-secondary">Each row shows only the types currently assigned. Add another from the compact selector or click a tag to remove it.</p>
+        <div className="admin-rule-rows">{draft.sources.map((source, index) => <RuleRow key={`${source}-${index}`} label={source} selected={draft.source_types[source] || []} options={draft.types} itemLabel="type" onAdd={type => toggle('source_types', source, type)} onRemove={type => toggle('source_types', source, type)} />)}</div>
       </div>
       {!listsAreValid && <p className="disc-alert error" role="alert">Names cannot be blank or repeated inside the same list.</p>}
       {message && <p className="text-secondary" role="status">{message}</p>}
