@@ -403,7 +403,9 @@ class DiscoveryTests(unittest.TestCase):
             'stats_verified': True,
         }
 
-        with patch.object(service, 'find_verified_steam_game', return_value=verified) as lookup:
+        with patch.object(service, 'find_steam_store_games', return_value=[{
+            **verified, 'manual_verification_required': False, 'store_query': game.name,
+        }]) as store_lookup, patch.object(service, 'find_verified_steam_game', return_value=verified) as verified_lookup:
             candidates = self.client.get(
                 f'/api/discovery/steam/collection-games/{game.id}/copies/manual-pc/candidates'
             )
@@ -416,7 +418,8 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(candidates.json()['candidates'][0]['steam_appid'], 2420510)
         self.assertTrue(candidates.json()['candidates'][0]['stats_verified'])
         self.assertEqual(linked.status_code, 200, linked.text)
-        self.assertEqual(lookup.call_count, 2)
+        store_lookup.assert_called_once_with(self.db, self.user.id, game.name)
+        verified_lookup.assert_called_once_with(self.db, self.user.id, game.name)
         entitlement = self.db.query(SteamOwnedGame).filter_by(steam_appid=2420510).one()
         self.assertTrue(entitlement.active)
         self.assertTrue(entitlement.stats_verified)
@@ -434,6 +437,10 @@ class DiscoveryTests(unittest.TestCase):
                 user_id=self.user.id, steam_id=settings.steam_id, steam_appid=999,
                 name='Ordinary snapshot game', active=True,
             ),
+            SteamOwnedGame(
+                user_id=self.user.id, steam_id=settings.steam_id, steam_appid=698780,
+                name='Doki Doki Literature Club', active=True, user_verified=True,
+            ),
         ])
         self.db.commit()
 
@@ -445,8 +452,118 @@ class DiscoveryTests(unittest.TestCase):
         self.db.expire_all()
         verified = self.db.query(SteamOwnedGame).filter_by(steam_appid=2420510).one()
         ordinary = self.db.query(SteamOwnedGame).filter_by(steam_appid=999).one()
+        user_verified = self.db.query(SteamOwnedGame).filter_by(steam_appid=698780).one()
         self.assertTrue(verified.active)
         self.assertFalse(ordinary.active)
+        self.assertTrue(user_verified.active)
+
+    def test_store_search_broadens_misspelled_title(self):
+        client = MagicMock()
+        client.get.side_effect = [
+            httpx.Response(200, request=httpx.Request('GET', 'https://store.steampowered.com'), json={'items': []}),
+            httpx.Response(200, request=httpx.Request('GET', 'https://store.steampowered.com'), json={'items': []}),
+            httpx.Response(200, request=httpx.Request('GET', 'https://store.steampowered.com'), json={
+                'items': [{'type': 'app', 'id': 698780, 'name': 'Doki Doki Literature Club'}],
+            }),
+        ]
+
+        results = service.steam_store_candidates(client, 'Doki Doki Literture Club')
+
+        self.assertEqual(results[0]['appid'], 698780)
+        self.assertGreaterEqual(results[0]['similarity'], .95)
+        self.assertEqual(
+            [call.kwargs['params']['term'] for call in client.get.call_args_list],
+            ['Doki Doki Literture Club', 'Doki Doki Literture', 'Doki Doki'],
+        )
+
+    def test_store_search_accepts_an_appid_or_store_url(self):
+        for query in ('698780', 'https://store.steampowered.com/app/698780/Doki_Doki_Literature_Club/'):
+            with self.subTest(query=query):
+                client = MagicMock()
+                client.get.return_value = httpx.Response(
+                    200, request=httpx.Request('GET', 'https://store.steampowered.com'),
+                    json={'698780': {'success': True, 'data': {
+                        'name': 'Doki Doki Literature Club!', 'type': 'game',
+                        'header_image': 'https://example.com/ddlc.jpg',
+                    }}},
+                )
+                results = service.steam_store_candidates(client, query)
+                self.assertEqual(results[0]['appid'], 698780)
+                self.assertEqual(results[0]['name'], 'Doki Doki Literature Club!')
+                self.assertIn('appdetails', client.get.call_args.args[0])
+
+    def test_manual_store_candidate_can_be_linked_without_account_stats(self):
+        self.configured()
+        game = Videogame(
+            user_id=self.user.id, name='Doki Doki Literture Club', status='Finished',
+            copies=json.dumps([{
+                'id': 'manual-copy', 'platform': 'PC', 'format': 'Digital',
+                'playtime_hours': 4.0,
+            }]),
+        )
+        self.db.add(game)
+        self.db.commit()
+        candidate = {
+            'appid': 698780, 'name': 'Doki Doki Literature Club',
+            'playtime_hours': None, 'image_url': None,
+            'store_url': 'https://store.steampowered.com/app/698780/',
+            'similarity': .96, 'stats_verified': False,
+            'manual_verification_required': True, 'store_query': game.name,
+        }
+        resolved = {
+            **candidate, 'is_dlc': False, 'parent_game_name': None,
+            'user_verified': True,
+        }
+
+        with patch.object(service, 'find_steam_store_games', return_value=[candidate]), \
+             patch.object(service, 'resolve_user_verified_steam_game', return_value=resolved) as resolver:
+            candidates = self.client.get(
+                f'/api/discovery/steam/collection-games/{game.id}/copies/manual-copy/candidates'
+            )
+            linked = self.client.post(
+                f'/api/discovery/steam/collection-games/{game.id}/copies/manual-copy/link',
+                json={
+                    'steam_appid': 698780, 'allow_unverified': True,
+                    'store_query': game.name,
+                },
+            )
+
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertTrue(candidates.json()['candidates'][0]['manual_verification_required'])
+        self.assertEqual(linked.status_code, 200, linked.text)
+        resolver.assert_called_once_with(self.db, self.user.id, game.name, 698780)
+        entitlement = self.db.query(SteamOwnedGame).filter_by(steam_appid=698780).one()
+        self.assertTrue(entitlement.user_verified)
+        self.assertFalse(entitlement.stats_verified)
+        self.assertEqual(json.loads(game.copies)[0]['steam_appid'], 698780)
+        self.assertEqual(json.loads(game.copies)[0]['playtime_hours'], 4.0)
+
+    def test_manual_link_supports_a_collection_dlc_and_steam_dlc(self):
+        game = Videogame(
+            user_id=self.user.id, name='Expansion card', status='Finished', is_dlc=True,
+            parent_game_name='Base game',
+            copies=json.dumps([{'id': 'dlc-copy', 'platform': 'PC', 'format': 'Digital'}]),
+        )
+        steam = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=213210, name="Tiny Tina's Assault on Dragon Keep",
+            is_dlc=True, parent_game_name='Borderlands 2', active=True,
+        )
+        self.db.add_all([game, steam])
+        self.db.commit()
+
+        candidates = self.client.get(
+            f'/api/discovery/steam/collection-games/{game.id}/copies/dlc-copy/candidates'
+        )
+        linked = self.client.post(
+            f'/api/discovery/steam/collection-games/{game.id}/copies/dlc-copy/link',
+            json={'steam_appid': 213210},
+        )
+
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(candidates.json()['candidates'][0]['steam_appid'], 213210)
+        self.assertTrue(candidates.json()['candidates'][0]['is_dlc'])
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertEqual(json.loads(game.copies)[0]['steam_appid'], 213210)
 
     def test_automatic_first_steam_copy_displays_steam_time_when_local_time_is_zero(self):
         collection = Videogame(

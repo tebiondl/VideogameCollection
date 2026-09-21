@@ -180,6 +180,8 @@ class SteamMatchDecision(BaseModel):
 
 class SteamGameLinkInput(BaseModel):
     steam_appid: int = Field(gt=0)
+    allow_unverified: bool = False
+    store_query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class CollectionDuplicateInput(BaseModel):

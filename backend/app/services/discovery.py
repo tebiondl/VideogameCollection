@@ -195,68 +195,138 @@ def _steam_account_stats_title(client, steam_id, api_key, appid):
     return None
 
 
-def find_verified_steam_game(db, user_id, title):
-    """Find an exact Store title that Steam stats confirm for this account.
+def _steam_store_queries(value):
+    raw = (value or "").strip()[:200]
+    if not raw:
+        return []
+    words = re.findall(r"[A-Za-z0-9]+", raw)
+    generic = {"club", "copy", "dlc", "edition", "game", "pc", "steam"}
+    useful = [word for word in words if word.casefold() not in generic]
+    values = [raw]
+    cleaned = " ".join(useful)
+    if cleaned and _collection_title_key(cleaned) != _collection_title_key(raw):
+        values.append(cleaned)
+    for index, word in enumerate(useful):
+        if len(word) > 3 and word.casefold().endswith("s"):
+            possessive = useful.copy()
+            possessive[index] = f"{word[:-1]}'s"
+            values.append(" ".join(possessive))
+            break
+    if len(useful) >= 3:
+        values.append(" ".join(useful[:2]))
+    result = []
+    seen = set()
+    for query in values:
+        key = query.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(query)
+    return result[:4]
 
-    This is intentionally narrower than fuzzy collection matching. It repairs
-    omissions from GetOwnedGames without turning Store search results into an
-    ownership claim.
-    """
+
+def steam_store_candidates(client, query, country="ES"):
+    """Search Steam progressively, accepting an app ID or Store URL too."""
+    direct = re.search(r"(?:steampowered\.com/app/)?(\d{3,10})", (query or "").strip())
+    if direct and (_collection_title_key(query).isdigit() or "steampowered.com/app/" in query.casefold()):
+        appid = int(direct.group(1))
+        raw = request_json(client, "https://store.steampowered.com/api/appdetails", params={
+            "appids": appid, "l": "english", "cc": country,
+        })
+        data = raw.get(str(appid), {})
+        details = data.get("data", {}) if data.get("success") else {}
+        if not details.get("name"):
+            return []
+        return [{
+            "appid": appid, "name": details["name"], "image_url": details.get("header_image"),
+            "store_url": f"https://store.steampowered.com/app/{appid}/",
+            "is_dlc": details.get("type") == "dlc", "parent_game_name": details.get("fullgame", {}).get("name"),
+            "similarity": 1.0,
+        }]
+
+    target = _collection_title_key(query)
+    for search_query in _steam_store_queries(query):
+        raw = request_json(client, "https://store.steampowered.com/api/storesearch/", params={
+            "term": search_query, "l": "english", "cc": country,
+        })
+        items = raw.get("items", [])
+        if not isinstance(items, list):
+            continue
+        candidates = []
+        seen = set()
+        for item in items:
+            appid, name = item.get("id"), item.get("name")
+            if item.get("type") != "app" or not isinstance(appid, int) or appid <= 0 or not isinstance(name, str):
+                continue
+            if appid in seen:
+                continue
+            seen.add(appid)
+            candidates.append({
+                "appid": appid, "name": name, "image_url": item.get("tiny_image"),
+                "store_url": f"https://store.steampowered.com/app/{appid}/",
+                "similarity": SequenceMatcher(None, target, _collection_title_key(name)).ratio(),
+            })
+        if candidates:
+            candidates.sort(key=lambda item: (-item["similarity"], item["name"].casefold()))
+            return candidates[:12]
+    return []
+
+
+def find_steam_store_games(db, user_id, query):
+    """Return Store candidates, marking the ones Steam can verify to the account."""
     settings = db.get(DiscoverySettings, user_id)
-    if not settings or not settings.steam_id:
-        return None
+    steam_id = settings.steam_id if settings else None
     try:
-        api_key = resolve_steam_api_key(settings.steam_api_key)
+        api_key = resolve_steam_api_key(settings.steam_api_key if settings else None)
     except (OSError, ValueError):
-        return None
-    if not api_key:
-        return None
+        api_key = None
+    try:
+        with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            country = {"North America": "US", "Japan": "JP"}.get(settings.region if settings else None, "ES")
+            candidates = steam_store_candidates(client, query, country)
+            for item in candidates:
+                stats_name = None
+                # Avoid a burst of account calls for broad fallback searches;
+                # only strong matches are plausible automatic verification candidates.
+                if steam_id and api_key and item.get("similarity", 0) >= 0.9:
+                    stats_name = _steam_account_stats_title(client, steam_id, api_key, item["appid"])
+                item["name"] = stats_name or item["name"]
+                item["playtime_hours"] = None
+                item["stats_verified"] = bool(stats_name)
+                item["manual_verification_required"] = not bool(stats_name)
+                item["store_query"] = query
+            return candidates
+    except (httpx.HTTPError, ValueError, KeyError):
+        logger.warning("Steam Store lookup failed for user %s", user_id)
+        return []
+
+
+def find_verified_steam_game(db, user_id, title):
+    """Return one exact Store title that Steam stats confirm for this account."""
     target = _collection_title_key(title)
-    if not target:
+    verified = [
+        item for item in find_steam_store_games(db, user_id, title)
+        if item.get("stats_verified") and _collection_title_key(item.get("name")) == target
+    ]
+    return verified[0] if len(verified) == 1 else None
+
+
+def resolve_user_verified_steam_game(db, user_id, query, appid):
+    """Revalidate an explicit Store selection and load its canonical metadata."""
+    selected = next((item for item in find_steam_store_games(db, user_id, query) if item["appid"] == appid), None)
+    if selected is None:
         return None
     try:
         with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
-            raw = request_json(client, "https://store.steampowered.com/api/storesearch/", params={
-                "term": title, "l": "english",
-                "cc": {"North America": "US", "Japan": "JP"}.get(settings.region, "ES"),
-            })
-            items = raw.get("items", [])
-            if not isinstance(items, list):
-                return None
-            exact = []
-            seen = set()
-            for item in items:
-                if not isinstance(item, dict) or item.get("type") != "app":
-                    continue
-                appid, name = item.get("id"), item.get("name")
-                if not isinstance(appid, int) or appid <= 0 or not isinstance(name, str):
-                    continue
-                if appid in seen or _collection_title_key(name) != target:
-                    continue
-                seen.add(appid)
-                exact.append(item)
-
-            verified = []
-            for item in exact:
-                stats_name = _steam_account_stats_title(
-                    client, settings.steam_id, api_key, item["id"],
-                )
-                if stats_name:
-                    verified.append((item, stats_name))
-            # Multiple account-verified apps with the same normalized title are
-            # ambiguous; do not guess which edition the collection copy means.
-            if len(verified) != 1:
-                return None
-            item, stats_name = verified[0]
-            return {
-                "appid": item["id"], "name": stats_name,
-                "playtime_hours": None, "image_url": item.get("tiny_image"),
-                "store_url": f"https://store.steampowered.com/app/{item['id']}/",
-                "stats_verified": True,
-            }
+            fields = steam_details(db, client, appid)
     except (httpx.HTTPError, ValueError, KeyError):
-        logger.warning("Steam account-verified Store lookup failed for user %s", user_id)
         return None
+    return {
+        "appid": appid, "name": fields["name"], "playtime_hours": None,
+        "image_url": fields.get("image_url") or selected.get("image_url"),
+        "store_url": fields.get("store_url") or selected.get("store_url"),
+        "is_dlc": fields.get("is_dlc", False), "parent_game_name": fields.get("parent_game_name"),
+        "stats_verified": bool(selected.get("stats_verified")), "user_verified": True,
+    }
 
 
 def _copy_has_steam_app(game, appid):
@@ -488,6 +558,7 @@ def upsert_steam_catalog(db, user_id, item, steam_id=None, generation=0):
             setattr(row, key, item[key])
     row.is_dlc = bool(item.get("is_dlc", row.is_dlc))
     row.stats_verified = row.stats_verified or bool(item.get("stats_verified"))
+    row.user_verified = row.user_verified or bool(item.get("user_verified"))
     row.active = True
     row.last_seen_generation = generation
     row.last_seen_at = datetime.utcnow()
@@ -1307,7 +1378,8 @@ def sync_steam(user_id, factory=SessionLocal):
             if settings.sync_collection and owned_error is None:
                 settings.owned_sync_generation = (settings.owned_sync_generation or 0) + 1
                 db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=steam_id).filter(
-                    SteamOwnedGame.stats_verified.is_(False)
+                    SteamOwnedGame.stats_verified.is_(False),
+                    SteamOwnedGame.user_verified.is_(False),
                 ).update(
                     {"active": False}, synchronize_session=False,
                 )

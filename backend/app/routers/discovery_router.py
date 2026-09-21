@@ -450,8 +450,11 @@ def decide_steam_match(
 
 
 @router.get("/steam/collection-games/{game_id}/copies/{copy_id}/candidates")
-def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
+def steam_link_candidates(
+    game_id: int, copy_id: str, store_query: str | None = Query(default=None, min_length=1, max_length=200),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id).first()
     if game is None:
         raise HTTPException(404, "Collection game not found.")
     copy_store.ensure_copies(db, game)
@@ -466,12 +469,16 @@ def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_
     linked_counts = dict(db.query(SteamCollectionLink.steam_appid, func.count(SteamCollectionLink.id)).filter_by(
         user_id=user.id, steam_id=scope
     ).group_by(SteamCollectionLink.steam_appid).all())
-    rows = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, is_dlc=False, active=True).all()
+    rows = db.query(SteamOwnedGame).filter_by(
+        user_id=user.id, steam_id=scope, is_dlc=bool(game.is_dlc), active=True,
+    ).all()
     exact_title_present = any(
         service._collection_title_key(row.name) == service._collection_title_key(game.name)
         for row in rows
     )
-    verified = None if exact_title_present else service.find_verified_steam_game(db, user.id, game.name)
+    store_matches = []
+    if store_query or not exact_title_present:
+        store_matches = service.find_steam_store_games(db, user.id, store_query or game.name)
     candidates = []
     for row in rows:
         score = service.SequenceMatcher(None, service._collection_title_key(game.name), service._collection_title_key(row.name)).ratio()
@@ -482,17 +489,23 @@ def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_
             "linked_collection_count": int(linked_counts.get(row.steam_appid, 0)),
             "duplicate_of_appid": row.duplicate_of_appid,
             "stats_verified": bool(row.stats_verified),
+            "user_verified": bool(row.user_verified), "manual_verification_required": False,
+            "is_dlc": bool(row.is_dlc), "store_query": None,
         })
-    if verified and not any(row["steam_appid"] == verified["appid"] for row in candidates):
+    for store_match in store_matches:
+        if any(row["steam_appid"] == store_match["appid"] for row in candidates):
+            continue
         score = service.SequenceMatcher(
-            None, service._collection_title_key(game.name), service._collection_title_key(verified["name"])
+            None, service._collection_title_key(game.name), service._collection_title_key(store_match["name"])
         ).ratio()
         candidates.append({
-            "steam_appid": verified["appid"], "name": verified["name"],
-            "playtime_hours": verified.get("playtime_hours"), "image_url": verified.get("image_url"),
-            "store_url": verified.get("store_url"), "similarity": round(score, 4),
+            "steam_appid": store_match["appid"], "name": store_match["name"],
+            "playtime_hours": store_match.get("playtime_hours"), "image_url": store_match.get("image_url"),
+            "store_url": store_match.get("store_url"), "similarity": round(score, 4),
             "current": False, "linked_collection_count": 0, "duplicate_of_appid": None,
-            "stats_verified": True,
+            "stats_verified": bool(store_match.get("stats_verified")), "user_verified": False,
+            "manual_verification_required": bool(store_match.get("manual_verification_required")),
+            "is_dlc": bool(store_match.get("is_dlc")), "store_query": store_match.get("store_query"),
         })
     candidates.sort(key=lambda row: (not row["current"], -row["similarity"], row["name"].casefold()))
     return {"current_steam_appid": current.steam_appid if current else None, "copy": owned_copy, "candidates": candidates}
@@ -503,25 +516,42 @@ def link_collection_game_to_steam(
     game_id: int, copy_id: str, payload: SteamGameLinkInput,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
+    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id).first()
     if game is not None:
         copy_store.ensure_copies(db, game)
     scope = copy_store.adopt_legacy_scope(db, user.id)
     steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, active=True).first()
-    if game is not None and steam is None:
+    discovered = None
+    audit_action = None
+    if game is not None and payload.allow_unverified and payload.store_query:
+        discovered = service.resolve_user_verified_steam_game(
+            db, user.id, payload.store_query, payload.steam_appid,
+        )
+        audit_action = "steam_user_verified_entitlement_added"
+        # An explicit Store selection must still resolve to that app, even if a
+        # stale active catalog row with the same ID happens to exist.
+        if discovered is None:
+            steam = None
+    elif game is not None and steam is None:
         verified = service.find_verified_steam_game(db, user.id, game.name)
         if verified and verified["appid"] == payload.steam_appid:
-            settings = service.get_settings(db, user.id)
-            steam = service.upsert_steam_catalog(
-                db, user.id, verified, steam_id=scope,
-                generation=settings.owned_sync_generation or 0,
-            )
-            copy_store.record_audit(
-                db, user.id, "steam_stats_entitlement_added", steam_id=scope,
-                steam_appid=steam.steam_appid, game_id=game.id,
-                details={"source": "steam_store_and_user_stats"},
-            )
-            db.flush()
+            discovered = verified
+            audit_action = "steam_stats_entitlement_added"
+    if game is not None and discovered:
+        settings = service.get_settings(db, user.id)
+        steam = service.upsert_steam_catalog(
+            db, user.id, discovered, steam_id=scope,
+            generation=settings.owned_sync_generation or 0,
+        )
+        copy_store.record_audit(
+            db, user.id, audit_action, steam_id=scope,
+            steam_appid=steam.steam_appid, game_id=game.id,
+            details={
+                "source": "steam_store_and_user_stats" if steam.stats_verified else "explicit_steam_store_selection",
+                "store_query": payload.store_query,
+            },
+        )
+        db.flush()
     if game is None or steam is None:
         raise HTTPException(404, "The collection or Steam game is no longer available.")
     current = db.query(SteamCollectionLink).filter_by(

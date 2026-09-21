@@ -123,6 +123,9 @@ class SteamOwnedGame(Base):
     # independently confirmed against this account's Steam stats APIs and must
     # survive an otherwise-authoritative owned-library refresh.
     stats_verified = Column(Boolean, nullable=False, default=False)
+    # The user explicitly selected this app from live Steam Store results when
+    # Steam exposed no owned/recent/stats signal (common for older free games).
+    user_verified = Column(Boolean, nullable=False, default=False)
     last_seen_generation = Column(Integer, nullable=False, default=0)
     first_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
