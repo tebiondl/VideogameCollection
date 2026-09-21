@@ -664,6 +664,71 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(link.collection_game_id, current.id)
         self.assertEqual(link.copy_id, 'steam:44')
 
+    def test_collection_duplicate_collapses_same_steam_app_and_keeps_principal_copy(self):
+        principal = Videogame(
+            user_id=self.user.id, name='Cuphead', status='Playing',
+            copies=json.dumps([{
+                'id': 'principal-steam', 'name': 'Principal Cuphead copy',
+                'platform': 'PC', 'format': 'Digital', 'source': 'Steam',
+                'steam_appid': 268910, 'playtime_hours': 9.3,
+            }]),
+        )
+        duplicate = Videogame(
+            user_id=self.user.id, name='Cuphead duplicate', status='Not Started',
+            copies=json.dumps([
+                {
+                    'id': 'duplicate-steam', 'name': 'Redundant Cuphead copy',
+                    'platform': 'PC', 'format': 'Digital', 'source': 'Steam',
+                    'steam_appid': 268910, 'playtime_hours': 2.0,
+                },
+                {
+                    'id': 'switch-copy', 'name': 'Cuphead Switch',
+                    'platform': 'Nintendo Switch', 'format': 'Physical', 'source': 'Retail',
+                },
+            ]),
+        )
+        steam = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=268910, name='Cuphead', playtime_hours=None,
+        )
+        self.db.add_all([principal, duplicate, steam])
+        self.db.flush()
+        principal_link = SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=principal.id,
+            copy_id='principal-steam', steam_appid=268910,
+            name='Principal Cuphead copy', platform='PC', format='Digital', source='Steam',
+            playtime_hours=9.3, counts_toward_totals=False,
+        )
+        duplicate_link = SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=duplicate.id,
+            copy_id='duplicate-steam', steam_appid=268910,
+            name='Redundant Cuphead copy', platform='PC', format='Digital', source='Steam',
+            playtime_hours=2.0, counts_toward_totals=True,
+        )
+        self.db.add_all([principal_link, duplicate_link])
+        self.db.commit()
+
+        response = self.client.post(
+            f'/api/discovery/steam/collection-games/{duplicate.id}/merge-duplicate',
+            json={'other_game_id': principal.id, 'direction': 'current_into_other'},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(principal)
+        self.db.refresh(duplicate)
+        links = self.db.query(SteamCollectionLink).filter_by(steam_appid=268910).all()
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].id, principal_link.id)
+        self.assertEqual(links[0].collection_game_id, principal.id)
+        self.assertEqual(links[0].copy_id, 'principal-steam')
+        self.assertEqual(links[0].playtime_hours, 9.3)
+        self.assertTrue(links[0].counts_toward_totals)
+        copies = json.loads(principal.copies)
+        self.assertEqual(sum(copy.get('steam_appid') == 268910 for copy in copies), 1)
+        self.assertEqual(next(copy for copy in copies if copy.get('steam_appid'))['id'], 'principal-steam')
+        self.assertIn('switch-copy', {copy['id'] for copy in copies})
+        self.assertTrue(duplicate.hidden)
+        self.assertIsNone(duplicate.copies)
+
     def test_legacy_duplicate_copy_restores_to_a_new_game(self):
         combined = Videogame(user_id=self.user.id, name='Combined card', status='Playing')
         primary = SteamOwnedGame(user_id=self.user.id, steam_appid=80, name='Primary edition')

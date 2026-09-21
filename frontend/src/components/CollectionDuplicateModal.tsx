@@ -96,7 +96,7 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
 
   return <dialog ref={dialog} className="discovery-dialog discovery collection-duplicate-dialog" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="collection-duplicate-title">
     <div className="disc-section-heading"><div><p className="disc-eyebrow">COLLECTION DUPLICATES</p><h2 id="collection-duplicate-title">Merge duplicate game</h2></div><button className="disc-icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
-    <p className="disc-muted">Choose the other collection card, then choose which card should remain. Every moved copy keeps its own Steam link and original copy name.</p>
+    <p className="disc-muted">Choose the other collection card, then choose which card should remain. Unique copies keep their Steam links and names; matching Steam copies keep the remaining card’s copy.</p>
     {error && <p className="disc-alert error" role="alert">{error}</p>}
     <label className="duplicate-search"><Search size={18} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search your collection…" /></label>
     <div className="duplicate-game-list">
@@ -115,7 +115,7 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
       <label className={direction === 'other_into_current' ? 'selected' : ''}><input type="radio" name="duplicate-direction" checked={direction === 'other_into_current'} onChange={() => chooseDirection('other_into_current')} /><span><strong>{selected.name}</strong> is the duplicate<small>Keep {game.name}; move the selected game’s copies here.</small></span></label>
     </fieldset>}
     {selected && dataFields.length > 0 && <section className="duplicate-data-picker">
-      <div><h3>Choose the data to keep</h3><p className="disc-muted">Choose each field independently. Copies and Steam links are always combined.</p></div>
+      <div><h3>Choose the data to keep</h3><p className="disc-muted">Choose each field independently. Unique copies and Steam links are combined; identical Steam links keep the remaining card’s copy.</p></div>
       {dataFields.map(([key, label]) => <fieldset key={key}><legend>{label}</legend>
         <label className={fieldSources[key] === 'current' ? 'selected' : ''}><input type="radio" name={`merge-${key}`} checked={fieldSources[key] === 'current'} onChange={() => setFieldSources(current => ({ ...current, [key]: 'current' }))} /><span><strong>{game.name}</strong><small>{shownValue(game[key])}</small></span></label>
         <label className={fieldSources[key] === 'other' ? 'selected' : ''}><input type="radio" name={`merge-${key}`} checked={fieldSources[key] === 'other'} onChange={() => setFieldSources(current => ({ ...current, [key]: 'other' }))} /><span><strong>{selected.name}</strong><small>{shownValue(selected[key])}</small></span></label>

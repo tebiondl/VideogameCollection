@@ -602,14 +602,26 @@ def merge_collection_duplicate(
     if not duplicate_rows:
         raise HTTPException(409, f"{duplicate_game.name} has no copies to merge.")
 
-    retained_appids = {row.steam_appid for row in retained_rows if row.steam_appid}
+    retained_by_appid = {row.steam_appid: row for row in retained_rows if row.steam_appid}
+    retained_appids = set(retained_by_appid)
     duplicate_appids = {row.steam_appid for row in duplicate_rows if row.steam_appid}
     overlap = retained_appids & duplicate_appids
-    if overlap:
-        raise HTTPException(409, "Both collection games already contain the same Steam copy.")
-
     used_ids = {row.copy_id for row in retained_rows}
     copy_id_map = {}
+    # The same Steam app on both cards is one account entitlement, not two
+    # copies to retain. Keep the retained/principal card's row and discard the
+    # redundant row from the card being merged. If that redundant row carried
+    # the account-level playtime flag, transfer it so analytics remain stable.
+    redundant_steam_rows = [row for row in duplicate_rows if row.steam_appid in overlap]
+    for redundant in redundant_steam_rows:
+        retained = retained_by_appid[redundant.steam_appid]
+        retained.counts_toward_totals = bool(
+            retained.counts_toward_totals or redundant.counts_toward_totals
+        )
+        copy_id_map[redundant.copy_id] = retained.copy_id
+        db.delete(redundant)
+    duplicate_rows = [row for row in duplicate_rows if row.steam_appid not in overlap]
+
     for owned_copy in retained_rows:
         if not owned_copy.name:
             owned_copy.name = retained_game.name
@@ -682,7 +694,11 @@ def merge_collection_duplicate(
         review.candidate_name = retained_game.name
     copy_store.record_audit(
         db, user.id, "games_merged", game_id=retained_game.id,
-        details={"merged_game_id": duplicate_game.id, "primary_steam_appid": payload.primary_steam_appid},
+        details={
+            "merged_game_id": duplicate_game.id,
+            "primary_steam_appid": payload.primary_steam_appid,
+            "collapsed_steam_appids": sorted(overlap),
+        },
     )
 
     commit(db)
