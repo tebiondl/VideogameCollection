@@ -40,19 +40,34 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
     if (!isOpen) return;
     const place = () => {
       const rect = dropdownRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      const menu = menuRef.current;
+      if (!rect || !menu) return;
+      const viewportMargin = 12;
+      const gap = 4;
+      const maximumHeight = 260;
       const availableBelow = window.innerHeight - rect.bottom - 12;
-      const height = Math.min(260, Math.max(140, availableBelow >= 180 ? availableBelow : rect.top - 12));
-      const openAbove = availableBelow < 180 && rect.top > availableBelow;
+      const availableAbove = rect.top - viewportMargin;
+      // Anchor a short filtered list directly to the input. Previously this used
+      // the maximum 260px menu height, leaving a one-result search floating far
+      // above the field even though the rendered menu was only one row tall.
+      const contentHeight = Math.min(maximumHeight, menu.scrollHeight);
+      const openAbove = availableBelow < contentHeight && availableAbove > availableBelow;
+      const availableHeight = Math.max(48, openAbove ? availableAbove - gap : availableBelow);
+      const height = Math.min(maximumHeight, availableHeight);
+      const renderedHeight = Math.min(contentHeight, height);
       const width = Math.min(Math.max(rect.width, 260), window.innerWidth - 24);
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
-      setMenuStyle({ position: 'fixed', left, top: openAbove ? Math.max(12, rect.top - height - 4) : rect.bottom + 4, width, maxHeight: height, zIndex: 12000 });
+      setMenuStyle({
+        position: 'fixed', left,
+        top: openAbove ? Math.max(viewportMargin, rect.top - renderedHeight - gap) : rect.bottom + gap,
+        width, maxHeight: height, zIndex: 12000,
+      });
     };
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [isOpen]);
+  }, [isOpen, filter, availableTags]);
 
   const toggleTag = (tagName: string) => {
     let newTags;
