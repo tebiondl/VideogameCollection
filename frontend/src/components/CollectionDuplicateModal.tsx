@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, useEffect } from 'react';
 import { GitMerge, Loader2, Search, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { parseCopies } from '../lib/ownedCopies';
+import { searchTitleCandidates } from '../lib/titleSimilarity';
 import './CollectionDuplicateModal.css';
 
 interface CollectionGame {
@@ -38,7 +39,7 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
   onMerged: (result: { collection_game: CollectionGame; duplicate_game_id: number }) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(game.name);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [direction, setDirection] = useState<Direction>('current_into_other');
   const [fieldSources, setFieldSources] = useState<Record<string, FieldSource>>({});
@@ -47,10 +48,10 @@ export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
   const [error, setError] = useState('');
 
   useEffect(() => { dialog.current?.showModal(); }, []);
-  const candidates = useMemo(() => games.filter(candidate =>
-    candidate.id !== game.id && !candidate.hidden && !candidate.is_dlc &&
-    (!query.trim() || candidate.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-  ), [game.id, games, query]);
+  const candidates = useMemo(
+    () => searchTitleCandidates(game.id, query, games),
+    [game.id, games, query],
+  );
   const selected = games.find(candidate => candidate.id === selectedId) || null;
   const dataFields = useMemo(() => selected ? MERGE_FIELDS.filter(([key]) =>
     shownValue(game[key]) !== shownValue(selected[key]) &&

@@ -546,3 +546,27 @@
   visibility: visible;
   opacity: 1;
 }
+
+.collection-duplicate-action {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-top: .75rem;
+}
+
+.collection-duplicate-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  max-width: 100%;
+  padding: .48rem .65rem;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, .1);
+  border: 1px solid rgba(245, 158, 11, .3);
+  border-radius: var(--radius-sm);
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.collection-duplicate-warning svg { flex: 0 0 auto; }

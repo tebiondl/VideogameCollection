@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -19,6 +19,7 @@ import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
 import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
+import { findProbableDuplicate } from '../lib/titleSimilarity';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -123,6 +124,10 @@ export function VideogamesDashboard() {
   const [editingGame, setEditingGame] = useState<any>(null);
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
+  const probableDuplicate = useMemo(
+    () => findProbableDuplicate(editingGame, games),
+    [editingGame, games],
+  );
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
   const copyFilterOptions = useMemo(() => {
@@ -790,7 +795,10 @@ export function VideogamesDashboard() {
                   });
                   setEditingGame(result.source_game);
                 }} />
-                <button type="button" className="btn btn-secondary" style={{ marginTop: '.75rem' }} onClick={() => setDuplicateGame(editingGame)}><GitMerge size={17} /> Merge duplicate collection game</button>
+                <div className="collection-duplicate-action">
+                  <button type="button" className="btn btn-secondary" onClick={() => setDuplicateGame(editingGame)}><GitMerge size={17} /> Merge duplicate collection game</button>
+                  {probableDuplicate && <span className="collection-duplicate-warning" role="status"><AlertTriangle size={17} /> Probably a duplicate: “{probableDuplicate.game.name}” ({Math.round(probableDuplicate.similarity * 100)}% match)</span>}
+                </div>
               </div>
 
               <div className="form-group">
