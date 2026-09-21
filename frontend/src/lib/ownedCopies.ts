@@ -73,6 +73,26 @@ export function parseOldCopies(value: string | null | undefined): OldCopy[] {
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
+export function moveCopyToOldCopies(
+  value: string | null | undefined,
+  oldValue: string | null | undefined,
+  index: number,
+): { copies: string | null; old_copies: string } {
+  const copies = parseCopies(value);
+  const oldCopies = parseOldCopies(oldValue);
+  const copy = copies[index];
+  if (!copy?.platform?.trim()) throw new Error('Choose a platform before moving this copy.');
+  if (oldCopies.length >= 100) throw new Error('You can keep at most 100 old copies per game.');
+  const id = copy.id && !oldCopies.some(oldCopy => oldCopy.id === copy.id) ? copy.id : crypto.randomUUID();
+  // Keep the original details in the historical record as well as its editable platform and time.
+  const oldCopy = { ...copy, id, console: copy.platform, playtime_hours: copy.playtime_hours ?? null };
+  const remaining = copies.filter((_, copyIndex) => copyIndex !== index);
+  return {
+    copies: remaining.length ? JSON.stringify(remaining) : null,
+    old_copies: JSON.stringify([...oldCopies, oldCopy]),
+  };
+}
+
 const normalizedCopyValue = (value: string | null | undefined) => value?.trim().toLocaleLowerCase() || '';
 
 export function matchesOwnedCopyFilters(value: string | null | undefined, filters: OwnedCopyFilters): boolean {

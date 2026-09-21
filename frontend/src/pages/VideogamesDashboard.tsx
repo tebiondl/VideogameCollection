@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
-import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
+import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
 import './VideogamesDashboard.css';
 
@@ -767,8 +767,15 @@ export function VideogamesDashboard() {
 
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
-                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game.</p>
-                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
+                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game. Sold or given away a copy? Expand it and choose Move to old copies, then Save Changes. Its platform and playtime will be kept.</p>
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} onMoveToOldCopy={(_copy, index) => {
+                  try {
+                    const moved = moveCopyToOldCopies(editingGame.copies, editingGame.old_copies, index);
+                    setEditingGame({ ...editingGame, ...moved });
+                  } catch (error) {
+                    window.alert(error instanceof Error ? error.message : 'Could not move this copy.');
+                  }
+                }} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
                   if (!copy.id || !window.confirm(`Restore ${copy.name || 'this Steam copy'} as its own collection game?`)) return;
                   const response = await fetchWithAuth(`/discovery/steam/collection-games/${editingGame.id}/copies/${encodeURIComponent(copy.id)}/restore-duplicate`, { method: 'POST' });
                   if (!response.ok) {

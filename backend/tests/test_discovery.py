@@ -789,6 +789,31 @@ class DiscoveryTests(unittest.TestCase):
         saved = next(game for game in reloaded if game['id'] == created['id'])
         self.assertEqual(json.loads(saved['old_copies']), json.loads(old_copies))
 
+    def test_collection_edit_moves_owned_copy_to_history_on_reload(self):
+        sold = {'id': 'sold', 'platform': 'Nintendo Switch', 'format': 'Physical',
+                'name': 'Special edition', 'playtime_hours': 42.5, 'price': 49.99, 'currency': 'EUR'}
+        kept = {'id': 'kept', 'platform': 'PC', 'format': 'Digital', 'playtime_hours': 12}
+        historical = {'id': 'older', 'console': 'Nintendo DS', 'playtime_hours': 8}
+        for remaining in ([], [kept]):
+            with self.subTest(remaining=remaining):
+                created = self.client.post('/api/videogames/', json={
+                    'name': 'Sold copy game', 'copies': json.dumps([sold, *remaining]),
+                    'old_copies': json.dumps([historical]), 'playtime_mode': 'copies',
+                }).json()
+                history = [historical, {**sold, 'console': sold['platform']}]
+                response = self.client.put(f"/api/videogames/{created['id']}", json={
+                    'name': created['name'], 'version': created['version'],
+                    'copies': json.dumps(remaining) if remaining else None,
+                    'old_copies': json.dumps(history),
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                self.db.expire_all()
+                saved = next(game for game in self.client.get('/api/videogames/').json() if game['id'] == created['id'])
+                self.assertEqual([copy['id'] for copy in json.loads(saved['copies'] or '[]')], [copy['id'] for copy in remaining])
+                self.assertEqual(json.loads(saved['old_copies']), history)
+                self.assertEqual(saved['playtime_mode'], 'copies')
+                self.assertFalse(saved['hidden'])
+
     def test_steam_sync_igdb_autocompletes_exact_app_links_including_dlc(self):
         wanted = self.create('Steam DLC title', steam_appid=101, platform='PC')
         service.reconcile_steam_library(self.db, self.user.id, [{
