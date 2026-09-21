@@ -1,5 +1,9 @@
 # Remote collection MCP through a general Cloudflare Tunnel
 
+If Codex will perform the deployment on the application machine, give it
+[`CODEX_DEPLOY.md`](CODEX_DEPLOY.md). That runbook includes discovery, guarded
+commands, verification criteria, and rollback steps.
+
 This deployment uses your normal `cloudflared` tunnel. It is not tied to OpenAI:
 any remote MCP client that supports Streamable HTTP and OAuth can connect. The
 same tunnel may continue routing your other applications.

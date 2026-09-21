@@ -1,4 +1,6 @@
 # VideogameCollection
 
-For private ChatGPT/Codex access to your production collection, see the
-[Remote MCP and Cloudflare Tunnel setup guide](deploy/cloudflare-tunnel/README.md).
+For protected remote access to the production collection, see the
+[Cloudflare Tunnel setup guide](deploy/cloudflare-tunnel/README.md). To hand the
+deployment to Codex on the application host, use the
+[machine deployment runbook](deploy/cloudflare-tunnel/CODEX_DEPLOY.md).
