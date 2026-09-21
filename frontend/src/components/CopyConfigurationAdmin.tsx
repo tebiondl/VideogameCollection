@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Check, GripVertical, Loader2, Plus, Trash2 } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
 
@@ -12,16 +12,44 @@ function uniqueName(base: string, values: string[]) {
   return candidate;
 }
 
-function EditableList({ title, values, onRename, onAdd, onRemove }: {
+function EditableList({ title, values, onRename, onAdd, onRemove, onMove }: {
   title: string;
   values: string[];
   onRename: (index: number, value: string) => void;
   onAdd: () => void;
   onRemove: (index: number) => void;
+  onMove: (from: number, to: number) => void;
 }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
   return <section className="admin-option-column">
     <div className="admin-option-heading"><h3>{title}</h3><span>{values.length}</span></div>
-    <div className="admin-option-rows">{values.map((value, index) => <div className="admin-option-row" key={`${title}-${index}`}>
+    <div className="admin-option-rows">{values.map((value, index) => <div
+      className={`admin-option-row${dropIndex === index ? ' drag-target' : ''}`}
+      key={`${title}-${index}`}
+      onDragEnter={event => { event.preventDefault(); if (draggedIndex !== null) setDropIndex(index); }}
+      onDragOver={event => event.preventDefault()}
+      onDrop={event => {
+        event.preventDefault();
+        if (draggedIndex !== null && draggedIndex !== index) onMove(draggedIndex, index);
+        setDraggedIndex(null); setDropIndex(null);
+      }}
+    >
+      <span
+        className="admin-drag-handle"
+        draggable
+        role="button"
+        tabIndex={0}
+        aria-label={`Drag ${value || title} to reorder`}
+        title="Drag to reorder"
+        onDragStart={event => {
+          setDraggedIndex(index); setDropIndex(index);
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', String(index));
+        }}
+        onDragEnd={() => { setDraggedIndex(null); setDropIndex(null); }}
+      ><GripVertical size={17} /></span>
       <input className="form-input" aria-label={`${title} ${index + 1}`} value={value} onChange={event => onRename(index, event.target.value)} />
       <button type="button" className="admin-icon-button danger" onClick={() => onRemove(index)} disabled={values.length === 1} aria-label={`Delete ${value || title}`}><Trash2 size={16} /></button>
     </div>)}</div>
@@ -100,6 +128,24 @@ export function CopyConfigurationAdmin() {
     return next;
   });
 
+  const move = (kind: ListKey, from: number, to: number) => setDraft(current => {
+    if (from === to || from < 0 || to < 0 || from >= current[kind].length || to >= current[kind].length) return current;
+    const values = [...current[kind]];
+    const [moved] = values.splice(from, 1);
+    values.splice(to, 0, moved);
+    const next = { ...current, [kind]: values } as CopyOptions;
+    if (kind === 'sources') {
+      next.platform_sources = Object.fromEntries(Object.entries(current.platform_sources).map(
+        ([platform, selected]) => [platform, values.filter(value => selected.includes(value))],
+      ));
+    } else if (kind === 'types') {
+      next.source_types = Object.fromEntries(Object.entries(current.source_types).map(
+        ([source, selected]) => [source, values.filter(value => selected.includes(value))],
+      ));
+    }
+    return next;
+  });
+
   const toggle = (mapping: 'platform_sources' | 'source_types', left: string, right: string) => setDraft(current => {
     const selected = current[mapping][left] || [];
     return { ...current, [mapping]: { ...current[mapping], [left]: selected.includes(right) ? selected.filter(value => value !== right) : [...selected, right] } };
@@ -131,12 +177,12 @@ export function CopyConfigurationAdmin() {
 
   return <section id="copies" className="glass-card admin-anchor-section admin-standard-card">
     <h2>Copy Configuration</h2>
-    <p className="text-secondary admin-copy-intro">Edit the shared values used by current and old copies. Old copies use this same Platform list.</p>
+    <p className="text-secondary admin-copy-intro">Edit the shared values used by current and old copies. Drag the handles to choose their dropdown order, then save. Old copies use this same Platform list.</p>
     <form onSubmit={save}>
       <div className="admin-copy-options-grid three-columns">
-        <EditableList title="Platforms" values={draft.platforms} onRename={(index, value) => rename('platforms', index, value)} onAdd={() => add('platforms')} onRemove={index => remove('platforms', index)} />
-        <EditableList title="Sources" values={draft.sources} onRename={(index, value) => rename('sources', index, value)} onAdd={() => add('sources')} onRemove={index => remove('sources', index)} />
-        <EditableList title="Types" values={draft.types} onRename={(index, value) => rename('types', index, value)} onAdd={() => add('types')} onRemove={index => remove('types', index)} />
+        <EditableList title="Platforms" values={draft.platforms} onRename={(index, value) => rename('platforms', index, value)} onAdd={() => add('platforms')} onRemove={index => remove('platforms', index)} onMove={(from, to) => move('platforms', from, to)} />
+        <EditableList title="Sources" values={draft.sources} onRename={(index, value) => rename('sources', index, value)} onAdd={() => add('sources')} onRemove={index => remove('sources', index)} onMove={(from, to) => move('sources', from, to)} />
+        <EditableList title="Types" values={draft.types} onRename={(index, value) => rename('types', index, value)} onAdd={() => add('types')} onRemove={index => remove('types', index)} onMove={(from, to) => move('types', from, to)} />
       </div>
       <div className="admin-compatibility-section">
         <h3>Platform × Source</h3><p className="text-secondary">Each row shows only the sources currently assigned. Add another from the compact selector or click a tag to remove it.</p>

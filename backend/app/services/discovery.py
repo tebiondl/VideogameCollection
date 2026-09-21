@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import xml.etree.ElementTree as ElementTree
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -192,7 +193,26 @@ def _steam_account_stats_title(client, steam_id, api_key, appid):
         game_name = playerstats.get("gameName")
         if isinstance(game_name, str) and game_name.strip():
             return game_name.strip()
-    return None
+
+    # Some older, delisted and family-shared games are omitted by both the
+    # owned-library endpoint and the Web API stats endpoints. Their public
+    # Steam Community stats XML can still prove that this specific account has
+    # a stats page for the app. It often reports zero hours even when the Steam
+    # client shows time, so use it for identity only and never overwrite local
+    # playtime from this source.
+    try:
+        response = client.get(
+            f"https://steamcommunity.com/profiles/{steam_id}/stats/{appid}/",
+            params={"xml": 1},
+        )
+        response.raise_for_status()
+        root = ElementTree.fromstring(response.text)
+    except (httpx.HTTPError, ElementTree.ParseError, ValueError, TypeError):
+        return None
+    if root.tag != "playerstats" or root.findtext("privacyState") != "public":
+        return None
+    game_name = root.findtext("./game/gameName")
+    return game_name.strip() if isinstance(game_name, str) and game_name.strip() else None
 
 
 def _steam_store_queries(value):

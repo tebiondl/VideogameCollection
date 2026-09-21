@@ -377,12 +377,35 @@ class DiscoveryTests(unittest.TestCase):
                 'playerstats': {'success': False, 'error': 'No stats'},
             }),
             httpx.Response(400, request=httpx.Request('GET', 'https://api.steampowered.com'), json={}),
+            httpx.Response(200, request=httpx.Request('GET', 'https://steamcommunity.com'), text='<html>Sign in</html>'),
         ]
 
         with patch.object(service.httpx, 'Client', return_value=upstream):
             result = service.find_verified_steam_game(self.db, self.user.id, 'Store Game')
 
         self.assertIsNone(result)
+
+    def test_public_community_stats_confirm_game_missing_from_owned_api(self):
+        client = MagicMock()
+        client.get.side_effect = [
+            httpx.Response(403, request=httpx.Request('GET', 'https://api.steampowered.com'), json={}),
+            httpx.Response(400, request=httpx.Request('GET', 'https://api.steampowered.com'), json={}),
+            httpx.Response(200, request=httpx.Request('GET', 'https://steamcommunity.com'), text='''
+                <playerstats>
+                  <privacyState>public</privacyState>
+                  <game><gameName>ONE PIECE PIRATE WARRIORS 3</gameName></game>
+                  <player><hoursPlayed>0</hoursPlayed></player>
+                </playerstats>
+            '''),
+        ]
+
+        title = service._steam_account_stats_title(
+            client, '76561197960434622', 'a' * 32, 331600,
+        )
+
+        self.assertEqual(title, 'ONE PIECE PIRATE WARRIORS 3')
+        self.assertIn('/stats/331600/', client.get.call_args_list[2].args[0])
+        self.assertEqual(client.get.call_args_list[2].kwargs['params'], {'xml': 1})
 
     def test_verified_store_candidate_can_be_linked_and_is_persisted(self):
         settings = self.configured()
