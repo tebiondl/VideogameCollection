@@ -18,6 +18,7 @@ import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
 import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, parseCopies } from '../lib/ownedCopies';
+import { collectionGameUpdatePayload } from '../lib/videogamePayload';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
@@ -324,42 +325,22 @@ export function VideogamesDashboard() {
   const saveEdit = async () => {
     if (!editingGame) return;
     try {
-      const payload = {
-        name: editingGame.name,
-        description: editingGame.description || null,
-        comments: editingGame.comments || null,
-        image_url: editingGame.image_url || null,
-        status: editingGame.status,
-        playtime_hours: editingGame.playtime_hours !== undefined ? editingGame.playtime_hours : null,
-        playtime_mode: editingGame.playtime_mode || 'user',
-        mark: editingGame.mark || null,
-        hype: editingGame.hype || null,
-        completion_date: editingGame.completion_date || null,
-        publication_year: editingGame.publication_year || null,
-        release_date: editingGame.release_date || null,
-        igdb_id: editingGame.igdb_id || null,
-        completion_percentage: editingGame.completion_percentage ?? null,
-        tags: editingGame.tags || null,
-        dlcs: editingGame.dlcs || null,
-        is_dlc: !!editingGame.is_dlc,
-        parent_game_name: editingGame.parent_game_name || null,
-        copies: editingGame.copies || null,
-        hidden: !!editingGame.hidden,
-        reviewed: !!editingGame.reviewed,
-        version: editingGame.version ?? null,
-      };
+      const payload = collectionGameUpdatePayload(editingGame);
       const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        const saved = await res.json();
-        setGames(games.map(g => g.id === editingGame.id ? saved : g));
-        setEditingGame(null);
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || 'Could not save the game.');
       }
+      const saved = await res.json();
+      setGames(games.map(g => g.id === editingGame.id ? saved : g));
+      setEditingGame(null);
     } catch (err) {
       console.error(err);
+      alert(err instanceof Error ? err.message : 'Could not save the game.');
     }
   };
 

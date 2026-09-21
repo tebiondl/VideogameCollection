@@ -775,6 +775,20 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.text)
         sync.assert_called_once_with(self.user.id)
 
+    def test_collection_edit_round_trips_old_copies(self):
+        created = self.client.post('/api/videogames/', json={'name': 'Historical copy game'}).json()
+        old_copies = json.dumps([{
+            'id': 'old-copy-1', 'console': 'Nintendo Switch', 'playtime_hours': 42.5,
+        }])
+        response = self.client.put(f"/api/videogames/{created['id']}", json={
+            'name': created['name'], 'old_copies': old_copies, 'version': created['version'],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(json.loads(response.json()['old_copies']), json.loads(old_copies))
+        reloaded = self.client.get('/api/videogames/').json()
+        saved = next(game for game in reloaded if game['id'] == created['id'])
+        self.assertEqual(json.loads(saved['old_copies']), json.loads(old_copies))
+
     def test_steam_sync_igdb_autocompletes_exact_app_links_including_dlc(self):
         wanted = self.create('Steam DLC title', steam_appid=101, platform='PC')
         service.reconcile_steam_library(self.db, self.user.id, [{
