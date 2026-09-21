@@ -1,0 +1,12 @@
+.env
+.venv
+venv
+.uv-cache
+__pycache__
+**/__pycache__
+*.db
+*.log
+backups
+scratch
+.auth-signing.key
+.steam-secrets.key

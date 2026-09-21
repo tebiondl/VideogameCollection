@@ -14,6 +14,7 @@ from .services.backups import scheduler as backup_scheduler
 from contextlib import asynccontextmanager, suppress
 import asyncio
 from .services.boardgame_player_migration import migrate_legacy_match_players
+from .routers import integration_router
 import logging
 
 logger = logging.getLogger(__name__)
@@ -612,6 +613,7 @@ app.include_router(boardgames_router.router)
 app.include_router(settings_router.router)
 app.include_router(discovery_router.router)
 app.include_router(backups_router.router)
+app.include_router(integration_router.router)
 
 @app.get("/")
 def read_root():

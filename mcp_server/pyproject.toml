@@ -1,0 +1,6 @@
+[project]
+name = "videogame-collection-mcp"
+version = "0.1.0"
+description = "Private stdio MCP adapter for VideogameCollection"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.26,<2", "httpx>=0.28,<1"]

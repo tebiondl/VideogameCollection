@@ -32,3 +32,13 @@ mobile-app/ios/
 venv
 env
 *.log
+
+# Private integration credentials and tunnel runtime configuration
+data/integrations/
+.auth-signing.key
+**/.auth-signing.key
+**/.steam-secrets.key
+mcp_server/.venv/
+mcp_server/.uv-cache/
+deploy/private-tunnel/*.env
+deploy/private-tunnel/profiles/

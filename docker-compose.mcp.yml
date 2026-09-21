@@ -1,0 +1,38 @@
+# Optional private stdio adapters. Start through tunnel-client, not `compose up`.
+services:
+  mcp-read:
+    build: ./mcp_server
+    profiles: [mcp]
+    stdin_open: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      COLLECTION_API_URL: http://backend:8000
+      COLLECTION_TOKEN_FILE: /run/secrets/collection_token
+      MCP_MODE: read
+    volumes:
+      - type: bind
+        source: ./data/integrations/read.token
+        target: /run/secrets/collection_token
+        read_only: true
+        bind:
+          create_host_path: false
+  mcp-write:
+    build: ./mcp_server
+    profiles: [mcp]
+    stdin_open: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      COLLECTION_API_URL: http://backend:8000
+      COLLECTION_TOKEN_FILE: /run/secrets/collection_token
+      MCP_MODE: write
+    volumes:
+      - type: bind
+        source: ./data/integrations/write.token
+        target: /run/secrets/collection_token
+        read_only: true
+        bind:
+          create_host_path: false
