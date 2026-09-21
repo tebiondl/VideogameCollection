@@ -9,6 +9,7 @@ export interface OwnedCopy {
   duplicate_of_appid?: number | null;
   merged_from_game_id?: number | null;
   steam_active?: boolean;
+  steam_playtime_available?: boolean;
   igdb_id?: number | null;
   price?: number | null;
   currency?: string;

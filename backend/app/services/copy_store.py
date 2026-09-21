@@ -157,6 +157,7 @@ def copy_dict(db: Session, row: OwnedCopy) -> dict:
                 "igdb_id": entitlement.igdb_id or result.get("igdb_id"),
                 "playtime_hours": entitlement.playtime_hours
                 if entitlement.playtime_hours is not None else result.get("playtime_hours"),
+                "steam_playtime_available": entitlement.playtime_hours is not None,
                 "steam_active": bool(entitlement.active),
                 "duplicate_of_appid": entitlement.duplicate_of_appid,
             })
@@ -253,6 +254,10 @@ def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> li
             row.igdb_id = (entitlement.igdb_id if entitlement else None) or row.igdb_id
             if entitlement and entitlement.playtime_hours is not None:
                 row.playtime_hours = entitlement.playtime_hours
+            else:
+                row.playtime_hours = value.get("playtime_hours")
+                if row.playtime_hours is not None and row.playtime_hours < 0:
+                    raise HTTPException(422, "Copy playtime cannot be negative.")
             row.price = value.get("price")
             row.currency = str(value.get("currency") or row.currency or "EUR")
             row.user_modified = True

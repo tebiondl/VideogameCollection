@@ -560,6 +560,13 @@ class DiscoveryTests(unittest.TestCase):
         self.assertFalse(entitlement.stats_verified)
         self.assertEqual(json.loads(game.copies)[0]['steam_appid'], 698780)
         self.assertEqual(json.loads(game.copies)[0]['playtime_hours'], 4.0)
+        self.assertFalse(json.loads(game.copies)[0]['steam_playtime_available'])
+
+        projected = json.loads(game.copies)
+        projected[0]['playtime_hours'] = 12.5
+        service.copy_store.replace_from_payload(self.db, game, projected)
+        self.db.commit()
+        self.assertEqual(json.loads(game.copies)[0]['playtime_hours'], 12.5)
 
     def test_manual_link_supports_a_collection_dlc_and_steam_dlc(self):
         game = Videogame(

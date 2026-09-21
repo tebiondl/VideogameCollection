@@ -22,6 +22,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
     {copies.map((copy, index) => {
       const platforms = copy.platform && !platformOptions.includes(copy.platform) ? [copy.platform, ...platformOptions] : platformOptions;
       const isSteam = !!copy.steam_appid;
+      const canEditSteamPlaytime = isSteam && copy.steam_playtime_available === false;
       const steamOption = sourceOptions.find(isSteamSource) || 'Steam';
       const sources = compatibleCopySources(copy.platform, copy.source ? [copy.source, ...sourceOptions] : sourceOptions, platformSources);
       const renderedSources = isSteam && !sources.some(isSteamSource) ? [steamOption, ...sources] : sources;
@@ -44,7 +45,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
           const source = event.target.value;
           update(index, { source, format: compatibleCopyFormat(copy.platform, source, copy.format, typeOptions, sourceTypes) });
         }}><option value="" disabled>Choose source</option>{renderedSources.map(value => <option key={value}>{value}</option>)}</select>{isSteam && <small className="text-muted">Locked while this copy is linked to Steam.</small>}</label>
-        <label>Copy playtime (hours)<input className="form-input" type="number" min="0" step="0.1" value={copy.playtime_hours ?? ''} disabled={isSteam} onChange={event => update(index, { playtime_hours: event.target.value ? Number(event.target.value) : null })} />{isSteam && <small className="text-muted">Updated automatically by Steam.{copy.counts_toward_totals === false ? ' Shared link; counted once in global analytics.' : ''}</small>}</label>
+        <label>Copy playtime (hours)<input className="form-input" type="number" min="0" step="0.1" value={copy.playtime_hours ?? ''} disabled={isSteam && !canEditSteamPlaytime} onChange={event => update(index, { playtime_hours: event.target.value ? Number(event.target.value) : null })} />{isSteam && <small className="text-muted">{canEditSteamPlaytime ? 'Steam confirms this game but does not expose its playtime; enter it manually.' : 'Updated automatically by Steam.'}{copy.counts_toward_totals === false ? ' Shared link; counted once in global analytics.' : ''}</small>}</label>
         <label>Price<input className="form-input" type="number" min="0" step="0.01" value={copy.price ?? ''} onChange={event => update(index, { price: event.target.value ? Number(event.target.value) : null })} /></label>
         <label>Currency<select className="form-input" value={copy.currency || 'EUR'} onChange={event => update(index, { currency: event.target.value })}>{['EUR', 'USD', 'GBP', 'JPY'].map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="wide">Store / source URL<input className="form-input" type="url" value={copy.store_url || ''} disabled={isSteam} onChange={event => update(index, { store_url: event.target.value || null })} /></label>
