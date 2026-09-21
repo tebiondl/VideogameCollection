@@ -3,14 +3,20 @@ import tempfile
 import unittest
 import sys
 import os
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.exceptions import InvalidTokenError
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
-from mcp_server.server import CollectionAPI, build_server
+from mcp_server.server import CloudflareAccessMiddleware, CloudflareAccessVerifier, CollectionAPI, build_server
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -82,6 +88,67 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 initialized = await session.initialize()
                 self.assertEqual(initialized.serverInfo.name, 'VideogameCollection (read)')
                 self.assertEqual(len((await session.list_tools()).tools), 6)
+
+
+class CloudflareAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_middleware_requires_a_valid_access_assertion(self):
+        class Verifier:
+            def verify(self, assertion):
+                if assertion != 'valid':
+                    raise InvalidTokenError('invalid')
+                return {'sub': 'user'}
+
+        async def origin(scope, receive, send):
+            await send({'type': 'http.response.start', 'status': 204, 'headers': []})
+            await send({'type': 'http.response.body', 'body': b''})
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=CloudflareAccessMiddleware(origin, Verifier())),
+                                     base_url='http://origin') as client:
+            self.assertEqual((await client.get('/healthz')).status_code, 200)
+            self.assertEqual((await client.post('/mcp')).status_code, 401)
+            self.assertEqual((await client.post('/mcp', headers={'Cf-Access-Jwt-Assertion': 'invalid'})).status_code, 401)
+            self.assertEqual((await client.post('/mcp', headers={'Cf-Access-Jwt-Assertion': 'valid'})).status_code, 204)
+
+    async def test_verifier_checks_signature_issuer_audience_and_expiry(self):
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        verifier = CloudflareAccessVerifier('my-team.cloudflareaccess.com', 'expected-aud')
+        verifier.keys = SimpleNamespace(get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private_key.public_key()))
+        now = int(time.time())
+
+        def token(**overrides):
+            payload = {'sub': 'user-id', 'iss': verifier.issuer, 'aud': ['expected-aud'], 'iat': now, 'exp': now + 60}
+            payload.update(overrides)
+            return jwt.encode(payload, private_key, algorithm='RS256', headers={'kid': 'test'})
+
+        self.assertEqual(verifier.verify(token())['sub'], 'user-id')
+        with self.assertRaises(InvalidTokenError):
+            verifier.verify(token(aud=['another-app']))
+        with self.assertRaises(InvalidTokenError):
+            verifier.verify(token(exp=now - 1))
+        with self.assertRaises(ValueError):
+            CloudflareAccessVerifier('my-team.cloudflareaccess.com', 'change-me')
+
+    async def test_streamable_http_initializes_behind_access_middleware(self):
+        class Verifier:
+            def verify(self, assertion):
+                if assertion != 'valid':
+                    raise InvalidTokenError('invalid')
+                return {'sub': 'user'}
+
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / 'token'
+            secret.write_text('vgc_test_secret')
+            server = build_server(CollectionAPI('http://collection', str(secret)), 'read', public_hostname='origin')
+            origin = server.streamable_http_app()
+            app = CloudflareAccessMiddleware(origin, Verifier())
+            async with origin.router.lifespan_context(origin):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://origin',
+                                             headers={'Cf-Access-Jwt-Assertion': 'valid'}) as client:
+                    async with streamable_http_client('http://origin/mcp', http_client=client) as (read, write, _):
+                        async with ClientSession(read, write) as session:
+                            initialized = await session.initialize()
+                            self.assertEqual(initialized.serverInfo.name, 'VideogameCollection (read)')
+                            self.assertEqual(len((await session.list_tools()).tools), 6)
 
 
 if __name__ == '__main__':

@@ -1,16 +1,22 @@
-# Optional private stdio adapters. Start through tunnel-client, not `compose up`.
+# Optional remote MCP endpoints. Cloudflared connects to the loopback-only ports.
 services:
   mcp-read:
     build: ./mcp_server
     profiles: [mcp]
-    stdin_open: true
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MCP_READ_PORT:-8765}:8000"
     environment:
       COLLECTION_API_URL: http://backend:8000
       COLLECTION_TOKEN_FILE: /run/secrets/collection_token
       MCP_MODE: read
+      MCP_TRANSPORT: streamable-http
+      MCP_PUBLIC_HOSTNAME: ${MCP_READ_HOSTNAME:-games-read.example.com}
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-change-me.cloudflareaccess.com}
+      CLOUDFLARE_ACCESS_AUD: ${CLOUDFLARE_ACCESS_READ_AUD:-change-me}
     volumes:
       - type: bind
         source: ./data/integrations/read.token
@@ -21,14 +27,20 @@ services:
   mcp-write:
     build: ./mcp_server
     profiles: [mcp]
-    stdin_open: true
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MCP_WRITE_PORT:-8766}:8000"
     environment:
       COLLECTION_API_URL: http://backend:8000
       COLLECTION_TOKEN_FILE: /run/secrets/collection_token
       MCP_MODE: write
+      MCP_TRANSPORT: streamable-http
+      MCP_PUBLIC_HOSTNAME: ${MCP_WRITE_HOSTNAME:-games-write.example.com}
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-change-me.cloudflareaccess.com}
+      CLOUDFLARE_ACCESS_AUD: ${CLOUDFLARE_ACCESS_WRITE_AUD:-change-me}
     volumes:
       - type: bind
         source: ./data/integrations/write.token

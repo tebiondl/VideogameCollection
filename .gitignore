@@ -40,5 +40,4 @@ data/integrations/
 **/.steam-secrets.key
 mcp_server/.venv/
 mcp_server/.uv-cache/
-deploy/private-tunnel/*.env
-deploy/private-tunnel/profiles/
+deploy/cloudflare-tunnel/*.env
