@@ -20,7 +20,7 @@ from ..models import Videogame
 from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
 from ..discovery_models import SteamContentLink
 from . import copy_store
-from .secrets import reveal_secret
+from .secrets import resolve_steam_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def steam_owned_games(client, steam_id, api_key=None):
     """Read the public Steam library through the supported GetOwnedGames API."""
     api_key = (api_key or os.getenv("STEAM_WEB_API_KEY", "")).strip()
     if not api_key:
-        raise ValueError("Collection sync needs a Steam Web API key. Add one in Admin; wishlist sync will continue meanwhile.")
+        raise ValueError("Collection sync needs a Steam Web API key. Add one in User Settings; wishlist sync will continue meanwhile.")
     raw = request_json(client, "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/", params={
         "key": api_key, "steamid": steam_id, "include_appinfo": 1, "include_played_free_games": 1,
     })
@@ -1134,7 +1134,7 @@ def sync_steam(user_id, factory=SessionLocal):
             owned_items, owned_error = [], None
             if settings.sync_collection:
                 try:
-                    owned_items = steam_owned_games(client, steam_id, reveal_secret(settings.steam_api_key))
+                    owned_items = steam_owned_games(client, steam_id, resolve_steam_api_key(settings.steam_api_key))
                 except (httpx.HTTPError, ValueError, KeyError) as exc:
                     owned_error = str(exc)[:500]
             wanted_rows = db.query(WantedGame).filter_by(user_id=user_id).all()

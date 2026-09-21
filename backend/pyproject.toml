@@ -15,6 +15,7 @@ dependencies = [
     "certifi==2026.2.25",
     "click==8.3.2",
     "colorama==0.4.6",
+    "cryptography>=50.0.1",
     "distro==1.9.0",
     "et-xmlfile==2.0.0",
     "fastapi==0.136.0",

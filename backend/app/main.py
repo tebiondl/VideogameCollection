@@ -509,6 +509,30 @@ def _encrypt_saved_api_keys_v8():
 _encrypt_saved_api_keys_v8()
 
 
+def _encrypt_portable_api_keys_v10():
+    """Encrypt legacy plaintext keys on Linux without erasing unreadable values."""
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter_by(key="steam_api_keys_portable_v10").first():
+            return
+        from .services.secrets import DPAPI_PREFIX, FERNET_PREFIX, protect_secret
+        for settings in db.query(DiscoverySettings).all():
+            value = settings.steam_api_key
+            if value and not value.startswith((DPAPI_PREFIX, FERNET_PREFIX)):
+                settings.steam_api_key = protect_secret(value)
+        db.add(AppSetting(key="steam_api_keys_portable_v10", value="1"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Portable Steam API-key encryption migration failed")
+        raise
+    finally:
+        db.close()
+
+
+_encrypt_portable_api_keys_v10()
+
+
 def _project_duplicate_restore_metadata_v9():
     """Refresh legacy card JSON so pre-existing duplicate copies expose undo metadata."""
     db = SessionLocal()

@@ -764,6 +764,17 @@ class DiscoveryTests(unittest.TestCase):
         self.assertTrue(response.json()['steam_api_key_configured'])
         self.assertNotIn('steam_api_key', response.json())
 
+    def test_manual_collection_sync_accepts_server_wide_api_key(self):
+        self.configured()
+        with patch.dict('os.environ', {'STEAM_WEB_API_KEY': 's' * 32}), \
+             patch.object(service, 'sync_steam') as sync:
+            settings = self.client.get('/api/discovery/settings')
+            response = self.client.post('/api/discovery/steam/sync')
+        self.assertEqual(settings.status_code, 200, settings.text)
+        self.assertTrue(settings.json()['steam_api_key_configured'])
+        self.assertEqual(response.status_code, 202, response.text)
+        sync.assert_called_once_with(self.user.id)
+
     def test_steam_sync_igdb_autocompletes_exact_app_links_including_dlc(self):
         wanted = self.create('Steam DLC title', steam_appid=101, platform='PC')
         service.reconcile_steam_library(self.db, self.user.id, [{

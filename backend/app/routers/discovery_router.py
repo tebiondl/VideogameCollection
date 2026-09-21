@@ -19,7 +19,7 @@ from ..discovery_schemas import (
 )
 from ..services import discovery as service
 from ..services import copy_store
-from ..services.secrets import protect_secret, reveal_secret
+from ..services.secrets import protect_secret, resolve_steam_api_key
 from .auth_router import get_current_user
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -377,7 +377,10 @@ def save_settings(payload: SettingsInput, db: Session = Depends(get_db), user: U
     if payload.clear_steam_api_key:
         settings.steam_api_key = None
     elif payload.steam_api_key:
-        settings.steam_api_key = protect_secret(payload.steam_api_key.strip())
+        try:
+            settings.steam_api_key = protect_secret(payload.steam_api_key.strip())
+        except (OSError, ValueError):
+            raise HTTPException(503, "The server could not store the Steam Web API key securely. Check its secret-storage configuration.")
     if changed:
         if previous_steam_id:
             for wanted in db.query(WantedGame).filter_by(user_id=user.id, steam_id=previous_steam_id).all():
@@ -405,7 +408,7 @@ def sync_now(background: BackgroundTasks, db: Session = Depends(get_db), user: U
         raise HTTPException(422, "Choose wishlist sync, collection sync, or both in User Settings first.")
     if settings.sync_collection:
         try:
-            configured_key = reveal_secret(settings.steam_api_key)
+            configured_key = resolve_steam_api_key(settings.steam_api_key)
         except Exception:
             raise HTTPException(422, "The saved Steam Web API key cannot be read. Enter it again in User Settings.")
         if not configured_key:

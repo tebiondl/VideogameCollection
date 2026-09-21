@@ -59,7 +59,8 @@ class DiscoverySettings(Base):
 
     @property
     def steam_api_key_configured(self):
-        return bool(self.steam_api_key)
+        from .services.secrets import steam_api_key_available
+        return steam_api_key_available(self.steam_api_key)
 
 
 class OwnedCopy(Base):
