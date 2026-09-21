@@ -28,6 +28,7 @@ mobile-app/android/
 mobile-app/ios/
 
 # Root
+.env
 .venv
 venv
 env
