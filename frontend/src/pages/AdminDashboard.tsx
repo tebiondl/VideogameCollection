@@ -255,7 +255,7 @@ export function AdminDashboard() {
             Global Tags Manager
           </h2>
           
-          <form onSubmit={handleAddTag} style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+          <form onSubmit={handleAddTag} className="admin-tag-create-form">
             <input 
               type="text" 
               className="form-input" 
@@ -279,17 +279,9 @@ export function AdminDashboard() {
               <Loader2 className="spinner" size={24} />
             </div>
           ) : tags.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div className="admin-tag-grid" aria-label={`${tags.length} global tags`}>
               {tags.map(tag => (
-                <div key={tag.id} style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center',
-                  padding: '1rem',
-                  backgroundColor: 'var(--bg-secondary)',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-color)'
-                }}>
+                <div key={tag.id} className="admin-tag-item">
                   {editingTagId === tag.id ? (
                     <input
                       className="form-input admin-tag-edit-input"
@@ -301,7 +293,7 @@ export function AdminDashboard() {
                       }}
                       autoFocus
                     />
-                  ) : <span style={{ fontWeight: 500 }}>{tag.name}</span>}
+                  ) : <span className="admin-tag-name" title={tag.name}>{tag.name}</span>}
                   <div className="admin-tag-actions">
                     {editingTagId === tag.id ? (
                       <>

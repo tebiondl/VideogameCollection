@@ -48,6 +48,7 @@ def _run_migrations():
         "ALTER TABLE discovery_settings ADD COLUMN sync_collection BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE discovery_settings ADD COLUMN owned_sync_generation INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN sync_warning VARCHAR",
+        "ALTER TABLE steam_entitlements ADD COLUMN stats_verified BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",

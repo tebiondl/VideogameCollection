@@ -119,6 +119,10 @@ class SteamOwnedGame(Base):
     parent_game_name = Column(String)
     duplicate_of_appid = Column(Integer)
     active = Column(Boolean, nullable=False, default=True)
+    # Some played free games are omitted by GetOwnedGames. These rows were
+    # independently confirmed against this account's Steam stats APIs and must
+    # survive an otherwise-authoritative owned-library refresh.
+    stats_verified = Column(Boolean, nullable=False, default=False)
     last_seen_generation = Column(Integer, nullable=False, default=0)
     first_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)

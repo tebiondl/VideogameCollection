@@ -107,7 +107,7 @@ def steam_wishlist(client, steam_id):
 
 
 def steam_owned_games(client, steam_id, api_key=None):
-    """Read the public Steam library through the supported GetOwnedGames API."""
+    """Read Steam's owned library plus recently played games it omits."""
     api_key = (api_key or os.getenv("STEAM_WEB_API_KEY", "")).strip()
     if not api_key:
         raise ValueError("Collection sync needs a Steam Web API key. Add one in User Settings; wishlist sync will continue meanwhile.")
@@ -117,16 +117,146 @@ def steam_owned_games(client, steam_id, api_key=None):
     response = raw.get("response")
     if not isinstance(response, dict):
         raise ValueError("Steam returned no readable game library. Make your game details public.")
-    games = response.get("games", [])
-    if not isinstance(games, list):
+    owned_games = response.get("games", [])
+    if not isinstance(owned_games, list):
         raise ValueError("Steam returned no readable game library. Make your game details public.")
-    return [{
-        "appid": item["appid"], "name": item.get("name") or f"Steam app {item['appid']}",
-        # Steam's client total includes offline/disconnected sessions, while
-        # GetOwnedGames exposes those minutes in a separate field.
-        "playtime_hours": round(((item.get("playtime_forever") or 0) + (item.get("playtime_disconnected") or 0)) / 60, 1),
-        "image_url": None, "store_url": f"https://store.steampowered.com/app/{item['appid']}/",
-    } for item in games if isinstance(item.get("appid"), int) and item["appid"] > 0]
+
+    # GetOwnedGames can omit played free-to-play titles even when
+    # include_played_free_games is enabled. RecentlyPlayedGames still exposes
+    # those apps, so merge it as a best-effort supplement to the authoritative
+    # owned response. A failure here must not discard a valid owned snapshot.
+    recently_played = []
+    try:
+        recent_raw = request_json(client, "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/", params={
+            "key": api_key, "steamid": steam_id, "count": 0,
+        })
+        recent_response = recent_raw.get("response")
+        if not isinstance(recent_response, dict) or not isinstance(recent_response.get("games", []), list):
+            raise ValueError("Steam returned no readable recently played games.")
+        recently_played = recent_response.get("games", [])
+    except (httpx.HTTPError, ValueError, KeyError):
+        logger.warning("Steam recently played fallback failed; continuing with the owned library")
+
+    owned_appids = {
+        item.get("appid") for item in owned_games
+        if isinstance(item, dict) and isinstance(item.get("appid"), int)
+    }
+    games_by_app = {}
+    for source, item in [
+        *(("owned", item) for item in owned_games),
+        *(("recent", item) for item in recently_played),
+    ]:
+        appid = item.get("appid")
+        if not isinstance(appid, int) or appid <= 0:
+            continue
+        parsed = {
+            "appid": appid, "name": item.get("name") or f"Steam app {appid}",
+            # Steam's client total includes offline/disconnected sessions, while
+            # these endpoints may expose those minutes in a separate field.
+            "playtime_hours": round(((item.get("playtime_forever") or 0) + (item.get("playtime_disconnected") or 0)) / 60, 1),
+            "image_url": None, "store_url": f"https://store.steampowered.com/app/{appid}/",
+            # Recent-only games are an account-specific exception to an
+            # incomplete owned snapshot. Preserve that proof after recency
+            # expires instead of deactivating the entitlement on the next sync.
+            "stats_verified": source == "recent" and appid not in owned_appids,
+        }
+        existing = games_by_app.get(appid)
+        if existing is None:
+            games_by_app[appid] = parsed
+        else:
+            existing["playtime_hours"] = max(existing["playtime_hours"], parsed["playtime_hours"])
+            existing["stats_verified"] = existing["stats_verified"] or parsed["stats_verified"]
+            if existing["name"].startswith("Steam app ") and not parsed["name"].startswith("Steam app "):
+                existing["name"] = parsed["name"]
+    return list(games_by_app.values())
+
+
+def _steam_account_stats_title(client, steam_id, api_key, appid):
+    """Return Steam's title only when this account exposes app-specific stats."""
+    endpoints = (
+        ("https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/", True),
+        ("https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v2/", False),
+    )
+    for url, requires_success in endpoints:
+        try:
+            raw = request_json(client, url, params={
+                "key": api_key, "steamid": steam_id, "appid": appid, "l": "english",
+            })
+        except (httpx.HTTPError, ValueError, KeyError):
+            continue
+        playerstats = raw.get("playerstats")
+        if not isinstance(playerstats, dict):
+            continue
+        if requires_success and playerstats.get("success") is not True:
+            continue
+        game_name = playerstats.get("gameName")
+        if isinstance(game_name, str) and game_name.strip():
+            return game_name.strip()
+    return None
+
+
+def find_verified_steam_game(db, user_id, title):
+    """Find an exact Store title that Steam stats confirm for this account.
+
+    This is intentionally narrower than fuzzy collection matching. It repairs
+    omissions from GetOwnedGames without turning Store search results into an
+    ownership claim.
+    """
+    settings = db.get(DiscoverySettings, user_id)
+    if not settings or not settings.steam_id:
+        return None
+    try:
+        api_key = resolve_steam_api_key(settings.steam_api_key)
+    except (OSError, ValueError):
+        return None
+    if not api_key:
+        return None
+    target = _collection_title_key(title)
+    if not target:
+        return None
+    try:
+        with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            raw = request_json(client, "https://store.steampowered.com/api/storesearch/", params={
+                "term": title, "l": "english",
+                "cc": {"North America": "US", "Japan": "JP"}.get(settings.region, "ES"),
+            })
+            items = raw.get("items", [])
+            if not isinstance(items, list):
+                return None
+            exact = []
+            seen = set()
+            for item in items:
+                if not isinstance(item, dict) or item.get("type") != "app":
+                    continue
+                appid, name = item.get("id"), item.get("name")
+                if not isinstance(appid, int) or appid <= 0 or not isinstance(name, str):
+                    continue
+                if appid in seen or _collection_title_key(name) != target:
+                    continue
+                seen.add(appid)
+                exact.append(item)
+
+            verified = []
+            for item in exact:
+                stats_name = _steam_account_stats_title(
+                    client, settings.steam_id, api_key, item["id"],
+                )
+                if stats_name:
+                    verified.append((item, stats_name))
+            # Multiple account-verified apps with the same normalized title are
+            # ambiguous; do not guess which edition the collection copy means.
+            if len(verified) != 1:
+                return None
+            item, stats_name = verified[0]
+            return {
+                "appid": item["id"], "name": stats_name,
+                "playtime_hours": None, "image_url": item.get("tiny_image"),
+                "store_url": f"https://store.steampowered.com/app/{item['id']}/",
+                "stats_verified": True,
+            }
+    except (httpx.HTTPError, ValueError, KeyError):
+        logger.warning("Steam account-verified Store lookup failed for user %s", user_id)
+        return None
 
 
 def _copy_has_steam_app(game, appid):
@@ -357,6 +487,7 @@ def upsert_steam_catalog(db, user_id, item, steam_id=None, generation=0):
         if item.get(key) is not None:
             setattr(row, key, item[key])
     row.is_dlc = bool(item.get("is_dlc", row.is_dlc))
+    row.stats_verified = row.stats_verified or bool(item.get("stats_verified"))
     row.active = True
     row.last_seen_generation = generation
     row.last_seen_at = datetime.utcnow()
@@ -1175,7 +1306,9 @@ def sync_steam(user_id, factory=SessionLocal):
                 db.commit()
             if settings.sync_collection and owned_error is None:
                 settings.owned_sync_generation = (settings.owned_sync_generation or 0) + 1
-                db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=steam_id).update(
+                db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=steam_id).filter(
+                    SteamOwnedGame.stats_verified.is_(False)
+                ).update(
                     {"active": False}, synchronize_session=False,
                 )
                 db.flush()

@@ -284,6 +284,170 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.db.get(WantedGame, exact['id']).status, 'Acquired')
         self.assertEqual(self.db.get(WantedGame, other['id']).status, 'Wanted')
 
+    def test_recently_played_supplements_free_games_missing_from_owned_library(self):
+        client = MagicMock()
+        client.get.side_effect = [
+            httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={
+                "response": {"games": [{"appid": 101, "name": "Owned Game", "playtime_forever": 750}]},
+            }),
+            httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={
+                "response": {"games": [
+                    {"appid": 101, "name": "Owned Game", "playtime_forever": 720},
+                    {"appid": 2420510, "name": "HoloCure - Save the Fans!", "playtime_forever": 542},
+                ]},
+            }),
+        ]
+
+        owned = service.steam_owned_games(client, '76561197960434622', 'a' * 32)
+
+        self.assertEqual([game['appid'] for game in owned], [101, 2420510])
+        self.assertEqual(owned[0]['playtime_hours'], 12.5)
+        self.assertEqual(owned[1]['playtime_hours'], 9.0)
+        self.assertFalse(owned[0]['stats_verified'])
+        self.assertTrue(owned[1]['stats_verified'])
+        self.assertIn('GetOwnedGames', client.get.call_args_list[0].args[0])
+        self.assertIn('GetRecentlyPlayedGames', client.get.call_args_list[1].args[0])
+
+        collection = Videogame(user_id=self.user.id, name='Holocure: Save the Fans!', status='Infinite')
+        self.db.add(collection)
+        self.db.commit()
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 2)
+        self.db.commit()
+        holocure = self.db.get(Videogame, collection.id)
+        self.assertEqual(json.loads(holocure.copies)[0]['steam_appid'], 2420510)
+
+    def test_recently_played_failure_keeps_owned_library_usable(self):
+        client = MagicMock()
+        client.get.side_effect = [
+            httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={
+                "response": {"games": [{"appid": 101, "name": "Owned Game", "playtime_forever": 60}]},
+            }),
+            httpx.ConnectError('recent games unavailable', request=httpx.Request('GET', 'https://api.steampowered.com')),
+        ]
+
+        owned = service.steam_owned_games(client, '76561197960434622', 'a' * 32)
+
+        self.assertEqual([game['appid'] for game in owned], [101])
+
+    def test_store_search_candidate_requires_account_specific_stats(self):
+        settings = self.configured()
+        settings.steam_api_key = 'a' * 32
+        self.db.commit()
+        upstream = MagicMock()
+        upstream.__enter__.return_value = upstream
+        upstream.__exit__.return_value = False
+        upstream.get.side_effect = [
+            httpx.Response(200, request=httpx.Request('GET', 'https://store.steampowered.com'), json={
+                'items': [{
+                    'type': 'app', 'id': 2420510, 'name': 'HoloCure - Save the Fans!',
+                    'tiny_image': 'https://example.com/holocure.jpg',
+                }],
+            }),
+            httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={
+                'playerstats': {
+                    'steamID': settings.steam_id, 'gameName': 'HoloCure - Save the Fans!',
+                    'success': True, 'achievements': [],
+                },
+            }),
+        ]
+
+        with patch.object(service.httpx, 'Client', return_value=upstream):
+            result = service.find_verified_steam_game(
+                self.db, self.user.id, 'Holocure: Save the Fans!'
+            )
+
+        self.assertEqual(result['appid'], 2420510)
+        self.assertTrue(result['stats_verified'])
+        self.assertEqual(result['name'], 'HoloCure - Save the Fans!')
+        self.assertIn('storesearch', upstream.get.call_args_list[0].args[0])
+        self.assertIn('GetPlayerAchievements', upstream.get.call_args_list[1].args[0])
+
+    def test_store_search_candidate_rejects_unverified_store_result(self):
+        settings = self.configured()
+        settings.steam_api_key = 'a' * 32
+        self.db.commit()
+        upstream = MagicMock()
+        upstream.__enter__.return_value = upstream
+        upstream.__exit__.return_value = False
+        upstream.get.side_effect = [
+            httpx.Response(200, request=httpx.Request('GET', 'https://store.steampowered.com'), json={
+                'items': [{'type': 'app', 'id': 999, 'name': 'Store Game'}],
+            }),
+            httpx.Response(200, request=httpx.Request('GET', 'https://api.steampowered.com'), json={
+                'playerstats': {'success': False, 'error': 'No stats'},
+            }),
+            httpx.Response(400, request=httpx.Request('GET', 'https://api.steampowered.com'), json={}),
+        ]
+
+        with patch.object(service.httpx, 'Client', return_value=upstream):
+            result = service.find_verified_steam_game(self.db, self.user.id, 'Store Game')
+
+        self.assertIsNone(result)
+
+    def test_verified_store_candidate_can_be_linked_and_is_persisted(self):
+        settings = self.configured()
+        settings.steam_api_key = 'a' * 32
+        game = Videogame(
+            user_id=self.user.id, name='Holocure: Save the Fans!', status='Infinite',
+            copies=json.dumps([{
+                'id': 'manual-pc', 'platform': 'PC', 'format': 'Digital',
+                'playtime_hours': 9.3,
+            }]),
+        )
+        self.db.add(game)
+        self.db.commit()
+        verified = {
+            'appid': 2420510, 'name': 'HoloCure - Save the Fans!',
+            'playtime_hours': None, 'image_url': 'https://example.com/holocure.jpg',
+            'store_url': 'https://store.steampowered.com/app/2420510/',
+            'stats_verified': True,
+        }
+
+        with patch.object(service, 'find_verified_steam_game', return_value=verified) as lookup:
+            candidates = self.client.get(
+                f'/api/discovery/steam/collection-games/{game.id}/copies/manual-pc/candidates'
+            )
+            linked = self.client.post(
+                f'/api/discovery/steam/collection-games/{game.id}/copies/manual-pc/link',
+                json={'steam_appid': 2420510, 'mode': 'primary'},
+            )
+
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(candidates.json()['candidates'][0]['steam_appid'], 2420510)
+        self.assertTrue(candidates.json()['candidates'][0]['stats_verified'])
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertEqual(lookup.call_count, 2)
+        entitlement = self.db.query(SteamOwnedGame).filter_by(steam_appid=2420510).one()
+        self.assertTrue(entitlement.active)
+        self.assertTrue(entitlement.stats_verified)
+        self.assertEqual(json.loads(game.copies)[0]['steam_appid'], 2420510)
+        self.assertEqual(json.loads(game.copies)[0]['playtime_hours'], 9.3)
+
+    def test_sync_keeps_stats_verified_entitlements_active(self):
+        settings = self.configured()
+        self.db.add_all([
+            SteamOwnedGame(
+                user_id=self.user.id, steam_id=settings.steam_id, steam_appid=2420510,
+                name='HoloCure - Save the Fans!', active=True, stats_verified=True,
+            ),
+            SteamOwnedGame(
+                user_id=self.user.id, steam_id=settings.steam_id, steam_appid=999,
+                name='Ordinary snapshot game', active=True,
+            ),
+        ])
+        self.db.commit()
+
+        with patch.object(service, 'steam_wishlist', return_value=[]), \
+             patch.object(service, 'steam_owned_games', return_value=[]), \
+             patch.object(service, 'enrich_steam_with_igdb', return_value=(0, None)):
+            service.sync_steam(self.user.id, self.factory)
+
+        self.db.expire_all()
+        verified = self.db.query(SteamOwnedGame).filter_by(steam_appid=2420510).one()
+        ordinary = self.db.query(SteamOwnedGame).filter_by(steam_appid=999).one()
+        self.assertTrue(verified.active)
+        self.assertFalse(ordinary.active)
+
     def test_automatic_first_steam_copy_displays_steam_time_when_local_time_is_zero(self):
         collection = Videogame(
             user_id=self.user.id, name='Owned Game', status='Not Started',

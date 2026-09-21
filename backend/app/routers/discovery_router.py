@@ -467,6 +467,11 @@ def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_
         user_id=user.id, steam_id=scope
     ).group_by(SteamCollectionLink.steam_appid).all())
     rows = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, is_dlc=False, active=True).all()
+    exact_title_present = any(
+        service._collection_title_key(row.name) == service._collection_title_key(game.name)
+        for row in rows
+    )
+    verified = None if exact_title_present else service.find_verified_steam_game(db, user.id, game.name)
     candidates = []
     for row in rows:
         score = service.SequenceMatcher(None, service._collection_title_key(game.name), service._collection_title_key(row.name)).ratio()
@@ -476,6 +481,18 @@ def steam_link_candidates(game_id: int, copy_id: str, db: Session = Depends(get_
             "current": bool(current and current.steam_appid == row.steam_appid),
             "linked_collection_count": int(linked_counts.get(row.steam_appid, 0)),
             "duplicate_of_appid": row.duplicate_of_appid,
+            "stats_verified": bool(row.stats_verified),
+        })
+    if verified and not any(row["steam_appid"] == verified["appid"] for row in candidates):
+        score = service.SequenceMatcher(
+            None, service._collection_title_key(game.name), service._collection_title_key(verified["name"])
+        ).ratio()
+        candidates.append({
+            "steam_appid": verified["appid"], "name": verified["name"],
+            "playtime_hours": verified.get("playtime_hours"), "image_url": verified.get("image_url"),
+            "store_url": verified.get("store_url"), "similarity": round(score, 4),
+            "current": False, "linked_collection_count": 0, "duplicate_of_appid": None,
+            "stats_verified": True,
         })
     candidates.sort(key=lambda row: (not row["current"], -row["similarity"], row["name"].casefold()))
     return {"current_steam_appid": current.steam_appid if current else None, "copy": owned_copy, "candidates": candidates}
@@ -491,6 +508,20 @@ def link_collection_game_to_steam(
         copy_store.ensure_copies(db, game)
     scope = copy_store.adopt_legacy_scope(db, user.id)
     steam = db.query(SteamOwnedGame).filter_by(user_id=user.id, steam_id=scope, steam_appid=payload.steam_appid, active=True).first()
+    if game is not None and steam is None:
+        verified = service.find_verified_steam_game(db, user.id, game.name)
+        if verified and verified["appid"] == payload.steam_appid:
+            settings = service.get_settings(db, user.id)
+            steam = service.upsert_steam_catalog(
+                db, user.id, verified, steam_id=scope,
+                generation=settings.owned_sync_generation or 0,
+            )
+            copy_store.record_audit(
+                db, user.id, "steam_stats_entitlement_added", steam_id=scope,
+                steam_appid=steam.steam_appid, game_id=game.id,
+                details={"source": "steam_store_and_user_stats"},
+            )
+            db.flush()
     if game is None or steam is None:
         raise HTTPException(404, "The collection or Steam game is no longer available.")
     current = db.query(SteamCollectionLink).filter_by(
@@ -515,7 +546,11 @@ def link_collection_game_to_steam(
     current.user_selected = True
     current.created_collection_game = False
     current.name, current.platform, current.format, current.source = steam.name, "PC", "Digital", "Steam"
-    current.playtime_hours, current.store_url = steam.playtime_hours, steam.store_url
+    # Store/stats verification proves the entitlement but does not expose
+    # playtime. Never erase a value the user entered on the copy in that case.
+    if steam.playtime_hours is not None:
+        current.playtime_hours = steam.playtime_hours
+    current.store_url = steam.store_url
     current.counts_toward_totals = not bool(has_counted_link) or bool(
         old_appid == steam.steam_appid and old_scope == scope and current.counts_toward_totals
     )

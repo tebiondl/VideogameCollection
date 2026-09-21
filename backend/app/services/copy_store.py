@@ -155,7 +155,8 @@ def copy_dict(db: Session, row: OwnedCopy) -> dict:
                 "name": entitlement.name, "platform": "PC", "format": "Digital", "source": "Steam",
                 "store_url": entitlement.store_url or result.get("store_url"),
                 "igdb_id": entitlement.igdb_id or result.get("igdb_id"),
-                "playtime_hours": entitlement.playtime_hours,
+                "playtime_hours": entitlement.playtime_hours
+                if entitlement.playtime_hours is not None else result.get("playtime_hours"),
                 "steam_active": bool(entitlement.active),
                 "duplicate_of_appid": entitlement.duplicate_of_appid,
             })
@@ -250,7 +251,8 @@ def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> li
             row.platform, row.format, row.source = "PC", "Digital", "Steam"
             row.store_url = entitlement.store_url if entitlement else row.store_url
             row.igdb_id = (entitlement.igdb_id if entitlement else None) or row.igdb_id
-            row.playtime_hours = entitlement.playtime_hours if entitlement else row.playtime_hours
+            if entitlement and entitlement.playtime_hours is not None:
+                row.playtime_hours = entitlement.playtime_hours
             row.price = value.get("price")
             row.currency = str(value.get("currency") or row.currency or "EUR")
             row.user_modified = True
@@ -341,7 +343,8 @@ def protect_linked_dlcs(db: Session, game: Videogame, raw_dlcs: str | None) -> s
             "source": "Steam", "platform": "PC", "format": "Digital",
             "steam_appid": link.steam_appid,
             "store_url": entitlement.store_url if entitlement else value.get("store_url"),
-            "playtime_hours": entitlement.playtime_hours if entitlement else value.get("playtime_hours"),
+            "playtime_hours": entitlement.playtime_hours
+            if entitlement and entitlement.playtime_hours is not None else value.get("playtime_hours"),
             "igdb_id": (entitlement.igdb_id if entitlement else None) or link.igdb_id,
         })
     return json.dumps(incoming) if incoming else None

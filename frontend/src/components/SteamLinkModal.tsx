@@ -13,6 +13,7 @@ interface SteamCandidate {
   similarity: number;
   current: boolean;
   linked_collection_count: number;
+  stats_verified?: boolean;
 }
 
 export function SteamLinkModal({ game, copy, onClose, onLinked }: {
@@ -67,7 +68,7 @@ export function SteamLinkModal({ game, copy, onClose, onLinked }: {
     <label className="steam-link-search"><Search size={18} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search owned Steam games…" /></label>
     <div className="steam-link-list">
       {visible.map(item => <article key={item.steam_appid} className={`steam-link-row ${item.current ? 'current' : ''}`}>
-        <div><strong>{item.name}</strong><small>App {item.steam_appid} · {item.playtime_hours ?? 0} hrs · {Math.round(item.similarity * 100)}% title match{item.linked_collection_count ? ` · linked to ${item.linked_collection_count}` : ''}</small></div>
+        <div><strong>{item.name}</strong><small>App {item.steam_appid} · {item.playtime_hours == null ? 'playtime unavailable' : `${item.playtime_hours} hrs`} · {Math.round(item.similarity * 100)}% title match{item.stats_verified ? ' · verified through Steam stats' : ''}{item.linked_collection_count ? ` · linked to ${item.linked_collection_count}` : ''}</small></div>
         <div className="steam-link-actions">
           <button type="button" className="btn btn-primary" disabled={busy !== null || item.current} onClick={() => link(item)}>{busy === item.steam_appid ? <Loader2 className="spinner" size={16} /> : <Link2 size={16} />}{item.current ? 'Linked' : currentAppid ? 'Change link' : 'Link'}</button>
         </div>
