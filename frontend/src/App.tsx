@@ -19,6 +19,7 @@ import { DiscoveryAnalytics } from './pages/DiscoveryAnalytics';
 import { DiscoverySmartAdd } from './pages/DiscoverySmartAdd';
 import { WantedGames } from './pages/WantedGames';
 import { SteamTrash } from './pages/SteamTrash';
+import { BackToTopButton } from './components/BackToTopButton';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -137,6 +138,7 @@ function AppRoutes() {
             } 
           />
         </Routes>
+        <BackToTopButton />
       </main>
     </div>
   );
