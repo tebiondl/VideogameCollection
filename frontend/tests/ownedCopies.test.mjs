@@ -34,6 +34,16 @@ test('steam app identity matches the Steam source even when legacy source is emp
   assert.equal(matchesOwnedCopyFilters(legacy, { platforms: [], sources: ['Steam'], formats: [] }), true);
 });
 
+test('copy platform filters include historical copies', () => {
+  const oldCopies = JSON.stringify([{ console: 'Nintendo DS', playtime_hours: 8.5 }]);
+  assert.equal(matchesOwnedCopyFilters(copies, {
+    platforms: ['Nintendo DS'], sources: [], formats: [],
+  }, oldCopies), true);
+  assert.equal(matchesOwnedCopyFilters(copies, {
+    platforms: ['Nintendo DS'], sources: ['Steam'], formats: [],
+  }, oldCopies), false);
+});
+
 test('playtime mode selects user, copy, or combined hours', () => {
   const timedCopies = JSON.stringify([{ playtime_hours: 12.5 }, { playtime_hours: 3 }]);
   assert.equal(copyPlaytimeHours(timedCopies), 15.5);
@@ -61,6 +71,7 @@ test('moving a sold copy preserves history, details and total playtime while rem
   assert.deepEqual(JSON.parse(moved.old_copies), [historical, { ...sold, console: sold.platform }]);
   assert.equal(copyPlaytimeHours(moved.copies, moved.old_copies), copyPlaytimeHours(current, old));
   assert.equal(matchesOwnedCopyFilters(moved.copies, { platforms: ['Nintendo Switch'], sources: [], formats: [] }), false);
+  assert.equal(matchesOwnedCopyFilters(moved.copies, { platforms: ['Nintendo Switch'], sources: [], formats: [] }, moved.old_copies), true);
 });
 
 test('moving the last copy supports missing IDs and preserves zero or unknown playtime', () => {

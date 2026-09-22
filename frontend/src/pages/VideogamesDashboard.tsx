@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
-import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies } from '../lib/ownedCopies';
+import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies, parseOldCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
 import { findProbableDuplicate } from '../lib/titleSimilarity';
 import './VideogamesDashboard.css';
@@ -160,6 +160,11 @@ export function VideogamesDashboard() {
       if (copy.platform) platforms.add(copy.platform);
       if (copy.source) sources.add(copy.source);
       if (copy.steam_appid) sources.add('Steam');
+      if (copy.format) formats.add(copy.format);
+    });
+    games.flatMap(game => parseOldCopies(game.old_copies)).forEach(copy => {
+      if (copy.console) platforms.add(copy.console);
+      if (copy.source) sources.add(copy.source);
       if (copy.format) formats.add(copy.format);
     });
     const sorted = (values: Set<string>) => [...values].filter(Boolean).sort((a, b) => a.localeCompare(b));
@@ -467,7 +472,7 @@ export function VideogamesDashboard() {
        platforms: filterState.copyPlatforms,
        sources: filterState.copySources,
        formats: filterState.copyFormats,
-     })) return false;
+     }, g.old_copies)) return false;
 
      if (filterState.ratingRange.min !== '' && (g.mark === null || g.mark < filterState.ratingRange.min)) return false;
      if (filterState.ratingRange.max !== '' && (g.mark === null || g.mark > filterState.ratingRange.max)) return false;

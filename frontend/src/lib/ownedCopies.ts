@@ -20,6 +20,10 @@ export interface OwnedCopy {
 export interface OldCopy {
   id?: string;
   console: string;
+  platform?: string;
+  format?: string | null;
+  source?: string | null;
+  steam_appid?: number | null;
   playtime_hours?: number | null;
 }
 
@@ -96,7 +100,11 @@ export function moveCopyToOldCopies(
 
 const normalizedCopyValue = (value: string | null | undefined) => value?.trim().toLocaleLowerCase() || '';
 
-export function matchesOwnedCopyFilters(value: string | null | undefined, filters: OwnedCopyFilters): boolean {
+export function matchesOwnedCopyFilters(
+  value: string | null | undefined,
+  filters: OwnedCopyFilters,
+  oldValue?: string | null,
+): boolean {
   if (filters.platforms.length === 0 && filters.sources.length === 0 && filters.formats.length === 0) return true;
 
   const platforms = new Set(filters.platforms.map(normalizedCopyValue));
@@ -105,7 +113,11 @@ export function matchesOwnedCopyFilters(value: string | null | undefined, filter
 
   // All active categories must match the same copy. This prevents a Switch
   // copy and a separate Steam copy from incorrectly satisfying “Switch + Steam”.
-  return parseCopies(value).some(copy => {
+  const candidates = [
+    ...parseCopies(value),
+    ...parseOldCopies(oldValue).map(copy => ({ ...copy, platform: copy.console || copy.platform || '' })),
+  ];
+  return candidates.some(copy => {
     const platformMatches = platforms.size === 0 || platforms.has(normalizedCopyValue(copy.platform));
     const formatMatches = formats.size === 0 || formats.has(normalizedCopyValue(copy.format));
     const sourceValues = new Set([normalizedCopyValue(copy.source)]);
