@@ -55,7 +55,7 @@ class WantedInput(BaseModel):
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
                 raise ValueError("Each DLC needs a name")
-            if item.get("state") not in ("not_owned", "not_started", "finished"):
+            if item.get("state") not in ("not_owned", "not_started", "playing", "finished", "stopped"):
                 raise ValueError("Invalid DLC state")
         return json.dumps(items)
 

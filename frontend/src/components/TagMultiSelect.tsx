@@ -18,6 +18,8 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Array<HTMLLabelElement | null>>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
   const [portalContainer, setPortalContainer] = useState<Element | null>(null);
   
@@ -78,6 +80,7 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
     }
     onChange(newTags.join(', '));
     setFilter('');
+    setActiveIndex(-1);
     // Focus back on input after click
     inputRef.current?.focus();
   };
@@ -90,6 +93,34 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
   const filteredTags = availableTags.filter(tag => 
     tag.name.toLowerCase().includes(filter.toLowerCase())
   );
+
+  useEffect(() => {
+    if (activeIndex >= 0) optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return;
+    if (filteredTags.length === 0) return;
+    if (event.key === 'Enter') {
+      if (activeIndex < 0) return;
+      event.preventDefault();
+      toggleTag(filteredTags[activeIndex].name);
+      return;
+    }
+    event.preventDefault();
+    openMenu();
+    setActiveIndex(current => {
+      if (current < 0 || current >= filteredTags.length) return 0;
+      return event.key === 'ArrowDown'
+        ? (current + 1) % filteredTags.length
+        : (current - 1 + filteredTags.length) % filteredTags.length;
+    });
+  };
 
   return (
     <div className="tag-multiselect" style={{ position: 'relative' }} ref={dropdownRef}>
@@ -121,9 +152,11 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
           value={filter}
           onChange={(e) => {
             setFilter(e.target.value);
+            setActiveIndex(-1);
             openMenu();
           }}
           onFocus={openMenu}
+          onKeyDown={handleKeyDown}
           style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', flex: 1, minWidth: '80px', padding: 0 }}
           placeholder={selectedTags.length === 0 ? "Search tags..." : ""}
         />
@@ -141,8 +174,18 @@ export function TagMultiSelect({ availableTags, selectedTagsString, onChange }: 
           {filteredTags.length === 0 ? (
              <div style={{ padding: '0.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No tags found</div>
           ) : (
-            filteredTags.map(tag => (
-              <label key={tag.id} style={{ display: 'flex', padding: '0.5rem', cursor: 'pointer', gap: '0.75rem', alignItems: 'center', transition: 'background 0.2s', borderRadius: '4px' }} className="tag-option">
+            filteredTags.map((tag, index) => (
+              <label
+                key={tag.id}
+                ref={element => { optionRefs.current[index] = element; }}
+                style={{
+                  display: 'flex', padding: '0.5rem', cursor: 'pointer', gap: '0.75rem', alignItems: 'center',
+                  transition: 'background 0.2s', borderRadius: '4px',
+                  background: index === activeIndex ? 'var(--bg-tertiary)' : undefined,
+                  outline: index === activeIndex ? '1px solid var(--accent-primary)' : undefined,
+                }}
+                className="tag-option"
+              >
                 <input 
                   type="checkbox" 
                   checked={selectedTags.includes(tag.name)}

@@ -1,4 +1,4 @@
-import { Archive, ChevronDown, Link2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, ChevronDown, Link2, Plus, CopyPlus, Trash2 } from 'lucide-react';
 import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import type { OwnedCopy } from '../lib/ownedCopies';
 import { parseCopies } from '../lib/ownedCopies';
@@ -30,7 +30,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
       const formats = compatibleCopyFormats(copy.platform, sourceValue, typeOptions, sourceTypes);
       const formatValue = compatibleCopyFormat(copy.platform, sourceValue, copy.format, typeOptions, sourceTypes);
       const canLinkSteam = !!onLinkSteam && (isSteam || isSteamSource(sourceValue));
-      const canRestoreDuplicate = !!onRestoreDuplicate && isSteam && (!!copy.duplicate_of_appid || !!copy.merged_from_game_id);
+      const canRestoreDuplicate = !!onRestoreDuplicate && isSteam;
       return <details className="owned-copy-editor" key={copy.id || index}>
       <summary className="owned-copy-heading"><span><ChevronDown size={16} /><strong>Copy {index + 1}</strong><small>{[copy.name, copy.platform || 'Choose platform', copy.format || 'Any format'].filter(Boolean).join(' · ')}</small></span><button type="button" className="icon-btn" onClick={event => { event.preventDefault(); event.stopPropagation(); remove(index); }} aria-label={`Remove copy ${index + 1}`}><Trash2 size={15} /></button></summary>
       <div className="owned-copy-grid">
@@ -52,7 +52,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
         {(canLinkSteam || canRestoreDuplicate || onMoveToOldCopy) && <div className="wide" style={{ display: 'flex', gap: '.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {onMoveToOldCopy && <button type="button" className="btn btn-secondary" disabled={!copy.platform?.trim()} onClick={() => onMoveToOldCopy(copy, index)}><Archive size={16} />Move to old copies</button>}
           {canLinkSteam && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onLinkSteam!(copy, index)}><Link2 size={16} />{copy.steam_appid ? 'Change linked Steam game' : 'Link this copy to Steam'}</button>}
-          {canRestoreDuplicate && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onRestoreDuplicate!(copy, index)}><RotateCcw size={16} />Restore as separate game</button>}
+          {canRestoreDuplicate && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onRestoreDuplicate!(copy, index)}><CopyPlus size={16} />Move to new game entry</button>}
           {canLinkSteam && !copy.id && <small className="text-muted">Save changes before linking this new copy.</small>}
           {onMoveToOldCopy && isSteam && <small className="text-muted">Moving this linked copy to old copies also puts its Steam link in the trash when saved, preventing sync from adding it again.</small>}
         </div>}

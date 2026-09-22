@@ -811,6 +811,33 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(link.collection_game_id, current.id)
         self.assertEqual(link.copy_id, 'steam:44')
 
+    def test_collection_duplicate_without_copies_merges_metadata_and_hides_source(self):
+        retained = Videogame(user_id=self.user.id, name='Retained', status='Not Started')
+        duplicate = Videogame(
+            user_id=self.user.id, name='Metadata only duplicate', status='Finished',
+            comments='Keep these notes', mark=8,
+        )
+        self.db.add_all([retained, duplicate])
+        self.db.commit()
+
+        response = self.client.post(
+            f'/api/discovery/steam/collection-games/{duplicate.id}/merge-duplicate',
+            json={
+                'other_game_id': retained.id,
+                'direction': 'current_into_other',
+                'field_sources': {'status': 'current', 'comments': 'current', 'mark': 'current'},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(retained)
+        self.db.refresh(duplicate)
+        self.assertEqual(retained.status, 'Finished')
+        self.assertEqual(retained.comments, 'Keep these notes')
+        self.assertEqual(retained.mark, 8)
+        self.assertTrue(duplicate.hidden)
+        self.assertEqual(duplicate.merged_into_game_id, retained.id)
+
     def test_collection_duplicate_collapses_same_steam_app_and_keeps_principal_copy(self):
         principal = Videogame(
             user_id=self.user.id, name='Cuphead', status='Playing',
@@ -906,6 +933,72 @@ class DiscoveryTests(unittest.TestCase):
             restored['id'],
         )
         self.assertIsNone(self.db.get(SteamOwnedGame, duplicate.id).duplicate_of_appid)
+
+    def test_any_linked_steam_copy_can_move_to_a_new_game_entry(self):
+        combined = Videogame(user_id=self.user.id, name='Wrong combined card', status='Playing')
+        first = SteamOwnedGame(user_id=self.user.id, steam_appid=100, name='Series One')
+        second = SteamOwnedGame(user_id=self.user.id, steam_appid=200, name='Series Two')
+        self.db.add_all([combined, first, second])
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=combined.id,
+                                copy_id='steam:100', steam_appid=100, name='Series One'),
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=combined.id,
+                                copy_id='steam:200', steam_appid=200, name='Series Two'),
+        ])
+        self.db.commit()
+
+        response = self.client.post(
+            f'/api/discovery/steam/collection-games/{combined.id}/copies/steam:200/extract'
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        created = response.json()['restored_game']
+        self.assertEqual(created['name'], 'Series Two')
+        self.assertEqual(json.loads(created['copies'])[0]['steam_appid'], 200)
+        self.assertEqual(
+            self.db.query(SteamCollectionLink).filter_by(steam_appid=200).one().collection_game_id,
+            created['id'],
+        )
+        self.assertIsNone(first.duplicate_of_appid)
+        self.assertIsNone(second.duplicate_of_appid)
+
+    def test_standalone_dlc_and_parent_nested_row_are_bidirectionally_linked(self):
+        parent = Videogame(
+            user_id=self.user.id, name='Borderlands 2', status='Finished',
+            dlcs=json.dumps([{'name': "Tiny Tina's Assault", 'state': 'not_started'}]),
+        )
+        child = Videogame(
+            user_id=self.user.id, name="Tiny Tina's Assault", status='Playing', is_dlc=True,
+        )
+        self.db.add_all([parent, child])
+        self.db.commit()
+
+        linked = self.client.put(f'/api/videogames/{child.id}', json={
+            'name': child.name,
+            'status': 'Playing',
+            'is_dlc': True,
+            'parent_game_id': parent.id,
+        })
+
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertEqual(linked.json()['parent_game_name'], 'Borderlands 2')
+        self.db.refresh(parent)
+        nested = json.loads(parent.dlcs)
+        self.assertEqual(nested[0]['standalone_game_id'], child.id)
+        self.assertEqual(nested[0]['state'], 'playing')
+
+        nested[0]['state'] = 'stopped'
+        updated_parent = self.client.put(f'/api/videogames/{parent.id}', json={
+            'name': parent.name,
+            'dlcs': json.dumps(nested),
+        })
+        self.assertEqual(updated_parent.status_code, 200, updated_parent.text)
+        self.db.refresh(child)
+        self.assertEqual(child.status, 'Stopped')
+        self.assertEqual(child.parent_game_id, parent.id)
+        listed_ids = {game['id'] for game in self.client.get('/api/videogames/').json()}
+        self.assertIn(child.id, listed_ids)
 
     def test_deleted_steam_copy_is_locked_trashed_and_not_recreated_by_sync(self):
         game = Videogame(user_id=self.user.id, name='Steam game', status='Not Started', playtime_mode='copies', copies=json.dumps([
@@ -1421,7 +1514,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(service.steam_review_candidates(review)), 2)
         self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=503).count(), 0)
 
-    def test_identified_expansion_is_only_nested_under_its_parent(self):
+    def test_identified_expansion_is_nested_and_kept_as_a_standalone_entry(self):
         parent = Videogame(user_id=self.user.id, name='Base Saga', status='Not Started')
         expansion_card = Videogame(user_id=self.user.id, name='Base Saga Expansion', status='Not Started')
         steam = SteamOwnedGame(
@@ -1437,11 +1530,35 @@ class DiscoveryTests(unittest.TestCase):
         self.db.commit()
         self.assertEqual(service.nest_known_steam_dlcs(self.db, self.user.id), 1)
         self.db.flush()
-        self.assertTrue(expansion_card.hidden)
+        self.assertFalse(expansion_card.hidden)
         self.assertTrue(expansion_card.is_dlc)
-        self.assertEqual(json.loads(parent.dlcs)[0]['steam_appid'], 504)
+        self.assertEqual(expansion_card.parent_game_id, parent.id)
+        nested = json.loads(parent.dlcs)[0]
+        self.assertEqual(nested['steam_appid'], 504)
+        self.assertEqual(nested['standalone_game_id'], expansion_card.id)
         self.assertEqual(self.db.query(SteamContentLink).filter_by(steam_appid=504).one().parent_game_id, parent.id)
-        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=504).count(), 0)
+        self.assertEqual(self.db.query(SteamCollectionLink).filter_by(steam_appid=504).count(), 1)
+
+    def test_previously_hidden_nested_expansion_is_restored_during_sync(self):
+        parent = Videogame(user_id=self.user.id, name='Base Saga', status='Not Started')
+        old_card = Videogame(
+            user_id=self.user.id, name='Base Saga Expansion', status='Playing',
+            is_dlc=True, parent_game_name='Base Saga', hidden=True,
+        )
+        steam = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=505, name='Base Saga Expansion',
+            is_dlc=True, parent_game_name='Base Saga', active=True, playtime_hours=4.5,
+        )
+        self.db.add_all([parent, old_card, steam])
+        self.db.commit()
+
+        self.assertEqual(service.nest_known_steam_dlcs(self.db, self.user.id), 1)
+        self.db.flush()
+
+        self.assertFalse(old_card.hidden)
+        self.assertEqual(old_card.parent_game_id, parent.id)
+        self.assertEqual(json.loads(old_card.copies)[0]['steam_appid'], 505)
+        self.assertEqual(json.loads(parent.dlcs)[0]['standalone_game_id'], old_card.id)
 
 
 if __name__ == '__main__':

@@ -17,6 +17,7 @@ export interface EditableCollectionGame {
   dlcs?: string | null;
   is_dlc?: boolean;
   parent_game_name?: string | null;
+  parent_game_id?: number | null;
   copies?: string | null;
   old_copies?: string | null;
   hidden?: boolean;
@@ -44,6 +45,7 @@ export function collectionGameUpdatePayload(game: EditableCollectionGame) {
     dlcs: game.dlcs || null,
     is_dlc: !!game.is_dlc,
     parent_game_name: game.parent_game_name || null,
+    parent_game_id: game.parent_game_id || null,
     copies: game.copies || null,
     old_copies: game.old_copies || null,
     hidden: !!game.hidden,

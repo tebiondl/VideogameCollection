@@ -13,7 +13,7 @@ from openai import OpenAI
 from .. import schemas, models, database
 from .auth_router import get_current_user
 from .igdb_router import _get_twitch_token
-from ..services import copy_store
+from ..services import copy_store, dlc_links
 
 logger = logging.getLogger(__name__)
 
@@ -538,7 +538,6 @@ def get_videogames(
 ):
     games = db.query(models.Videogame).filter(
         models.Videogame.user_id == current_user.id,
-        models.Videogame.is_dlc.is_(False),
     ).all()
     for game in games:
         rows = copy_store.ensure_copies(db, game)
@@ -579,8 +578,6 @@ def create_videogame(
     current_user: Annotated[models.User, Depends(get_current_user)], 
     db: Session = Depends(database.get_db)
 ):
-    if game.is_dlc:
-        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
     game_data = game.model_dump()
     game_data.pop("version", None)
     raw_copies = _copies_with_stable_ids(game_data.pop("copies", None))
@@ -593,6 +590,8 @@ def create_videogame(
     except (TypeError, ValueError):
         values = []
     copy_store.replace_from_payload(db, new_game, values)
+    dlc_links.sync_parent_to_children(db, new_game)
+    dlc_links.sync_child_to_parent(db, new_game)
     db.commit()
     db.refresh(new_game)
     return new_game
@@ -612,10 +611,8 @@ def update_videogame(
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
         
-    if game_update.is_dlc:
-        raise HTTPException(status_code=422, detail="Add expansions inside a base game's DLC section.")
-
     update_data = game_update.model_dump(exclude_unset=True)
+    previous_parent_id = db_game.parent_game_id
     expected_version = update_data.pop("version", None)
     if expected_version is not None and expected_version != db_game.version:
         raise HTTPException(status_code=409, detail="This game changed after you opened it. Reload it before saving your edits.")
@@ -628,6 +625,8 @@ def update_videogame(
         update_data["dlcs"] = copy_store.protect_linked_dlcs(db, db_game, update_data.get("dlcs"))
     for key, value in update_data.items():
         setattr(db_game, key, value)
+    dlc_links.sync_parent_to_children(db, db_game)
+    dlc_links.sync_child_to_parent(db, db_game, previous_parent_id=previous_parent_id)
     db_game.user_modified_at = datetime.utcnow()
     db_game.version = (db_game.version or 1) + 1
         
@@ -648,6 +647,7 @@ def delete_videogame(
     
     if not db_game:
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+    dlc_links.detach_game(db, db_game)
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.
     from ..discovery_models import SteamCollectionLink, SteamMatchReview, WantedGame

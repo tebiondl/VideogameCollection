@@ -604,8 +604,8 @@ def merge_collection_duplicate(
     game_id: int, payload: CollectionDuplicateInput,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    current_game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, is_dlc=False).first()
-    other_game = db.query(Videogame).filter_by(id=payload.other_game_id, user_id=user.id, is_dlc=False).first()
+    current_game = db.query(Videogame).filter_by(id=game_id, user_id=user.id).first()
+    other_game = db.query(Videogame).filter_by(id=payload.other_game_id, user_id=user.id).first()
     if current_game is None or other_game is None:
         raise HTTPException(404, "One of the collection games is no longer available.")
     if current_game.id == other_game.id:
@@ -629,9 +629,6 @@ def merge_collection_duplicate(
 
     duplicate_rows = copy_store.ensure_copies(db, duplicate_game)
     retained_rows = copy_store.ensure_copies(db, retained_game)
-    if not duplicate_rows:
-        raise HTTPException(409, f"{duplicate_game.name} has no copies to merge.")
-
     retained_by_appid = {row.steam_appid: row for row in retained_rows if row.steam_appid}
     retained_appids = set(retained_by_appid)
     duplicate_appids = {row.steam_appid for row in duplicate_rows if row.steam_appid}
@@ -716,6 +713,24 @@ def merge_collection_duplicate(
     db.query(SteamContentLink).filter_by(user_id=user.id, parent_game_id=duplicate_game.id).update(
         {"parent_game_id": retained_game.id}, synchronize_session=False,
     )
+    for child in db.query(Videogame).filter_by(user_id=user.id, parent_game_id=duplicate_game.id).all():
+        child.parent_game_id = retained_game.id
+        child.parent_game_name = retained_game.name
+    for possible_parent in db.query(Videogame).filter_by(user_id=user.id).all():
+        try:
+            nested_dlcs = json.loads(possible_parent.dlcs or "[]")
+        except (TypeError, ValueError):
+            continue
+        changed = False
+        for nested in nested_dlcs if isinstance(nested_dlcs, list) else []:
+            if isinstance(nested, dict) and nested.get("standalone_game_id") == duplicate_game.id:
+                if retained_game.is_dlc:
+                    nested["standalone_game_id"] = retained_game.id
+                else:
+                    nested.pop("standalone_game_id", None)
+                changed = True
+        if changed:
+            possible_parent.dlcs = json.dumps(nested_dlcs)
     db.query(WantedGame).filter_by(user_id=user.id, collection_game_id=duplicate_game.id).update(
         {"collection_game_id": retained_game.id}, synchronize_session=False
     )
@@ -736,14 +751,13 @@ def merge_collection_duplicate(
     return {"collection_game": retained_game, "duplicate_game_id": duplicate_game.id}
 
 
+@router.post("/steam/collection-games/{game_id}/copies/{copy_id}/extract")
 @router.post("/steam/collection-games/{game_id}/copies/{copy_id}/restore-duplicate")
 def restore_duplicate_copy(
     game_id: int, copy_id: str,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    source_game = db.query(Videogame).filter_by(
-        id=game_id, user_id=user.id, is_dlc=False,
-    ).first()
+    source_game = db.query(Videogame).filter_by(id=game_id, user_id=user.id).first()
     if source_game is None:
         raise HTTPException(404, "Collection game not found.")
 
@@ -759,13 +773,10 @@ def restore_duplicate_copy(
     ).first()
     if catalog is None:
         raise HTTPException(409, "The Steam game is no longer available in the synced account.")
-    if catalog.duplicate_of_appid is None and owned_copy.merged_from_game_id is None:
-        raise HTTPException(409, "This copy is not recorded as a merged duplicate.")
-
     original_game = None
     if owned_copy.merged_from_game_id:
         candidate = db.query(Videogame).filter_by(
-            id=owned_copy.merged_from_game_id, user_id=user.id, is_dlc=False,
+            id=owned_copy.merged_from_game_id, user_id=user.id,
         ).first()
         # Reuse the exact source card while it has not subsequently been
         # merged into some unrelated game. It retains the user's old fields.
@@ -780,6 +791,8 @@ def restore_duplicate_copy(
             status="Not Started",
             playtime_mode="copies",
             igdb_id=catalog.igdb_id,
+            is_dlc=bool(catalog.is_dlc),
+            parent_game_name=catalog.parent_game_name,
             hidden=False,
         )
         db.add(original_game)
@@ -839,7 +852,7 @@ def restore_duplicate_copy(
     copy_store.project_game(db, original_game, target_rows + [owned_copy])
     source_game.version = (source_game.version or 1) + 1
     copy_store.record_audit(
-        db, user.id, "duplicate_copy_restored", steam_id=scope,
+        db, user.id, "steam_copy_extracted", steam_id=scope,
         steam_appid=owned_copy.steam_appid, game_id=original_game.id,
         copy_id=owned_copy.copy_id, details={"restored_from_game_id": source_game.id},
     )

@@ -33,6 +33,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN release_date VARCHAR",
         "ALTER TABLE videogames ADD COLUMN is_dlc BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE videogames ADD COLUMN parent_game_name VARCHAR",
+        "ALTER TABLE videogames ADD COLUMN parent_game_id INTEGER",
         "ALTER TABLE videogames ADD COLUMN copies TEXT",
         "ALTER TABLE videogames ADD COLUMN old_copies TEXT",
         "ALTER TABLE videogames ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0",

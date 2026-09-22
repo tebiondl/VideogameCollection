@@ -47,10 +47,30 @@ class VideogameBase(BaseModel):
     dlcs: str | None = None
     is_dlc: bool = False
     parent_game_name: str | None = None
+    parent_game_id: int | None = Field(default=None, gt=0)
     copies: str | None = None
     old_copies: str | None = None
     hidden: bool = False
     version: int | None = None
+
+    @field_validator("dlcs")
+    @classmethod
+    def valid_dlcs(cls, value):
+        if not value:
+            return None
+        items = json.loads(value)
+        valid_states = {"not_owned", "not_started", "playing", "finished", "stopped"}
+        if not isinstance(items, list) or len(items) > 500:
+            raise ValueError("DLCs must be a list of at most 500 entries")
+        for item in items:
+            if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+                raise ValueError("Each DLC needs a name")
+            if item.get("state", "not_owned") not in valid_states:
+                raise ValueError("Invalid DLC state")
+            standalone_id = item.get("standalone_game_id")
+            if standalone_id is not None and int(standalone_id) <= 0:
+                raise ValueError("Invalid standalone DLC game")
+        return json.dumps(items)
 
     @field_validator("copies")
     @classmethod

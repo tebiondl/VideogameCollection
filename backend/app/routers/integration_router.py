@@ -167,7 +167,7 @@ def list_records(resource: Resource, search: str = "", limit: int = Query(50, ge
     if missing_format is not None and not missing_platform:
         raise HTTPException(422, "missing_format requires missing_platform.")
     if resource == "videogames":
-        query = query.filter(models.Videogame.is_dlc.is_(False), models.Videogame.merged_into_game_id.is_(None))
+        query = query.filter(models.Videogame.merged_into_game_id.is_(None))
         if not include_hidden:
             query = query.filter(models.Videogame.hidden.is_(False))
     if search:

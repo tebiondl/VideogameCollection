@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -122,12 +122,18 @@ export function VideogamesDashboard() {
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
+  const [parentPickerOpen, setParentPickerOpen] = useState(false);
+  const [parentQuery, setParentQuery] = useState('');
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
   const probableDuplicate = useMemo(
     () => findProbableDuplicate(editingGame, games),
     [editingGame, games],
   );
+  const parentCandidates = useMemo(() => games
+    .filter(game => game.id !== editingGame?.id && !game.hidden && !game.merged_into_game_id)
+    .filter(game => !parentQuery || game.name.toLowerCase().includes(parentQuery.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name)), [games, editingGame?.id, parentQuery]);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
   const copyFilterOptions = useMemo(() => {
@@ -341,7 +347,9 @@ export function VideogamesDashboard() {
         throw new Error(problem?.detail || 'Could not save the game.');
       }
       const saved = await res.json();
-      setGames(games.map(g => g.id === editingGame.id ? saved : g));
+      const refreshed = await fetchWithAuth('/videogames/');
+      if (refreshed.ok) setGames(await refreshed.json());
+      else setGames(current => current.map(g => g.id === editingGame.id ? saved : g));
       setEditingGame(null);
     } catch (err) {
       console.error(err);
@@ -446,7 +454,6 @@ export function VideogamesDashboard() {
      if (!!g.hidden !== !!filterState.hiddenOnly) return false;
      if (filterState.reviewedState === 'reviewed' && !g.reviewed) return false;
      if (filterState.reviewedState === 'unreviewed' && !!g.reviewed) return false;
-     if (g.is_dlc) return false;
      if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
      
      if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
@@ -684,13 +691,17 @@ export function VideogamesDashboard() {
                 )}
               </div>
               <div className="vg-info">
-                <h3>{game.name}</h3>
+                <h3>{game.name} {game.is_dlc && <span className="vg-dlc-badge" title="Standalone DLC / expansion"><Puzzle size={14} /> DLC</span>}</h3>
                 <div className="vg-player-data">
                   <span className="badge">{game.status}</span>
                   {displayPlaytimeHours(game) != null && <span><strong>{displayPlaytimeHours(game)}</strong> hrs</span>}
                   {game.mark != null && <span className="vg-score mark"><strong>{game.mark}/10</strong> rating</span>}
                   {game.hype != null && <span className="vg-score hype"><strong>{game.hype}/10</strong> anticipation</span>}
                 </div>
+                {game.is_dlc && game.parent_game_id && <button type="button" className="vg-parent-link" onClick={() => {
+                  const parent = games.find(candidate => candidate.id === game.parent_game_id);
+                  if (parent) setEditingGame(parent);
+                }}><ExternalLink size={14} /> Expansion of {game.parent_game_name || 'linked game'}</button>}
               </div>
               <div className="card-actions">
                 <button className="icon-btn edit-btn" onClick={() => setEditingGame(game)} title="Edit"><Edit2 size={16} /></button>
@@ -761,13 +772,26 @@ export function VideogamesDashboard() {
 
               <div className="form-row">
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Release Date</label><input type="date" className="form-input" value={editingGame.release_date || ''} onChange={e => setEditingGame({...editingGame, release_date: e.target.value || null})} /></div>
-                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Type</label><label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.5rem', alignItems: 'center' }}><input type="checkbox" checked={!!editingGame.is_dlc} onChange={e => setEditingGame({...editingGame, is_dlc: e.target.checked})} /> DLC / expansion</label></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Type</label><label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.5rem', alignItems: 'center' }}><input type="checkbox" checked={!!editingGame.is_dlc} onChange={e => setEditingGame({...editingGame, is_dlc: e.target.checked, ...(!e.target.checked ? { parent_game_id: null, parent_game_name: null } : {})})} /> DLC / expansion</label></div>
               </div>
-              {editingGame.is_dlc && <div className="form-group"><label className="form-label">Parent Game</label><input className="form-input" value={editingGame.parent_game_name || ''} onChange={e => setEditingGame({...editingGame, parent_game_name: e.target.value || null})} /></div>}
+              {editingGame.is_dlc && <div className="form-group">
+                <label className="form-label">Parent Game</label>
+                <div className="vg-parent-picker-field">
+                  {editingGame.parent_game_id ? <button type="button" className="vg-linked-game" onClick={() => {
+                    const parent = games.find(candidate => candidate.id === editingGame.parent_game_id);
+                    if (parent) setEditingGame(parent);
+                  }}><ExternalLink size={16} />{editingGame.parent_game_name || 'Open linked parent'}</button> : <span className="text-muted">No parent linked</span>}
+                  <button type="button" className="btn btn-secondary" onClick={() => { setParentQuery(''); setParentPickerOpen(true); }}><Search size={16} />{editingGame.parent_game_id ? 'Change parent' : 'Choose parent game'}</button>
+                  {editingGame.parent_game_id && <button type="button" className="btn btn-ghost" onClick={() => setEditingGame({ ...editingGame, parent_game_id: null, parent_game_name: null })}>Unlink</button>}
+                </div>
+              </div>}
 
               <div className="form-group">
                 <label className="form-label">DLCs</label>
-                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} />
+                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} onOpenStandalone={gameId => {
+                  const standalone = games.find(candidate => candidate.id === gameId);
+                  if (standalone) setEditingGame(standalone);
+                }} />
               </div>
 
               <div className="form-group">
@@ -781,11 +805,11 @@ export function VideogamesDashboard() {
                     window.alert(error instanceof Error ? error.message : 'Could not move this copy.');
                   }
                 }} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} onLinkSteam={copy => setSteamLinkTarget({ game: editingGame, copy })} onRestoreDuplicate={async copy => {
-                  if (!copy.id || !window.confirm(`Restore ${copy.name || 'this Steam copy'} as its own collection game?`)) return;
-                  const response = await fetchWithAuth(`/discovery/steam/collection-games/${editingGame.id}/copies/${encodeURIComponent(copy.id)}/restore-duplicate`, { method: 'POST' });
+                  if (!copy.id || !window.confirm(`Move ${copy.name || 'this Steam copy'} into a new standalone collection entry? It will be removed from “${editingGame.name}”.`)) return;
+                  const response = await fetchWithAuth(`/discovery/steam/collection-games/${editingGame.id}/copies/${encodeURIComponent(copy.id)}/extract`, { method: 'POST' });
                   if (!response.ok) {
                     const error = await response.json().catch(() => null);
-                    window.alert(error?.detail || 'Could not restore this copy.');
+                    window.alert(error?.detail || 'Could not move this copy to a new game entry.');
                     return;
                   }
                   const result = await response.json();
@@ -886,6 +910,27 @@ export function VideogamesDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {parentPickerOpen && editingGame && createPortal(
+        <div className="modal-overlay" style={{ zIndex: 13000 }}>
+          <div className="glass-card vg-parent-picker-modal" role="dialog" aria-modal="true" aria-label="Choose parent game">
+            <div className="modal-header">
+              <h2>Choose parent game</h2>
+              <button type="button" className="modal-close" onClick={() => setParentPickerOpen(false)}><X size={20} /></button>
+            </div>
+            <div className="vg-parent-search"><Search size={18} /><input autoFocus className="form-input" value={parentQuery} onChange={event => setParentQuery(event.target.value)} placeholder="Search your collection…" /></div>
+            <div className="vg-parent-results">
+              {parentCandidates.length ? parentCandidates.map(candidate => <button type="button" key={candidate.id} onClick={() => {
+                setEditingGame({ ...editingGame, parent_game_id: candidate.id, parent_game_name: candidate.name });
+                setParentPickerOpen(false);
+              }}>
+                {candidate.image_url ? <img src={candidate.image_url} alt="" /> : <span className="vg-parent-cover-placeholder"><Library size={18} /></span>}
+                <span><strong>{candidate.name}</strong><small>{candidate.is_dlc ? 'DLC / expansion' : 'Collection game'} · {candidate.status}</small></span>
+              </button>) : <p className="text-muted">No collection games match this search.</p>}
+            </div>
+          </div>
+        </div>, document.body
       )}
 
       {steamLinkTarget && <SteamLinkModal game={steamLinkTarget.game} copy={steamLinkTarget.copy} onClose={() => setSteamLinkTarget(null)} onLinked={updated => {

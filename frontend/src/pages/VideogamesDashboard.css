@@ -570,3 +570,114 @@
 }
 
 .collection-duplicate-warning svg { flex: 0 0 auto; }
+
+.vg-dlc-badge,
+.vg-parent-link,
+.vg-linked-game {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+.vg-dlc-badge {
+  margin-left: .35rem;
+  padding: .2rem .42rem;
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, .14);
+  border: 1px solid rgba(139, 92, 246, .35);
+  border-radius: 999px;
+  font-size: .68rem;
+  vertical-align: middle;
+}
+
+.vg-parent-link,
+.vg-linked-game {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: .82rem;
+  text-align: left;
+}
+
+.vg-parent-link:hover,
+.vg-linked-game:hover { text-decoration: underline; }
+
+.vg-parent-picker-field {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .65rem;
+  min-height: 42px;
+}
+
+.vg-parent-picker-modal {
+  width: min(620px, calc(100vw - 2rem));
+  max-height: min(720px, calc(100vh - 2rem));
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vg-parent-search {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  margin: .75rem 0;
+}
+
+.vg-parent-search .form-input { flex: 1; }
+
+.vg-parent-results {
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+
+.vg-parent-results > button {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .65rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.vg-parent-results > button:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+
+.vg-parent-results img,
+.vg-parent-cover-placeholder {
+  width: 42px;
+  height: 54px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--bg-tertiary);
+}
+
+.vg-parent-cover-placeholder {
+  display: grid;
+  place-items: center;
+}
+
+.vg-parent-results button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.vg-parent-results small { color: var(--text-muted); }

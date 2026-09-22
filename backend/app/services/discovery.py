@@ -20,7 +20,7 @@ from ..database import SessionLocal
 from ..models import Videogame
 from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
 from ..discovery_models import SteamContentLink
-from . import copy_store
+from . import copy_store, dlc_links
 from .secrets import resolve_steam_api_key
 
 logger = logging.getLogger(__name__)
@@ -1033,7 +1033,7 @@ def _igdb_match_data(game):
 
 
 def nest_known_steam_dlcs(db, user_id):
-    """Move identified Steam expansions under their parent and suppress legacy cards."""
+    """Register identified Steam expansions under a parent without losing standalone cards."""
     scope = copy_store.steam_scope(db, user_id)
     collection = db.query(Videogame).filter_by(user_id=user_id).all()
     matchable = [game for game in collection if not game.hidden and not game.is_dlc and not game.merged_into_game_id]
@@ -1047,14 +1047,37 @@ def nest_known_steam_dlcs(db, user_id):
         standalone_links = db.query(SteamCollectionLink).filter_by(
             user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
         ).all()
-        # Once IGDB identifies an expansion, it must leave the top-level
-        # collection even when its parent still needs a user decision.
+        # Older releases nested DLCs by hiding their existing card and removing
+        # its owned-copy link. Restore that card when the catalog still knows
+        # the same expansion, so upgrading does not require manual recreation.
+        if not standalone_links:
+            restorable = next((game for game in collection if (
+                game.merged_into_game_id is None
+                and game.id != getattr(catalog, "parent_game_id", None)
+                and game.is_dlc
+                and (
+                    (catalog.igdb_id and game.igdb_id == catalog.igdb_id)
+                    or normalized(game.name) == normalized(catalog.name)
+                )
+            )), None)
+            if restorable:
+                attach_steam_copy(db, restorable, {
+                    "appid": catalog.steam_appid,
+                    "name": catalog.name,
+                    "playtime_hours": catalog.playtime_hours,
+                    "image_url": catalog.image_url,
+                    "store_url": catalog.store_url,
+                    "igdb_id": catalog.igdb_id,
+                }, steam_id=scope)
+                standalone_links = db.query(SteamCollectionLink).filter_by(
+                    user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid,
+                ).all()
         for link in standalone_links:
             standalone = by_id.get(link.collection_game_id)
             if standalone:
                 standalone.is_dlc = True
                 standalone.parent_game_name = catalog.parent_game_name
-                standalone.hidden = True
+                standalone.hidden = False
         standalone_ids = {link.collection_game_id for link in standalone_links}
         parent_candidates = [game for game in matchable if game.id not in standalone_ids]
         parent = find_parent_game(parent_candidates, catalog.parent_game_name)
@@ -1109,11 +1132,12 @@ def nest_known_steam_dlcs(db, user_id):
         for link in standalone_links:
             old = by_id.get(link.collection_game_id)
             if old and old.id != parent.id:
-                old.is_dlc, old.parent_game_name, old.hidden = True, catalog.parent_game_name, True
-            db.delete(link)
-            if old:
-                db.flush()
+                old.is_dlc = True
+                old.parent_game_id = parent.id
+                old.parent_game_name = parent.name
+                old.hidden = False
                 copy_store.project_game(db, old)
+                dlc_links.sync_child_to_parent(db, old)
         db.query(SteamMatchReview).filter_by(
             user_id=user_id, steam_id=scope, steam_appid=catalog.steam_appid, match_kind="dlc_parent",
         ).delete(synchronize_session=False)

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Plus, X, Search, Loader2, Image as ImageIcon } from 'lucide-react';
+import { Plus, X, Search, Loader2, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 
-export type DlcState = 'not_owned' | 'not_started' | 'finished';
+export type DlcState = 'not_owned' | 'not_started' | 'playing' | 'finished' | 'stopped';
 
 export interface Dlc {
   name: string;
@@ -12,23 +12,30 @@ export interface Dlc {
   platform?: string | null;
   source?: string | null;
   playtime_hours?: number | null;
+  standalone_game_id?: number | null;
 }
 
-const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'finished'];
+const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'playing', 'stopped', 'finished'];
 const STATE_LABELS: Record<DlcState, string> = {
   not_owned: 'Not Owned',
   not_started: 'Not Started',
+  playing: 'Playing',
   finished: 'Finished',
+  stopped: 'Stopped',
 };
 const STATE_COLORS: Record<DlcState, string> = {
   not_owned: 'var(--text-muted)',
   not_started: 'var(--accent-primary)',
+  playing: '#38bdf8',
   finished: '#4ade80',
+  stopped: '#fb923c',
 };
 const STATE_BG: Record<DlcState, string> = {
   not_owned: 'rgba(255,255,255,0.05)',
   not_started: 'rgba(139,92,246,0.15)',
+  playing: 'rgba(56,189,248,0.14)',
   finished: 'rgba(74,222,128,0.12)',
+  stopped: 'rgba(251,146,60,0.14)',
 };
 
 function parseDlcs(value: string): Dlc[] {
@@ -45,9 +52,10 @@ interface Props {
   onChange: (val: string) => void;
   gameName?: string;
   getPortalContainer?: () => Element;
+  onOpenStandalone?: (gameId: number) => void;
 }
 
-export function DlcEditor({ value, onChange, gameName, getPortalContainer }: Props) {
+export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpenStandalone }: Props) {
   const dlcs = parseDlcs(value);
   const [newName, setNewName] = useState('');
   const [showIgdbModal, setShowIgdbModal] = useState(false);
@@ -116,6 +124,13 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer }: Pro
         {dlcs.map((dlc, idx) => (
           <div key={idx} className="dlc-row">
             <span className="dlc-name">{dlc.name}{(dlc.source || dlc.platform || dlc.playtime_hours != null) && <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 400, marginTop: '.2rem' }}>{[dlc.source, dlc.platform, dlc.playtime_hours != null ? `${dlc.playtime_hours} hrs` : null].filter(Boolean).join(' · ')}</small>}</span>
+            {dlc.standalone_game_id && <button
+              type="button"
+              className="icon-btn"
+              onClick={() => onOpenStandalone?.(dlc.standalone_game_id!)}
+              title="Open standalone collection entry"
+              aria-label={`Open standalone entry for ${dlc.name}`}
+            ><ExternalLink size={16} /></button>}
             <button
               type="button"
               className="dlc-state-btn"
@@ -128,17 +143,19 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer }: Pro
             >
               {dlc.state === 'not_owned' && '🔒 '}
               {dlc.state === 'not_started' && '⏸ '}
+              {dlc.state === 'playing' && '▶️ '}
               {dlc.state === 'finished' && '✅ '}
+              {dlc.state === 'stopped' && '⏹️ '}
               {STATE_LABELS[dlc.state]}
             </button>
-            <button
+            {!dlc.standalone_game_id && <button
               type="button"
               className="dlc-remove-btn"
               onClick={() => removeDlc(idx)}
               title="Remove DLC"
             >
               <X size={14} />
-            </button>
+            </button>}
           </div>
         ))}
       </div>

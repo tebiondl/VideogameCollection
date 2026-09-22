@@ -38,9 +38,12 @@ class Videogame(Base):
     igdb_id = Column(Integer, nullable=True, index=True)
     completion_percentage = Column(Integer, nullable=True)
     tags = Column(String, nullable=True) # JSON encoded string or comma separated
-    dlcs = Column(String, nullable=True) # JSON array: [{name, state: not_owned|not_started|finished}]
+    dlcs = Column(String, nullable=True) # JSON array: [{name, state, standalone_game_id?}]
     is_dlc = Column(Boolean, nullable=False, default=False)
     parent_game_name = Column(String, nullable=True)
+    # Kept as an application-level reference so the lightweight SQLite migration
+    # can add it safely to existing installations.
+    parent_game_id = Column(Integer, nullable=True, index=True)
     copies = Column(String, nullable=True) # JSON array of owned platform / format copies
     old_copies = Column(String, nullable=True) # JSON array of historical console / playtime records
     hidden = Column(Boolean, nullable=False, default=False)
