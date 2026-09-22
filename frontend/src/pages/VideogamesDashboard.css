@@ -158,6 +158,7 @@
 
 .vg-card {
   position: relative;
+  cursor: pointer;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 14px;

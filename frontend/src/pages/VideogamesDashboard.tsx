@@ -134,6 +134,7 @@ export function VideogamesDashboard() {
   const [games, setGames] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
@@ -355,23 +356,10 @@ export function VideogamesDashboard() {
   };
 
   const saveEdit = async () => {
-    if (!editingGame) return;
+    if (!editingGame || isSavingEdit) return;
     const draft = editingGame;
-    const previousGame = games.find(game => game.id === draft.id);
-    const optimisticGame = {
-      ...draft,
-      version: (draft.version ?? 1) + 1,
-    };
     const payload = collectionGameUpdatePayload(draft);
-
-    // Keep interaction latency independent from disk/network latency. The
-    // authoritative response is reconciled below, and failures restore the
-    // previous card plus the user's unsaved editor contents.
-    setGames(current => current.map(game => game.id === draft.id ? optimisticGame : game));
-    setEditingGame(null);
-    setParentPickerOpen(false);
-    setShowImageSelectModal(false);
-
+    setIsSavingEdit(true);
     try {
       const res = await fetchWithAuth(`/videogames/${draft.id}`, {
         method: 'PUT',
@@ -383,27 +371,18 @@ export function VideogamesDashboard() {
         throw new Error(problem?.detail || 'Could not save the game.');
       }
       const saved = await res.json();
-      setGames(current => current.map(game =>
-        game.id === draft.id && (game.version ?? 0) <= (saved.version ?? 0) ? saved : game
-      ));
-      const refreshed = await fetchWithAuth('/videogames/');
-      if (refreshed.ok) {
-        const serverGames: typeof games = await refreshed.json();
-        setGames(current => {
-          const localById = new Map(current.map(game => [game.id, game]));
-          return serverGames.map(serverGame => {
-            const local = localById.get(serverGame.id);
-            return local && (local.version ?? 0) > (serverGame.version ?? 0) ? local : serverGame;
-          });
-        });
-      }
+      setGames(current => current.map(game => game.id === draft.id ? saved : game));
+      setEditingGame(null);
+      // Linked DLCs and parent cards may also change when this game is saved.
+      // Refresh them after closing; a failed refresh does not undo the save.
+      void fetchWithAuth('/videogames/').then(async refreshed => {
+        if (refreshed.ok) setGames(await refreshed.json());
+      }).catch(error => console.error('Could not refresh the collection after saving', error));
     } catch (err) {
       console.error(err);
-      if (previousGame) {
-        setGames(current => current.map(game => game === optimisticGame ? previousGame : game));
-      }
-      setEditingGame((current: unknown) => current ?? draft);
       alert(err instanceof Error ? err.message : 'Could not save the game.');
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -719,7 +698,7 @@ export function VideogamesDashboard() {
           </div>
         ) : displayGames.length > 0 ? (
           pagedGames.map((game: any) => (
-            <div key={game.id} className="vg-card glass-card">
+            <div key={game.id} className="vg-card glass-card" onClick={() => setEditingGame({ ...game })}>
               <div className="vg-cover-wrapper">
                 {game.image_url ? (
                   <img src={game.image_url} alt={game.name} className="vg-cover" />
@@ -735,14 +714,15 @@ export function VideogamesDashboard() {
                   {game.mark != null && <span className="vg-score mark"><strong>{game.mark}/10</strong> rating</span>}
                   {game.hype != null && <span className="vg-score hype"><strong>{game.hype}/10</strong> anticipation</span>}
                 </div>
-                {game.is_dlc && game.parent_game_id && <button type="button" className="vg-parent-link" onClick={() => {
+                {game.is_dlc && game.parent_game_id && <button type="button" className="vg-parent-link" onClick={event => {
+                  event.stopPropagation();
                   const parent = games.find(candidate => candidate.id === game.parent_game_id);
                   if (parent) setEditingGame(parent);
                 }}><ExternalLink size={14} /> Expansion of {game.parent_game_name || 'linked game'}</button>}
               </div>
               <div className="card-actions">
-                <button className="icon-btn edit-btn" onClick={() => setEditingGame(game)} title="Edit"><Edit2 size={16} /></button>
-                <button className="icon-btn delete-btn" onClick={() => handleDelete(game.id)} title="Delete"><Trash2 size={16} /></button>
+                <button className="icon-btn edit-btn" onClick={event => { event.stopPropagation(); setEditingGame({ ...game }); }} title="Edit"><Edit2 size={16} /></button>
+                <button className="icon-btn delete-btn" onClick={event => { event.stopPropagation(); handleDelete(game.id); }} title="Delete"><Trash2 size={16} /></button>
               </div>
             </div>
           ))
@@ -758,7 +738,7 @@ export function VideogamesDashboard() {
       {editingGame && (
         <div className="modal-overlay">
           <div className="glass-card modal-content">
-            <button className="modal-close" onClick={() => setEditingGame(null)}><X size={20}/></button>
+            <button className="modal-close" onClick={() => setEditingGame(null)} disabled={isSavingEdit}><X size={20}/></button>
             <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '1.5rem', gap: '0.75rem' }}>
               <h2 style={{ margin: 0 }}>Edit Game</h2>
               <div className="info-tooltip-container">
@@ -942,8 +922,8 @@ export function VideogamesDashboard() {
             </div>
 
             <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setEditingGame(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveEdit}>Save Changes</button>
+              <button className="btn btn-ghost" onClick={() => setEditingGame(null)} disabled={isSavingEdit}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveEdit} disabled={isSavingEdit}>{isSavingEdit ? 'Saving…' : 'Save Changes'}</button>
             </div>
           </div>
         </div>
