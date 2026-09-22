@@ -6,7 +6,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    restart: unless-stopped
+    # Remote access is opt-in. Start it with tools/mcp-up.sh and remove it
+    # again with tools/mcp-down.sh so it never returns after a host reboot.
+    restart: "no"
     ports:
       - "127.0.0.1:${MCP_READ_PORT:-8765}:8000"
     environment:
@@ -30,7 +32,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:${MCP_WRITE_PORT:-8766}:8000"
     environment:

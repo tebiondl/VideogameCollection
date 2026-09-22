@@ -5,6 +5,16 @@ server is already deployed behind Cloudflare Access. Do not install
 `cloudflared`, copy collection credentials, or configure a bearer token on the
 client computer.
 
+The endpoints are normally switched off. Before connecting from this computer,
+run the following single command on the production host:
+
+```bash
+/opt/VideogameCollection/tools/mcp-up.sh
+```
+
+After the remote session, run `/opt/VideogameCollection/tools/mcp-down.sh` on
+the production host so the MCP containers release their resources again.
+
 ## Prompt to give Codex
 
 > Connect this Codex installation to my two remote Streamable HTTP MCP servers.
@@ -74,6 +84,8 @@ when an explicit collection change is required.
 ## Troubleshooting
 
 - Use the exact URLs above, including `/mcp`.
+- If both endpoints are unreachable, confirm that `tools/mcp-up.sh` was run on
+  the production host; they are intentionally unavailable while switched off.
 - An unauthenticated HTTP request returning `401` is expected; the MCP client
   must complete OAuth.
 - If Cloudflare denies login, authenticate with the exact email allowed by the

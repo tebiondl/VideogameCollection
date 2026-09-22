@@ -114,11 +114,21 @@ The origin validates the signed `Cf-Access-Jwt-Assertion`, including its issuer,
 signature, expiry, and the endpoint-specific audience. A copied header, a token
 for another Access application, or a direct request to the origin is rejected.
 
-## 4. Start and verify the endpoints
+## 4. Start and stop the endpoints on demand
+
+The MCP containers do not start with the normal application and do not restart
+after a host reboot. Leave them off until remote collection access is needed.
+The helper can be called from any directory because it resolves the repository
+root itself:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.mcp.yml --profile mcp \
-  up -d --build mcp-read mcp-write
+/opt/VideogameCollection/tools/mcp-up.sh
+```
+
+Optional verification and logs:
+
+```bash
+cd /opt/VideogameCollection
 
 curl --fail http://127.0.0.1:8765/healthz
 curl -i http://127.0.0.1:8765/mcp
@@ -148,6 +158,17 @@ as current ownership. Store searches use the client's separate web access.
 Writes require the exact revision from a fresh read. Concurrent changes return a
 conflict instead of overwriting data. Create, update, delete and copy-history moves
 are audited in the database.
+
+When the remote session is over, turn both endpoints off with one command:
+
+```bash
+/opt/VideogameCollection/tools/mcp-down.sh
+```
+
+This stops and removes only the `mcp-read` and `mcp-write` containers, releasing
+their memory and CPU. It does not stop the web app, backend, database, scheduled
+jobs, or the existing shared `cloudflared` service. The public MCP hostnames will
+be unavailable until `tools/mcp-up.sh` is run again.
 
 ## Revoke or rotate access
 
