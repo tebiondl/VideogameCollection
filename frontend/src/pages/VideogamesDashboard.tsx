@@ -20,6 +20,7 @@ import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal
 import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies, parseOldCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
 import { findProbableDuplicate } from '../lib/titleSimilarity';
+import '../components/Modal.css';
 import './VideogamesDashboard.css';
 
 type ViewMode = 'list' | 'matrix';
