@@ -539,10 +539,7 @@ def get_videogames(
     games = db.query(models.Videogame).filter(
         models.Videogame.user_id == current_user.id,
     ).all()
-    for game in games:
-        rows = copy_store.ensure_copies(db, game)
-        if rows:
-            copy_store.project_game(db, game, rows)
+    copy_store.project_games(db, games)
     return games
 
 @router.post("/check-similar", response_model=List[schemas.VideogameResponse])

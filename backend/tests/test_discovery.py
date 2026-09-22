@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -315,6 +315,53 @@ class DiscoveryTests(unittest.TestCase):
         self.db.commit()
         holocure = self.db.get(Videogame, collection.id)
         self.assertEqual(json.loads(holocure.copies)[0]['steam_appid'], 2420510)
+
+    def test_collection_list_batches_copy_and_entitlement_queries(self):
+        games = [
+            Videogame(user_id=self.user.id, name=f'Batch game {index}', status='Not Started')
+            for index in range(12)
+        ]
+        self.db.add_all(games)
+        self.db.flush()
+        entitlements = [
+            SteamOwnedGame(
+                user_id=self.user.id, steam_appid=1000 + index,
+                name=f'Steam batch game {index}', playtime_hours=float(index),
+            )
+            for index in range(12)
+        ]
+        self.db.add_all(entitlements)
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(
+                user_id=self.user.id, collection_game_id=game.id,
+                copy_id=f'steam:{entitlement.steam_appid}', steam_appid=entitlement.steam_appid,
+                name=game.name, platform='PC', format='Digital', source='Steam',
+            )
+            for game, entitlement in zip(games, entitlements)
+        ])
+        self.db.commit()
+
+        statements = []
+        def count_query(_conn, _cursor, statement, _parameters, _context, _executemany):
+            if statement.lstrip().upper().startswith('SELECT'):
+                statements.append(statement)
+
+        event.listen(self.engine, 'before_cursor_execute', count_query)
+        try:
+            response = self.client.get('/api/videogames/')
+        finally:
+            event.remove(self.engine, 'before_cursor_execute', count_query)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertLessEqual(len(statements), 3, statements)
+        payload = response.json()
+        self.assertEqual(len(payload), 12)
+        self.assertEqual(
+            json.loads(payload[7]['copies'])[0]['name'],
+            'Steam batch game 7',
+        )
+        self.assertEqual(json.loads(payload[7]['copies'])[0]['playtime_hours'], 7.0)
 
     def test_recently_played_failure_keeps_owned_library_usable(self):
         client = MagicMock()

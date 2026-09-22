@@ -136,7 +136,7 @@ def ensure_copies(db: Session, game: Videogame) -> list[OwnedCopy]:
     return rows
 
 
-def copy_dict(db: Session, row: OwnedCopy) -> dict:
+def _copy_dict_with_entitlement(row: OwnedCopy, entitlement: SteamOwnedGame | None) -> dict:
     result = {
         "id": row.copy_id, "name": row.name, "platform": row.platform,
         "format": row.format, "source": row.source, "store_url": row.store_url,
@@ -146,22 +146,66 @@ def copy_dict(db: Session, row: OwnedCopy) -> dict:
         "merged_from_game_id": row.merged_from_game_id,
         "counts_toward_totals": bool(row.counts_toward_totals),
     }
+    if entitlement:
+        result.update({
+            "name": entitlement.name, "platform": "PC", "format": "Digital", "source": "Steam",
+            "store_url": entitlement.store_url or result.get("store_url"),
+            "igdb_id": entitlement.igdb_id or result.get("igdb_id"),
+            "playtime_hours": entitlement.playtime_hours
+            if entitlement.playtime_hours is not None else result.get("playtime_hours"),
+            "steam_playtime_available": entitlement.playtime_hours is not None,
+            "steam_active": bool(entitlement.active),
+            "duplicate_of_appid": entitlement.duplicate_of_appid,
+        })
+    return result
+
+
+def copy_dict(db: Session, row: OwnedCopy) -> dict:
+    entitlement = None
     if row.steam_appid:
         entitlement = db.query(SteamOwnedGame).filter_by(
             user_id=row.user_id, steam_id=row.steam_id, steam_appid=row.steam_appid,
         ).first()
-        if entitlement:
-            result.update({
-                "name": entitlement.name, "platform": "PC", "format": "Digital", "source": "Steam",
-                "store_url": entitlement.store_url or result.get("store_url"),
-                "igdb_id": entitlement.igdb_id or result.get("igdb_id"),
-                "playtime_hours": entitlement.playtime_hours
-                if entitlement.playtime_hours is not None else result.get("playtime_hours"),
-                "steam_playtime_available": entitlement.playtime_hours is not None,
-                "steam_active": bool(entitlement.active),
-                "duplicate_of_appid": entitlement.duplicate_of_appid,
-            })
-    return result
+    return _copy_dict_with_entitlement(row, entitlement)
+
+
+def project_games(db: Session, games: list[Videogame]) -> None:
+    """Refresh collection copy projections with a constant number of queries.
+
+    Startup migrations guarantee that relational copy rows exist. The legacy
+    JSON is retained only for an installation that has not completed that
+    migration yet; a GET request should not try to migrate hundreds of rows.
+    """
+    if not games:
+        return
+    user_ids = {game.user_id for game in games}
+    game_ids = {game.id for game in games}
+    rows = db.query(OwnedCopy).filter(
+        OwnedCopy.user_id.in_(user_ids), OwnedCopy.collection_game_id.in_(game_ids),
+    ).order_by(OwnedCopy.collection_game_id, OwnedCopy.position, OwnedCopy.id).all()
+    rows_by_game: dict[int, list[OwnedCopy]] = {}
+    for row in rows:
+        rows_by_game.setdefault(row.collection_game_id, []).append(row)
+
+    entitlements = db.query(SteamOwnedGame).filter(SteamOwnedGame.user_id.in_(user_ids)).all()
+    entitlements_by_identity = {
+        (row.user_id, row.steam_id, row.steam_appid): row for row in entitlements
+    }
+    for game in games:
+        game_rows = rows_by_game.get(game.id)
+        if game_rows is None:
+            # Preserve pre-migration JSON rather than turning a read into a
+            # large write transaction. The startup migration will normalize it.
+            continue
+        values = [
+            _copy_dict_with_entitlement(
+                row,
+                entitlements_by_identity.get((row.user_id, row.steam_id, row.steam_appid))
+                if row.steam_appid else None,
+            )
+            for row in game_rows
+        ]
+        game.copies = json.dumps(values) if values else None
 
 
 def project_game(db: Session, game: Videogame, rows: list[OwnedCopy] | None = None) -> list[dict]:

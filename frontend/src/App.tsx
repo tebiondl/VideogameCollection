@@ -1,25 +1,27 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
-import { HomePage } from './pages/HomePage';
-import { AuthPage } from './pages/AuthPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { AnalyticsDashboard } from './pages/AnalyticsDashboard';
-import { VideogamesDashboard } from './pages/VideogamesDashboard';
-import { AddGamePage } from './pages/AddGamePage';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { UserSettings } from './pages/UserSettings';
-import { BoardgamesDashboard } from './pages/BoardgamesDashboard';
-import { AddBoardgamePage } from './pages/AddBoardgamePage';
-import { BoardgameAnalyticsDashboard } from './pages/BoardgameAnalyticsDashboard';
-import { AdminBoardgamesDashboard } from './pages/AdminBoardgamesDashboard';
 import { CollectionNavigation, VideogameEntry } from './components/CollectionNavigation';
-import { DiscoveryDashboard } from './pages/DiscoveryDashboard';
-import { DiscoveryAnalytics } from './pages/DiscoveryAnalytics';
-import { DiscoverySmartAdd } from './pages/DiscoverySmartAdd';
-import { WantedGames } from './pages/WantedGames';
-import { SteamTrash } from './pages/SteamTrash';
 import { BackToTopButton } from './components/BackToTopButton';
+
+const HomePage = lazy(() => import('./pages/HomePage').then(({ HomePage }) => ({ default: HomePage })));
+const AuthPage = lazy(() => import('./pages/AuthPage').then(({ AuthPage }) => ({ default: AuthPage })));
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(({ DashboardPage }) => ({ default: DashboardPage })));
+const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard').then(({ AnalyticsDashboard }) => ({ default: AnalyticsDashboard })));
+const VideogamesDashboard = lazy(() => import('./pages/VideogamesDashboard').then(({ VideogamesDashboard }) => ({ default: VideogamesDashboard })));
+const AddGamePage = lazy(() => import('./pages/AddGamePage').then(({ AddGamePage }) => ({ default: AddGamePage })));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then(({ AdminDashboard }) => ({ default: AdminDashboard })));
+const UserSettings = lazy(() => import('./pages/UserSettings').then(({ UserSettings }) => ({ default: UserSettings })));
+const BoardgamesDashboard = lazy(() => import('./pages/BoardgamesDashboard').then(({ BoardgamesDashboard }) => ({ default: BoardgamesDashboard })));
+const AddBoardgamePage = lazy(() => import('./pages/AddBoardgamePage').then(({ AddBoardgamePage }) => ({ default: AddBoardgamePage })));
+const BoardgameAnalyticsDashboard = lazy(() => import('./pages/BoardgameAnalyticsDashboard').then(({ BoardgameAnalyticsDashboard }) => ({ default: BoardgameAnalyticsDashboard })));
+const AdminBoardgamesDashboard = lazy(() => import('./pages/AdminBoardgamesDashboard').then(({ AdminBoardgamesDashboard }) => ({ default: AdminBoardgamesDashboard })));
+const DiscoveryDashboard = lazy(() => import('./pages/DiscoveryDashboard').then(({ DiscoveryDashboard }) => ({ default: DiscoveryDashboard })));
+const DiscoveryAnalytics = lazy(() => import('./pages/DiscoveryAnalytics').then(({ DiscoveryAnalytics }) => ({ default: DiscoveryAnalytics })));
+const DiscoverySmartAdd = lazy(() => import('./pages/DiscoverySmartAdd').then(({ DiscoverySmartAdd }) => ({ default: DiscoverySmartAdd })));
+const WantedGames = lazy(() => import('./pages/WantedGames').then(({ WantedGames }) => ({ default: WantedGames })));
+const SteamTrash = lazy(() => import('./pages/SteamTrash').then(({ SteamTrash }) => ({ default: SteamTrash })));
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -43,7 +45,8 @@ function AppRoutes() {
       <Navbar />
       <main className="main-content">
         <CollectionNavigation />
-        <Routes>
+        <Suspense fallback={<div className="page-loading">Loading...</div>}>
+          <Routes>
           <Route path="/dashboard/videogames/collection" element={<ProtectedRoute><VideogamesDashboard /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/trash" element={<ProtectedRoute><SteamTrash /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
@@ -137,7 +140,8 @@ function AppRoutes() {
               </ProtectedRoute>
             } 
           />
-        </Routes>
+          </Routes>
+        </Suspense>
         <BackToTopButton />
       </main>
     </div>

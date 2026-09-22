@@ -104,6 +104,18 @@ function applyMultiSort(games: any[], criteria: SortCriterion[]): any[] {
   });
 }
 
+function evaluateTagGroup(group: TagGroup, gameTags: string[]): boolean {
+  if (group.conditions.length === 0) return true;
+  const results = group.conditions.map(cond => {
+    if (cond.type === 'group') return evaluateTagGroup(cond, gameTags);
+    const rule = cond as TagRule;
+    if (!rule.tag) return true;
+    const hasTag = gameTags.includes(rule.tag);
+    return rule.operator === 'includes' ? hasTag : !hasTag;
+  });
+  return group.matchLogic === 'AND' ? results.every(Boolean) : results.some(Boolean);
+}
+
 export function VideogamesDashboard() {
   const { user } = useAuth();
   const userId = user!.id;
@@ -126,9 +138,13 @@ export function VideogamesDashboard() {
   const [parentQuery, setParentQuery] = useState('');
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
+  const editingGameId = editingGame?.id;
+  const editingGameName = editingGame?.name;
   const probableDuplicate = useMemo(
-    () => findProbableDuplicate(editingGame, games),
-    [editingGame, games],
+    () => editingGameId && editingGameName
+      ? findProbableDuplicate({ id: editingGameId, name: editingGameName }, games)
+      : null,
+    [editingGameId, editingGameName, games],
   );
   const parentCandidates = useMemo(() => games
     .filter(game => game.id !== editingGame?.id && !game.hidden && !game.merged_into_game_id)
@@ -437,20 +453,9 @@ export function VideogamesDashboard() {
   };
 
   // ─── Filter + Sort pipeline ────────────────────────────────────────────────
-  const evaluateTagGroup = (group: TagGroup, gameTags: string[]): boolean => {
-      if (group.conditions.length === 0) return true;
-      const results = group.conditions.map(cond => {
-          if (cond.type === 'group') return evaluateTagGroup(cond, gameTags);
-          const rule = cond as TagRule;
-          if (!rule.tag) return true; // skip empty rules
-          const hasTag = gameTags.includes(rule.tag);
-          return rule.operator === 'includes' ? hasTag : !hasTag;
-      });
-      if (group.matchLogic === 'AND') return results.every(r => r);
-      return results.some(r => r);
-  };
-
-  const filteredGames = games.filter(g => {
+  // This Vite app does not use React Compiler; preserve the O(n) calculation across modal edits.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const displayGames = useMemo(() => applyMultiSort(games.filter(g => {
      if (!!g.hidden !== !!filterState.hiddenOnly) return false;
      if (filterState.reviewedState === 'reviewed' && !g.reviewed) return false;
      if (filterState.reviewedState === 'unreviewed' && !!g.reviewed) return false;
@@ -490,9 +495,7 @@ export function VideogamesDashboard() {
      if (!evaluateTagGroup(filterState.tagQuery, gTags)) return false;
 
      return true;
-  });
-
-  const displayGames = applyMultiSort(filteredGames, sortCriteria);
+  }), sortCriteria), [games, filterState, searchQuery, sortCriteria]);
   const totalPages = pageSize === 'infinite' ? 1 : Math.max(1, Math.ceil(displayGames.length / pageSize));
   const visiblePage = Math.min(currentPage, totalPages);
   const pagedGames = pageSize === 'infinite'
