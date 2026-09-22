@@ -1092,7 +1092,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(original.name, 'Skyrim')
         self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
 
-    def test_none_of_candidates_creates_and_permanently_links_separate_game(self):
+    def test_different_installment_automatically_creates_a_separate_game(self):
         original = Videogame(user_id=self.user.id, name='Portal', status='Finished')
         self.db.add(original)
         self.db.commit()
@@ -1100,15 +1100,9 @@ class DiscoveryTests(unittest.TestCase):
             'appid': 620, 'name': 'Portal 2', 'playtime_hours': 5.0,
             'image_url': None, 'store_url': 'https://store.steampowered.com/app/620/',
         }]
-        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 1)
         self.db.commit()
-        review = self.db.query(SteamMatchReview).one()
-
-        decided = self.client.post(f'/api/discovery/steam/reviews/{review.id}', json={
-            'decision': 'none',
-        })
-        self.assertEqual(decided.status_code, 200, decided.text)
-        new_game = self.db.get(Videogame, decided.json()['collection_game_id'])
+        new_game = self.db.query(Videogame).filter_by(name='Portal 2').one()
         self.assertEqual(new_game.name, 'Portal 2')
         self.assertEqual(json.loads(new_game.copies)[0]['steam_appid'], 620)
         self.assertEqual(self.db.query(Videogame).count(), 2)
@@ -1116,7 +1110,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
         self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
 
-    def test_doubtful_match_offers_multiple_candidates_and_rejects_them_individually(self):
+    def test_equivalent_roman_installment_links_only_the_matching_sequel(self):
         base = Videogame(user_id=self.user.id, name='Etrian Odyssey', status='Finished', mark=8)
         sequel = Videogame(user_id=self.user.id, name='Etrian Odyssey 2', status='Playing', playtime_hours=12)
         self.db.add_all([base, sequel])
@@ -1125,29 +1119,8 @@ class DiscoveryTests(unittest.TestCase):
             'appid': 999, 'name': 'Etrian Odyssey II', 'playtime_hours': 20.0,
             'image_url': None, 'store_url': 'https://store.steampowered.com/app/999/',
         }]
-        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 1)
         self.db.commit()
-        review = self.db.query(SteamMatchReview).one()
-        listed = self.client.get('/api/discovery/steam/reviews').json()[0]
-        candidates = {item['game_id']: item for item in listed['candidates']}
-        self.assertIn(base.id, candidates)
-        self.assertIn(sequel.id, candidates)
-
-        rejected = self.client.post(f'/api/discovery/steam/reviews/{review.id}', json={
-            'decision': 'different', 'candidate_game_id': base.id,
-        })
-        self.assertEqual(rejected.status_code, 200, rejected.text)
-        self.assertFalse(rejected.json()['resolved'])
-        self.assertIsNotNone(self.db.get(SteamMatchReview, review.id))
-        remaining = self.client.get('/api/discovery/steam/reviews').json()[0]['candidates']
-        self.assertNotIn(base.id, {item['game_id'] for item in remaining})
-        self.assertIn(sequel.id, {item['game_id'] for item in remaining})
-
-        accepted = self.client.post(f'/api/discovery/steam/reviews/{review.id}', json={
-            'decision': 'same', 'candidate_game_id': sequel.id,
-        })
-        self.assertEqual(accepted.status_code, 200, accepted.text)
-        self.assertTrue(accepted.json()['resolved'])
         self.db.refresh(base)
         self.db.refresh(sequel)
         self.assertEqual(base.name, 'Etrian Odyssey')
@@ -1156,6 +1129,79 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(sequel.copies)[0]['steam_appid'], 999)
         self.assertEqual(self.db.query(SteamCollectionLink).one().collection_game_id, sequel.id)
         self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+
+    def test_steam_sync_keeps_cold_steel_installments_on_separate_cards(self):
+        first = Videogame(
+            user_id=self.user.id,
+            name='The Legend of Heroes: Trails of Cold Steel I',
+            status='Playing',
+        )
+        self.db.add(first)
+        self.db.commit()
+        owned = [
+            {'appid': 1001, 'name': 'The Legend of Heroes: Trails of Cold Steel', 'playtime_hours': 10},
+            {'appid': 1002, 'name': 'The Legend of Heroes: Trails of Cold Steel II', 'playtime_hours': 20},
+            {'appid': 1003, 'name': 'The Legend of Heroes: Trails of Cold Steel III', 'playtime_hours': 30},
+        ]
+
+        # The missing "I" is intentionally review-only, so use the durable
+        # identity for the first game while ensuring II and III cannot join it.
+        self.db.add(WantedGame(
+            user_id=self.user.id, name=first.name, steam_appid=1001,
+            collection_game_id=first.id, status='Acquired',
+        ))
+        self.db.commit()
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 3)
+        self.db.commit()
+
+        games = self.db.query(Videogame).filter_by(user_id=self.user.id).all()
+        self.assertEqual(len(games), 3)
+        linked = {
+            game.name: [copy['steam_appid'] for copy in json.loads(game.copies or '[]')]
+            for game in games
+        }
+        self.assertEqual(linked['The Legend of Heroes: Trails of Cold Steel'], [1001])
+        self.assertEqual(linked['The Legend of Heroes: Trails of Cold Steel II'], [1002])
+        self.assertEqual(linked['The Legend of Heroes: Trails of Cold Steel III'], [1003])
+
+    def test_steam_sync_repairs_existing_automatic_cold_steel_copy_group(self):
+        combined = Videogame(
+            user_id=self.user.id,
+            name='The Legend of Heroes: Trails of Cold Steel I',
+            status='Playing',
+        )
+        catalogs = [
+            SteamOwnedGame(user_id=self.user.id, steam_appid=2001, name='The Legend of Heroes: Trails of Cold Steel I'),
+            SteamOwnedGame(user_id=self.user.id, steam_appid=2002, name='The Legend of Heroes: Trails of Cold Steel II', duplicate_of_appid=2001),
+            SteamOwnedGame(user_id=self.user.id, steam_appid=2003, name='The Legend of Heroes: Trails of Cold Steel III', duplicate_of_appid=2001),
+        ]
+        self.db.add_all([combined, *catalogs])
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(
+                user_id=self.user.id, collection_game_id=combined.id,
+                copy_id=f'steam:{catalog.steam_appid}', steam_appid=catalog.steam_appid,
+                name=catalog.name, user_selected=False,
+            )
+            for catalog in catalogs
+        ])
+        self.db.commit()
+        owned = [
+            {'appid': catalog.steam_appid, 'name': catalog.name, 'playtime_hours': index * 10}
+            for index, catalog in enumerate(catalogs, 1)
+        ]
+
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 2)
+        self.db.commit()
+
+        games = self.db.query(Videogame).filter_by(user_id=self.user.id).all()
+        self.assertEqual(len(games), 3)
+        self.assertEqual(
+            {tuple(copy['steam_appid'] for copy in json.loads(game.copies or '[]')) for game in games},
+            {(2001,), (2002,), (2003,)},
+        )
+        self.assertIsNone(self.db.query(SteamOwnedGame).filter_by(steam_appid=2002).one().duplicate_of_appid)
+        self.assertIsNone(self.db.query(SteamOwnedGame).filter_by(steam_appid=2003).one().duplicate_of_appid)
 
     def test_unsync_removes_imports_but_preserves_local_games_and_non_steam_copies(self):
         settings = DiscoverySettings(
@@ -1453,6 +1499,22 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(self.db.get(Videogame, game['id']).name, 'First edit')
         self.assertTrue(self.db.get(Videogame, game['id']).reviewed)
+
+    def test_add_game_duplicate_check_respects_installment_identity(self):
+        first = Videogame(user_id=self.user.id, name='Trails of Cold Steel I', status='Playing')
+        second = Videogame(user_id=self.user.id, name='Trails of Cold Steel II', status='Playing')
+        self.db.add_all([first, second])
+        self.db.commit()
+
+        equivalent = self.client.post('/api/videogames/check-similar', json={
+            'name': 'Trails of Cold Steel 2',
+        })
+        different = self.client.post('/api/videogames/check-similar', json={
+            'name': 'Trails of Cold Steel III',
+        })
+
+        self.assertEqual([game['id'] for game in equivalent.json()], [second.id])
+        self.assertEqual(different.json(), [])
 
     def test_one_collection_card_cannot_link_the_same_steam_app_twice(self):
         game = Videogame(user_id=self.user.id, name='Two copies', status='Not Started', copies=json.dumps([

@@ -21,6 +21,7 @@ from ..models import Videogame
 from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
 from ..discovery_models import SteamContentLink
 from . import copy_store, dlc_links
+from .title_matching import compare_titles
 from .secrets import resolve_steam_api_key
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,8 @@ def find_duplicate(db, user_id, data, exclude_id=None):
         if not game.deleted and (platforms[0] == platforms[1] or not all(platforms)):
             if data.get("igdb_id") and game.igdb_id == data["igdb_id"]:
                 return game
-            if normalized(game.name) == normalized(data["name"]):
+            title_match = compare_titles(game.name, data["name"])
+            if title_match.compatible and title_match.automatic and title_match.score >= 0.98:
                 return game
     return None
 
@@ -322,10 +324,11 @@ def find_steam_store_games(db, user_id, query):
 
 def find_verified_steam_game(db, user_id, title):
     """Return one exact Store title that Steam stats confirm for this account."""
-    target = _collection_title_key(title)
     verified = [
         item for item in find_steam_store_games(db, user_id, title)
-        if item.get("stats_verified") and _collection_title_key(item.get("name")) == target
+        if item.get("stats_verified")
+        and (match := compare_titles(title, item.get("name"))).compatible
+        and match.automatic and match.score >= 0.98
     ]
     return verified[0] if len(verified) == 1 else None
 
@@ -371,40 +374,24 @@ def _collection_title_key(value):
 
 def _collection_title_matches(collection, names):
     """Return plausible titles and whether the best is safe to link automatically."""
-    targets = {_collection_title_key(name) for name in names}
-    targets.discard("")
+    targets = [name for name in names if _collection_title_key(name)]
     scored = []
-    edition_tokens = {
-        "demo", "beta", "alpha", "test", "playtest", "network", "server", "soundtrack",
-        "remaster", "remastered", "remake", "definitive", "complete", "edition", "classic",
-    }
     for game in collection:
-        candidate = _collection_title_key(game.name)
-        if not candidate:
-            continue
-        score = 0.0
-        candidate_tokens = set(candidate.split())
+        best = None
         for target in targets:
-            ratio = SequenceMatcher(None, target, candidate).ratio()
-            target_tokens = set(target.split())
-            shared = len(target_tokens & candidate_tokens)
-            coverage = shared / min(len(target_tokens), len(candidate_tokens)) if target_tokens and candidate_tokens else 0
-            if coverage == 1 and min(len(target_tokens), len(candidate_tokens)) >= 2:
-                ratio = max(ratio, 0.86)
-            elif coverage >= 2 / 3:
-                ratio = max(ratio, 0.76)
-            elif coverage == 1 and min(len(target_tokens), len(candidate_tokens)) == 1:
-                ratio = max(ratio, 0.74)
-            if (target_tokens & edition_tokens) != (candidate_tokens & edition_tokens):
-                ratio -= 0.18
-            score = max(score, ratio)
-        if score >= 0.72:
-            scored.append((score, game))
+            result = compare_titles(target, game.name)
+            if result.compatible and (best is None or result.score > best.score):
+                best = result
+        if best and best.score >= 0.72:
+            scored.append((best.score, game, best.automatic))
     scored.sort(key=lambda item: item[0], reverse=True)
     if not scored:
         return [], False
     ambiguous = len(scored) > 1 and scored[0][0] - scored[1][0] < 0.04
-    return [(game, score) for score, game in scored[:5]], scored[0][0] >= 0.92 and not ambiguous
+    return (
+        [(game, score) for score, game, _automatic in scored[:5]],
+        scored[0][0] >= 0.92 and scored[0][2] and not ambiguous,
+    )
 
 
 def steam_review_candidates(review):
@@ -538,8 +525,10 @@ def find_parent_game(collection, parent_name):
     if not parent_name:
         return None
     candidates = [game for game in collection if not game.is_dlc]
-    key = _collection_title_key(parent_name)
-    exact = next((game for game in candidates if _collection_title_key(game.name) == key), None)
+    exact = next((game for game in candidates if (
+        (match := compare_titles(parent_name, game.name)).compatible
+        and match.automatic and match.score >= 0.98
+    )), None)
     if exact:
         return exact
     matches, automatic = _collection_title_matches(candidates, [parent_name])
@@ -554,7 +543,10 @@ def attach_owned_dlc(parent, item):
     appid = item["appid"]
     entry = next((row for row in dlcs if int(row.get("steam_appid") or 0) == appid), None)
     if entry is None:
-        entry = next((row for row in dlcs if normalized(row.get("name")) == normalized(item.get("name"))), None)
+        entry = next((row for row in dlcs if (
+            (match := compare_titles(row.get("name"), item.get("name"))).compatible
+            and match.automatic and match.score >= 0.98
+        )), None)
     if entry is None:
         entry = {"name": item.get("name") or f"Steam app {appid}", "state": "not_started"}
         dlcs.append(entry)
@@ -652,6 +644,39 @@ def reconcile_steam_library(db, user_id, items):
             links_by_app.pop(appid, None)
             continue
         if app_links:
+            retained_links = []
+            repaired_games = set()
+            for existing_link in app_links:
+                linked_game = collection_by_id.get(existing_link.collection_game_id)
+                primary = catalog.get(catalog_row.duplicate_of_appid) if catalog_row.duplicate_of_appid else None
+                reference_title = (primary.name if primary else None) or (linked_game.name if linked_game else None)
+                identity = compare_titles(item["name"], reference_title)
+                if (
+                    linked_game is not None
+                    and not existing_link.user_selected
+                    and identity.relation == "different_installment"
+                ):
+                    repaired_games.add(linked_game.id)
+                    if existing_link in links_by_game.get(linked_game.id, []):
+                        links_by_game[linked_game.id].remove(existing_link)
+                    db.delete(existing_link)
+                    copy_store.record_audit(
+                        db, user_id, "installment_link_repaired", steam_id=scope,
+                        steam_appid=appid, game_id=linked_game.id, copy_id=existing_link.copy_id,
+                        details={"steam_title": item["name"], "reference_title": reference_title},
+                    )
+                else:
+                    retained_links.append(existing_link)
+            if len(retained_links) != len(app_links):
+                catalog_row.duplicate_of_appid = None
+                links_by_app[appid] = retained_links
+                app_links = retained_links
+                db.flush()
+                for repaired_game_id in repaired_games:
+                    repaired_game = collection_by_id.get(repaired_game_id)
+                    if repaired_game:
+                        copy_store.project_game(db, repaired_game)
+        if app_links:
             for link in app_links:
                 game = collection_by_id.get(link.collection_game_id)
                 if game and attach_steam_copy(db, game, item, link.igdb_id or catalog_row.igdb_id, link.copy_id, scope):
@@ -687,11 +712,12 @@ def reconcile_steam_library(db, user_id, items):
             if len(igdb_candidates) == 1:
                 game = igdb_candidates[0]
         if game is None:
-            title_keys = {_collection_title_key(item["name"])}
-            if wanted:
-                title_keys.add(_collection_title_key(wanted.name))
-            title_keys.discard("")
-            exact_candidates = [row for row in matchable_collection if _collection_title_key(row.name) in title_keys]
+            title_names = [item["name"], wanted.name if wanted else ""]
+            exact_candidates = [row for row in matchable_collection if any(
+                (match := compare_titles(name, row.name)).compatible
+                and match.automatic and match.score >= 0.98
+                for name in title_names if name
+            )]
             if len(exact_candidates) == 1:
                 game = exact_candidates[0]
         if game is None:
@@ -1057,7 +1083,10 @@ def nest_known_steam_dlcs(db, user_id):
                 and game.is_dlc
                 and (
                     (catalog.igdb_id and game.igdb_id == catalog.igdb_id)
-                    or normalized(game.name) == normalized(catalog.name)
+                    or (
+                        (match := compare_titles(game.name, catalog.name)).compatible
+                        and match.automatic and match.score >= 0.98
+                    )
                 )
             )), None)
             if restorable:
@@ -1145,23 +1174,16 @@ def nest_known_steam_dlcs(db, user_id):
     return moved
 
 
-def _igdb_title(value):
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
-
-
 def _closest_igdb_game(title, expected_dlc, games):
-    wanted = _igdb_title(title)
     best, best_score = None, 0.0
     for game in games:
-        candidate = _igdb_title(game.get("name"))
-        if not candidate:
+        match = compare_titles(title, game.get("name"))
+        if not match.compatible:
             continue
-        score = SequenceMatcher(None, wanted, candidate).ratio()
-        if wanted in candidate or candidate in wanted:
-            score = max(score, 0.82)
+        score = match.score
         candidate_dlc = game.get("game_type") in IGDB_DLC_TYPES
         score += 0.08 if candidate_dlc == expected_dlc else -0.18
-        if score > best_score:
+        if match.automatic and score > best_score:
             best, best_score = game, score
     return best if best_score >= 0.72 else None
 

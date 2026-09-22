@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Annotated
-import difflib
 import json
 import os
 import logging
@@ -14,6 +13,7 @@ from .. import schemas, models, database
 from .auth_router import get_current_user
 from .igdb_router import _get_twitch_token
 from ..services import copy_store, dlc_links
+from ..services.title_matching import compare_titles
 
 logger = logging.getLogger(__name__)
 
@@ -553,9 +553,9 @@ def check_similar_game(
 ):
     """
     Expects json payload: {"name": "Game Name"}
-    Returns list of games that closely match via SequenceMatcher
+    Returns structurally compatible games that closely match the title.
     """
-    target_name = name_payload.get("name", "").lower().strip()
+    target_name = name_payload.get("name", "").strip()
     if not target_name:
         return []
         
@@ -566,8 +566,8 @@ def check_similar_game(
     
     similar_games = []
     for game in user_games:
-        match_ratio = difflib.SequenceMatcher(None, target_name, game.name.lower().strip()).ratio()
-        if match_ratio >= 0.75: # 75% similarity threshold
+        match = compare_titles(target_name, game.name)
+        if match.compatible and match.score >= 0.75:
             similar_games.append(game)
             
     return similar_games

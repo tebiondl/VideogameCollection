@@ -19,6 +19,7 @@ from ..discovery_schemas import (
 )
 from ..services import discovery as service
 from ..services import copy_store
+from ..services.title_matching import compare_titles
 from ..services.secrets import protect_secret, resolve_steam_api_key
 from .auth_router import get_current_user
 
@@ -193,7 +194,10 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
             dlcs = []
         entry = next((row for row in dlcs if payload.steam_appid and row.get("steam_appid") == payload.steam_appid), None)
         if entry is None:
-            entry = next((row for row in dlcs if service.normalized(row.get("name")) == service.normalized(payload.name)), None)
+            entry = next((row for row in dlcs if (
+                (match := compare_titles(row.get("name"), payload.name)).compatible
+                and match.automatic and match.score >= 0.98
+            )), None)
         if entry is None:
             entry = {"name": payload.name, "state": "not_started"}
             dlcs.append(entry)
@@ -230,7 +234,11 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
         return {"collection_game_id": parent.id}
     existing = db.query(Videogame).filter_by(id=game.collection_game_id, user_id=user.id).first() if game.collection_game_id else None
     if existing is None:
-        existing = next((row for row in db.query(Videogame).filter_by(user_id=user.id, hidden=False, is_dlc=False).all() if not row.merged_into_game_id and service.normalized(row.name) == service.normalized(payload.name)), None)
+        existing = next((row for row in db.query(Videogame).filter_by(user_id=user.id, hidden=False, is_dlc=False).all() if (
+            not row.merged_into_game_id
+            and (match := compare_titles(row.name, payload.name)).compatible
+            and match.automatic and match.score >= 0.98
+        )), None)
     steam_copy = service.normalized(payload.source) == "steam" and service.platform_key(payload.platform) in ("pc", "steam deck")
     settings = service.get_settings(db, user.id)
     if game.steam_appid and settings.sync_enabled and settings.sync_collection and steam_copy:
