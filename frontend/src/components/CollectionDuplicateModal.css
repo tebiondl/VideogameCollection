@@ -1,6 +1,8 @@
-.collection-duplicate-dialog { width:min(760px, calc(100vw - 2rem)); max-height:88vh; }
+.discovery-dialog.collection-duplicate-dialog { width:min(760px, calc(100vw - 2rem)); max-height:88vh; }
 .duplicate-search { display:flex; align-items:center; gap:.65rem; margin:1rem 0; padding:.75rem 1rem; border:1px solid var(--border-color); border-radius:var(--radius-md); background:var(--bg-tertiary); }
+.duplicate-search:focus-within { border-color:var(--accent-primary); box-shadow:0 0 0 2px var(--accent-glow); }
 .duplicate-search input { flex:1; border:0; outline:0; color:var(--text-primary); background:transparent; font:inherit; }
+.discovery-dialog .duplicate-search input:not([type=checkbox]):not([type=file]) { border:0; outline:0; background:transparent; padding:0; }
 .duplicate-game-list { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:.6rem; max-height:32vh; overflow:auto; padding:.1rem .25rem .1rem 0; }
 .duplicate-game-option { display:flex; align-items:center; gap:.75rem; min-width:0; padding:.65rem; color:var(--text-primary); text-align:left; background:rgba(255,255,255,.025); border:1px solid var(--border-color); border-radius:var(--radius-md); cursor:pointer; }
 .duplicate-game-option:hover, .duplicate-game-option.selected { border-color:var(--accent-primary); background:rgba(139,92,246,.1); }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Link2, Loader2, Search, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import './DiscoveryDialog.css';
 import './SteamLinkModal.css';
 import type { OwnedCopy } from '../lib/ownedCopies';
 

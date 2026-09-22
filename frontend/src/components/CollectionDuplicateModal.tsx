@@ -3,6 +3,7 @@ import { GitMerge, Loader2, Search, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { parseCopies } from '../lib/ownedCopies';
 import { searchTitleCandidates } from '../lib/titleSimilarity';
+import './DiscoveryDialog.css';
 import './CollectionDuplicateModal.css';
 
 interface CollectionGame {

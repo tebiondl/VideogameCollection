@@ -6,6 +6,7 @@ import { EMPTY_COPY_OPTIONS, errorMessage } from '../lib/discovery';
 import type { AcquireDraft, CopyOptions } from '../lib/discovery';
 import { DlcEditor } from './DlcEditor';
 import { TagMultiSelect } from './TagMultiSelect';
+import './DiscoveryDialog.css';
 
 export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSave }: { initial: AcquireDraft; nonSteamOnly?: boolean; onClose: () => void; onSave: (draft: AcquireDraft) => Promise<void> }) {
   const [draft, setDraft] = useState(() => nonSteamOnly ? { ...initial, source: initial.source.toLowerCase() === 'steam' ? '' : initial.source, steam_appid: null, store_url: initial.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : initial.store_url } : initial);

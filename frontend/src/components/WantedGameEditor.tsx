@@ -5,6 +5,7 @@ import { discoveryApi, errorMessage, fromIgdb, payload } from '../lib/discovery'
 import type { WantedDraft, IgdbGame } from '../lib/discovery';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from './TagMultiSelect';
+import './DiscoveryDialog.css';
 
 export function WantedGameEditor({ initial, title, onClose, onSave }: { initial: WantedDraft; title: string; onClose: () => void; onSave: (game: WantedDraft) => Promise<void> }) {
   const [draft, setDraft] = useState(initial);
