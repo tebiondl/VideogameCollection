@@ -9,11 +9,16 @@ const code = ts.transpileModule(readFileSync(new URL('../src/lib/titleSimilarity
 }).outputText;
 const exports = {};
 vm.runInNewContext(code, { exports });
-const { compareTitles, findProbableDuplicate, normalizeTitle, parseTitle, searchTitleCandidates, titleSimilarity } = exports;
+const { compareTitles, findProbableDuplicate, isReviewableTitleMatch, normalizeTitle, parseTitle, searchTitleCandidates, titleSimilarity } = exports;
 
 test('title normalization ignores punctuation, spacing, case and accents', () => {
   assert.equal(normalizeTitle('  HoloCure: Save the Fáns! '), 'holocure save the fans');
   assert.equal(titleSimilarity('HoloCure: Save the Fans!', 'holocure - save the fans'), 1);
+});
+
+test('trademark markers do not change title identity', () => {
+  assert.equal(titleSimilarity('NieR:Automata™', 'Nier: Automata'), 1);
+  assert.equal(titleSimilarity('NieR:Automata(TM)', 'Nier: Automata'), 1);
 });
 
 test('a 95 percent title match is a probable duplicate', () => {
@@ -110,4 +115,14 @@ test('duplicate search does not offer another numbered installment by default', 
   const sequel = { id: 2, name: 'Trails of Cold Steel II' };
   assert.equal(findProbableDuplicate(current, [current, sequel]), null);
   assert.deepEqual(searchTitleCandidates(current.id, current.name, [current, sequel]), []);
+});
+
+test('review matching requires meaningful title evidence', () => {
+  assert.equal(isReviewableTitleMatch(compareTitles('Doki Doki Literature Club!', 'Doki Doki Literture Club')), true);
+  assert.equal(isReviewableTitleMatch(compareTitles('Half-Life 2: Deathmatch', 'Half-Life 2')), true);
+  assert.equal(isReviewableTitleMatch(compareTitles('Skyrim', 'The Elder Scrolls V: Skyrim')), true);
+  assert.equal(isReviewableTitleMatch(compareTitles('Portal', 'Portal Knights')), false);
+  assert.equal(isReviewableTitleMatch(compareTitles('The Legend of Heroes: Trails of Cold Steel', 'Heroes of the Storm')), false);
+  assert.equal(isReviewableTitleMatch(compareTitles('Minit Fun Racer', 'Racer 8')), false);
+  assert.equal(isReviewableTitleMatch(compareTitles('Minecraft Dungeons', 'Dungeons 3')), false);
 });

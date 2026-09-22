@@ -37,9 +37,12 @@ const EDITION_TOKENS = new Set(['anniversary', 'classic', 'complete', 'definitiv
 const SEPARATE_RELEASE_TOKENS = new Set(['remake', 'demake', 'reboot']);
 const CONTENT_VARIANT_TOKENS = new Set(['alpha', 'beta', 'demo', 'network', 'playtest', 'server', 'soundtrack', 'test']);
 const ALL_VARIANT_TOKENS = new Set([...EDITION_TOKENS, ...SEPARATE_RELEASE_TOKENS, ...CONTENT_VARIANT_TOKENS]);
+const REVIEW_STOPWORDS = new Set(['a', 'an', 'and', 'for', 'in', 'of', 'the', 'to', 'with']);
 
 export function normalizeTitle(value: string): string {
   return (value || '')
+    .replace(/\(\s*(?:tm|r|c)\s*\)\s*$/i, ' ')
+    .replace(/[™®©]/g, ' ')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase()
@@ -75,6 +78,8 @@ function numberToken(token: string, allowWords: boolean, allowRoman: boolean): s
 
 export function parseTitle(value: string): ParsedTitle {
   const raw = (value || '')
+    .replace(/\(\s*(?:tm|r|c)\s*\)\s*$/i, ' ')
+    .replace(/[™®©]/g, ' ')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase()
@@ -205,6 +210,26 @@ export function compareTitles(first: string, second: string): TitleMatch {
 
 export function titleSimilarity(first: string, second: string): number {
   return compareTitles(first, second).score;
+}
+
+export function isReviewableTitleMatch(match: TitleMatch): boolean {
+  if (!match.compatible) return false;
+  if (match.score >= 0.9) return true;
+  if (match.relation === 'different_edition' && match.score >= 0.8) return true;
+  const leftTokens = match.left.base.split(' ').filter(Boolean);
+  const rightTokens = match.right.base.split(' ').filter(Boolean);
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  const shared = [...leftSet].filter(token => rightSet.has(token) && !REVIEW_STOPWORDS.has(token));
+  const contained = [...leftSet].every(token => rightSet.has(token)) || [...rightSet].every(token => leftSet.has(token));
+  if (match.score >= 0.82 && shared.length >= 2 && shared.reduce((total, token) => total + token.length, 0) >= 8 && contained) return true;
+  const [shorter, longer] = leftTokens.length <= rightTokens.length
+    ? [leftTokens, rightTokens]
+    : [rightTokens, leftTokens];
+  return match.relation === 'ambiguous_numbered_alias'
+    && shorter.length === 1
+    && longer.length >= 4
+    && shorter[0] === longer.at(-1);
 }
 
 export function findProbableDuplicate<T extends TitleCandidate>(

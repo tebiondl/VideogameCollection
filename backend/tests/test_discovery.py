@@ -1110,6 +1110,154 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, owned), 0)
         self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
 
+    def test_incidental_shared_words_create_a_new_game_without_review(self):
+        existing = Videogame(user_id=self.user.id, name='Heroes of the Storm', status='Playing')
+        self.db.add(existing)
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 538680,
+            'name': 'The Legend of Heroes: Trails of Cold Steel',
+            'playtime_hours': 56.2,
+        }])
+        self.db.flush()
+
+        created = self.db.query(Videogame).filter_by(
+            name='The Legend of Heroes: Trails of Cold Steel',
+        ).one()
+        self.assertEqual(imported, 1)
+        self.assertNotEqual(created.id, existing.id)
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+        self.assertEqual(
+            self.db.query(SteamCollectionLink).filter_by(steam_appid=538680).one().collection_game_id,
+            created.id,
+        )
+
+    def test_close_typo_still_links_the_existing_game_automatically(self):
+        existing = Videogame(
+            user_id=self.user.id, name='Doki Doki Literture Club', status='Not Started',
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 698780, 'name': 'Doki Doki Literature Club!', 'playtime_hours': 4.0,
+        }])
+        self.db.flush()
+
+        self.db.refresh(existing)
+        self.assertEqual(imported, 1)
+        self.assertEqual(existing.name, 'Doki Doki Literature Club!')
+        self.assertEqual(self.db.query(Videogame).count(), 1)
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+        self.assertEqual(
+            self.db.query(SteamCollectionLink).filter_by(steam_appid=698780).one().collection_game_id,
+            existing.id,
+        )
+
+    def test_unverified_second_steam_app_with_same_title_requires_review(self):
+        existing = Videogame(user_id=self.user.id, name='Lords of the Fallen', status='Finished')
+        primary = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=265300, name='Lords of the Fallen',
+        )
+        self.db.add_all([existing, primary])
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=existing.id,
+            copy_id='steam:265300', steam_appid=265300, name=primary.name,
+        ))
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 1501750, 'name': 'Lords of the Fallen', 'playtime_hours': 0,
+        }])
+        self.db.flush()
+
+        review = self.db.query(SteamMatchReview).filter_by(steam_appid=1501750).one()
+        self.assertEqual(imported, 0)
+        self.assertEqual(review.candidate_game_id, existing.id)
+        self.assertEqual(
+            self.db.query(SteamCollectionLink).filter_by(steam_appid=1501750).count(), 0,
+        )
+
+        review.rejected_candidate_ids = json.dumps([existing.id])
+        self.db.commit()
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 1501750, 'name': 'Lords of the Fallen', 'playtime_hours': 0,
+        }])
+        self.db.flush()
+        separate = self.db.query(SteamCollectionLink).filter_by(steam_appid=1501750).one()
+        self.assertEqual(imported, 1)
+        self.assertNotEqual(separate.collection_game_id, existing.id)
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+
+    def test_second_steam_app_with_same_igdb_identity_groups_automatically(self):
+        existing = Videogame(
+            user_id=self.user.id, name='Same release', status='Finished', igdb_id=100,
+        )
+        primary = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=10, name='Same release', igdb_id=100,
+        )
+        self.db.add_all([existing, primary])
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=existing.id,
+            copy_id='steam:10', steam_appid=10, name=primary.name, igdb_id=100,
+        ))
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 20, 'name': 'Same release', 'playtime_hours': 2, 'igdb_id': 100,
+        }])
+        self.db.flush()
+
+        duplicate = self.db.query(SteamCollectionLink).filter_by(steam_appid=20).one()
+        self.assertEqual(imported, 1)
+        self.assertEqual(duplicate.collection_game_id, existing.id)
+        self.assertEqual(
+            self.db.query(SteamOwnedGame).filter_by(steam_appid=20).one().duplicate_of_appid,
+            10,
+        )
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+
+    def test_conflicting_igdb_identity_repairs_an_automatic_same_title_group(self):
+        combined = Videogame(
+            user_id=self.user.id, name='Lords of the Fallen', status='Finished', igdb_id=100,
+        )
+        first = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=265300, name='Lords of the Fallen', igdb_id=100,
+        )
+        second = SteamOwnedGame(
+            user_id=self.user.id, steam_appid=1501750, name='Lords of the Fallen',
+            igdb_id=200, duplicate_of_appid=265300,
+        )
+        self.db.add_all([combined, first, second])
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(
+                user_id=self.user.id, collection_game_id=combined.id,
+                copy_id='steam:265300', steam_appid=265300, name=first.name, igdb_id=100,
+            ),
+            SteamCollectionLink(
+                user_id=self.user.id, collection_game_id=combined.id,
+                copy_id='steam:1501750', steam_appid=1501750, name=second.name, igdb_id=200,
+            ),
+        ])
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [
+            {'appid': 265300, 'name': first.name, 'playtime_hours': 1, 'igdb_id': 100},
+            {'appid': 1501750, 'name': second.name, 'playtime_hours': 2, 'igdb_id': 200},
+        ])
+        self.db.flush()
+
+        repaired = self.db.query(SteamCollectionLink).filter_by(steam_appid=1501750).one()
+        self.assertEqual(imported, 1)
+        self.assertNotEqual(repaired.collection_game_id, combined.id)
+        self.assertEqual(self.db.get(Videogame, repaired.collection_game_id).igdb_id, 200)
+        self.assertIsNone(second.duplicate_of_appid)
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
+
     def test_equivalent_roman_installment_links_only_the_matching_sequel(self):
         base = Videogame(user_id=self.user.id, name='Etrian Odyssey', status='Finished', mark=8)
         sequel = Videogame(user_id=self.user.id, name='Etrian Odyssey 2', status='Playing', playtime_hours=12)

@@ -43,7 +43,18 @@ CONTENT_VARIANT_TOKENS = {
     "alpha", "beta", "demo", "network", "playtest", "server", "soundtrack", "test",
 }
 ALL_VARIANT_TOKENS = EDITION_TOKENS | SEPARATE_RELEASE_TOKENS | CONTENT_VARIANT_TOKENS
+REVIEW_STOPWORDS = {"a", "an", "and", "for", "in", "of", "the", "to", "with"}
 ROMAN_PATTERN = re.compile(r"^(?=[ivxlcdm]+$)m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$")
+
+
+def _fold_title(value: str | None) -> str:
+    # NFKD expands the trademark glyph to the ASCII letters "TM", which made
+    # otherwise identical Steam titles look different (NieR:Automata™). Remove
+    # legal marks before folding, including the textual suffix some APIs emit.
+    raw = re.sub(r"\(\s*(?:tm|r|c)\s*\)\s*$", " ", value or "", flags=re.IGNORECASE)
+    raw = raw.translate(str.maketrans({"™": " ", "®": " ", "©": " "}))
+    folded = unicodedata.normalize("NFKD", raw)
+    return "".join(char for char in folded if not unicodedata.combining(char)).casefold()
 
 
 @dataclass(frozen=True)
@@ -65,8 +76,7 @@ class TitleMatch:
 
 
 def normalize_title(value: str | None) -> str:
-    folded = unicodedata.normalize("NFKD", value or "")
-    folded = "".join(char for char in folded if not unicodedata.combining(char)).casefold()
+    folded = _fold_title(value)
     return " ".join(re.sub(r"[^a-z0-9]+", " ", folded).split())
 
 
@@ -101,8 +111,7 @@ def _number_token(token: str, *, allow_words: bool, allow_roman: bool) -> str | 
 
 
 def parse_title(value: str | None) -> ParsedTitle:
-    raw = unicodedata.normalize("NFKD", value or "")
-    raw = "".join(char for char in raw if not unicodedata.combining(char)).casefold()
+    raw = _fold_title(value)
     # A parenthesized release year is normally edition metadata, while an
     # unparenthesized year (F1 2024, Football Manager 2024) identifies a title.
     raw = re.sub(r"\((?:19|20)\d{2}\)", " ", raw)
@@ -239,3 +248,39 @@ def compare_titles(first: str | None, second: str | None) -> TitleMatch:
         relation = "different_edition"
 
     return TitleMatch(round(score, 6), True, automatic, relation, left, right)
+
+
+def is_reviewable_title_match(match: TitleMatch) -> bool:
+    """Whether a non-exact identity is strong enough to interrupt a sync.
+
+    ``compatible`` is deliberately broad because it is also useful for search
+    ranking. A sync review needs stronger evidence: a close spelling match, a
+    known edition of the same base, or a multi-word title contained in the
+    other title. This keeps incidental shared words from turning new games into
+    hundreds of manual decisions.
+    """
+    if not match.compatible:
+        return False
+    if match.score >= 0.90:
+        return True
+    if match.relation == "different_edition" and match.score >= 0.80:
+        return True
+
+    left_tokens = match.left.base.split()
+    right_tokens = match.right.base.split()
+    left_set, right_set = set(left_tokens), set(right_tokens)
+    shared = (left_set & right_set) - REVIEW_STOPWORDS
+    contained = left_set <= right_set or right_set <= left_set
+    if match.score >= 0.82 and len(shared) >= 2 and sum(map(len, shared)) >= 8 and contained:
+        return True
+
+    # Preserve useful short aliases such as "Skyrim" versus
+    # "The Elder Scrolls V: Skyrim", without accepting prefix collisions such
+    # as Portal/Portal Knights or Borderlands 2/Borderlands: The Pre-Sequel.
+    shorter, longer = (left_tokens, right_tokens) if len(left_tokens) <= len(right_tokens) else (right_tokens, left_tokens)
+    return bool(
+        match.relation == "ambiguous_numbered_alias"
+        and len(shorter) == 1
+        and len(longer) >= 4
+        and shorter[0] == longer[-1]
+    )

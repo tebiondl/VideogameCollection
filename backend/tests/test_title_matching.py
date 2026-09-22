@@ -1,6 +1,6 @@
 import unittest
 
-from backend.app.services.title_matching import compare_titles, parse_title
+from backend.app.services.title_matching import compare_titles, is_reviewable_title_match, parse_title
 
 
 class TitleMatchingTests(unittest.TestCase):
@@ -65,6 +65,35 @@ class TitleMatchingTests(unittest.TestCase):
         self.assertTrue(result.compatible)
         self.assertFalse(result.automatic)
         self.assertEqual(result.relation, 'different_edition')
+
+    def test_trademark_markers_do_not_change_identity(self):
+        for marked in ('NieR:Automata™', 'NieR:Automata(TM)'):
+            with self.subTest(marked=marked):
+                result = compare_titles(marked, 'Nier: Automata')
+                self.assertTrue(result.automatic)
+                self.assertEqual(result.score, 1)
+
+    def test_review_gate_rejects_incidental_shared_words(self):
+        for first, second in (
+            ('Portal', 'Portal Knights'),
+            ('The Legend of Heroes: Trails of Cold Steel', 'Heroes of the Storm'),
+            ('Ori and the Blind Forest', 'The Forest'),
+            ('BioShock Infinite', 'BioShock'),
+            ('Minit Fun Racer', 'Racer 8'),
+            ('Minecraft Dungeons', 'Dungeons 3'),
+        ):
+            with self.subTest(first=first, second=second):
+                self.assertFalse(is_reviewable_title_match(compare_titles(first, second)))
+
+    def test_review_gate_keeps_typos_subtitles_and_short_aliases(self):
+        for first, second in (
+            ('Doki Doki Literature Club!', 'Doki Doki Literture Club'),
+            ('Half-Life 2: Deathmatch', 'Half-Life 2'),
+            ('Skyrim', 'The Elder Scrolls V: Skyrim'),
+            ('Skyrim Special Edition', 'Skyrim'),
+        ):
+            with self.subTest(first=first, second=second):
+                self.assertTrue(is_reviewable_title_match(compare_titles(first, second)))
 
 
 if __name__ == '__main__':
