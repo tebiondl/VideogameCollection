@@ -356,9 +356,24 @@ export function VideogamesDashboard() {
 
   const saveEdit = async () => {
     if (!editingGame) return;
+    const draft = editingGame;
+    const previousGame = games.find(game => game.id === draft.id);
+    const optimisticGame = {
+      ...draft,
+      version: (draft.version ?? 1) + 1,
+    };
+    const payload = collectionGameUpdatePayload(draft);
+
+    // Keep interaction latency independent from disk/network latency. The
+    // authoritative response is reconciled below, and failures restore the
+    // previous card plus the user's unsaved editor contents.
+    setGames(current => current.map(game => game.id === draft.id ? optimisticGame : game));
+    setEditingGame(null);
+    setParentPickerOpen(false);
+    setShowImageSelectModal(false);
+
     try {
-      const payload = collectionGameUpdatePayload(editingGame);
-      const res = await fetchWithAuth(`/videogames/${editingGame.id}`, {
+      const res = await fetchWithAuth(`/videogames/${draft.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -368,12 +383,26 @@ export function VideogamesDashboard() {
         throw new Error(problem?.detail || 'Could not save the game.');
       }
       const saved = await res.json();
+      setGames(current => current.map(game =>
+        game.id === draft.id && (game.version ?? 0) <= (saved.version ?? 0) ? saved : game
+      ));
       const refreshed = await fetchWithAuth('/videogames/');
-      if (refreshed.ok) setGames(await refreshed.json());
-      else setGames(current => current.map(g => g.id === editingGame.id ? saved : g));
-      setEditingGame(null);
+      if (refreshed.ok) {
+        const serverGames: typeof games = await refreshed.json();
+        setGames(current => {
+          const localById = new Map(current.map(game => [game.id, game]));
+          return serverGames.map(serverGame => {
+            const local = localById.get(serverGame.id);
+            return local && (local.version ?? 0) > (serverGame.version ?? 0) ? local : serverGame;
+          });
+        });
+      }
     } catch (err) {
       console.error(err);
+      if (previousGame) {
+        setGames(current => current.map(game => game === optimisticGame ? previousGame : game));
+      }
+      setEditingGame((current: unknown) => current ?? draft);
       alert(err instanceof Error ? err.message : 'Could not save the game.');
     }
   };
