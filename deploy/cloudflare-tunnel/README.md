@@ -23,10 +23,10 @@ Cloudflare Access applications, so shopping access does not imply edit access.
 ## 1. Deploy and create the collection credentials
 
 Run this in the VM/LXC that hosts the app (not on the Proxmox management host).
-Examples use `/opt/VideogameCollection`; adjust the path for your installation.
+The production repository is installed at `/root/VideogameCollection`.
 
 ```bash
-cd /opt/VideogameCollection
+cd /root/VideogameCollection
 git pull --ff-only origin master
 docker compose up -d --build backend frontend
 
@@ -122,13 +122,13 @@ The helper can be called from any directory because it resolves the repository
 root itself:
 
 ```bash
-/opt/VideogameCollection/tools/mcp-up.sh
+/root/VideogameCollection/tools/mcp-up.sh
 ```
 
 Optional verification and logs:
 
 ```bash
-cd /opt/VideogameCollection
+cd /root/VideogameCollection
 
 curl --fail http://127.0.0.1:8765/healthz
 curl -i http://127.0.0.1:8765/mcp
@@ -162,7 +162,7 @@ are audited in the database.
 When the remote session is over, turn both endpoints off with one command:
 
 ```bash
-/opt/VideogameCollection/tools/mcp-down.sh
+/root/VideogameCollection/tools/mcp-down.sh
 ```
 
 This stops and removes only the `mcp-read` and `mcp-write` containers, releasing

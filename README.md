@@ -11,16 +11,16 @@ The remote read and write MCP containers are intentionally off by default. On
 the production host, from any directory, enable both endpoints with:
 
 ```bash
-/opt/VideogameCollection/tools/mcp-up.sh
+/root/VideogameCollection/tools/mcp-up.sh
 ```
 
 When the remote session is finished, stop and remove both MCP containers with:
 
 ```bash
-/opt/VideogameCollection/tools/mcp-down.sh
+/root/VideogameCollection/tools/mcp-down.sh
 ```
 
-Adjust `/opt/VideogameCollection` if the repository is installed elsewhere.
+The production repository is installed at `/root/VideogameCollection`.
 These commands affect only `mcp-read` and `mcp-write`; the web application,
 database, scheduled jobs, and shared Cloudflare tunnel remain running. Because
 the MCP containers have no automatic restart policy, they also stay off after a

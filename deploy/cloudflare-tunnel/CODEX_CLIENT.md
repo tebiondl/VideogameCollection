@@ -9,10 +9,10 @@ The endpoints are normally switched off. Before connecting from this computer,
 run the following single command on the production host:
 
 ```bash
-/opt/VideogameCollection/tools/mcp-up.sh
+/root/VideogameCollection/tools/mcp-up.sh
 ```
 
-After the remote session, run `/opt/VideogameCollection/tools/mcp-down.sh` on
+After the remote session, run `/root/VideogameCollection/tools/mcp-down.sh` on
 the production host so the MCP containers release their resources again.
 
 ## Prompt to give Codex
