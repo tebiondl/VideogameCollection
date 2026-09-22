@@ -1450,7 +1450,14 @@ def steam_dlc_catalog(db, client, appid):
     cached = db.get(DiscoveryCache, key)
     if cached and cached.updated_at > datetime.utcnow() - timedelta(days=30):
         try:
-            return json.loads(cached.payload)
+            entries = json.loads(cached.payload)
+            if isinstance(entries, list) and all(
+                isinstance(item, dict)
+                and isinstance(item.get("appid"), int)
+                and isinstance(item.get("name"), str)
+                for item in entries
+            ):
+                return entries
         except (TypeError, ValueError):
             pass
     raw = request_json(client, "https://store.steampowered.com/api/dlcforapp", params={
@@ -1579,6 +1586,7 @@ def claim_sync(db, user_id, force=False):
 
 def sync_steam(user_id, factory=SessionLocal):
     db = factory()
+    stage = "connection setup"
     try:
         settings = db.get(DiscoverySettings, user_id)
         if not settings or not settings.steam_id:
@@ -1586,9 +1594,11 @@ def sync_steam(user_id, factory=SessionLocal):
         count, skipped = 0, 0
         steam_id = settings.steam_id
         with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            stage = "wishlist retrieval"
             items = steam_wishlist(client, steam_id) if settings.sync_wishlist else []
             owned_items, owned_error = [], None
             if settings.sync_collection:
+                stage = "owned-library retrieval"
                 try:
                     owned_items = steam_owned_games(client, steam_id, resolve_steam_api_key(settings.steam_api_key))
                 except (httpx.HTTPError, ValueError, KeyError) as exc:
@@ -1604,6 +1614,7 @@ def sync_steam(user_id, factory=SessionLocal):
             missing = list(dict.fromkeys(item["appid"] for item in items if item["appid"] not in existing_ids))
             deadline = time.monotonic() + 300
             processed = 0
+            stage = "wishlist import"
             for appid in missing[:500]:
                 if time.monotonic() >= deadline:
                     break
@@ -1638,17 +1649,31 @@ def sync_steam(user_id, factory=SessionLocal):
                     {"active": False}, synchronize_session=False,
                 )
                 db.flush()
+            stage = "owned-library import"
             owned_count = reconcile_steam_library(db, user_id, owned_items) if settings.sync_collection and owned_error is None else 0
             # Keep the owned snapshot transaction short. IGDB enrichment performs
             # network I/O and must not hold SQLite's writer lock while waiting.
             db.commit()
+            stage = "IGDB enrichment"
             igdb_count, igdb_error = enrich_steam_with_igdb(db, client, user_id)
             if settings.sync_collection:
+                stage = "known DLC linking"
                 nest_known_steam_dlcs(db, user_id)
                 db.commit()
-                _, dlc_error = import_steam_dlc_catalogs(db, client, user_id) if owned_error is None else (0, None)
+                dlc_error = None
+                if owned_error is None:
+                    try:
+                        _, dlc_error = import_steam_dlc_catalogs(db, client, user_id)
+                    except Exception:
+                        # DLC discovery is supplementary. Keep the committed library
+                        # snapshot and retry this step at the next sync.
+                        db.rollback()
+                        logger.exception("Steam DLC catalog import failed for user %s", user_id)
+                        settings = db.get(DiscoverySettings, user_id)
+                        dlc_error = "Steam DLC import could not finish; the next sync will retry."
             else:
                 dlc_error = None
+            stage = "sync status save"
             settings.last_sync_at = datetime.utcnow()
             if settings.sync_wishlist:
                 settings.last_import_count = count
@@ -1667,7 +1692,7 @@ def sync_steam(user_id, factory=SessionLocal):
             db.commit()
     except Exception as exc:
         db.rollback()
-        logger.warning("Steam wishlist sync failed for user %s: %s", user_id, type(exc).__name__)
+        logger.warning("Steam sync failed for user %s during %s: %s", user_id, stage, type(exc).__name__)
         settings = db.get(DiscoverySettings, user_id)
         if settings:
             if isinstance(exc, ValueError):
@@ -1677,7 +1702,7 @@ def sync_steam(user_id, factory=SessionLocal):
             elif isinstance(exc, httpx.TimeoutException):
                 message = "Steam did not respond in time. Saved games are unchanged and the next sync will retry."
             else:
-                message = "Steam sync failed. Saved games and completed imports are kept; the next sync will retry."
+                message = f"Steam sync failed during {stage}. Saved games and completed imports are kept; the next sync will retry."
             settings.sync_error = message
             settings.sync_warning = None
             settings.sync_started_at = None

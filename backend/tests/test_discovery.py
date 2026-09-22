@@ -1177,6 +1177,48 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
         client.get.assert_called_once()
 
+    def test_invalid_cached_dlc_catalog_is_refetched(self):
+        self.db.add(DiscoveryCache(
+            key='steam-dlcs:109400', payload=json.dumps({'dlc': []}), updated_at=datetime.utcnow(),
+        ))
+        self.db.commit()
+        client = MagicMock()
+        client.get.return_value = httpx.Response(
+            200, request=httpx.Request('GET', 'https://store.steampowered.com/api/dlcforapp'),
+            json={'status': 2},
+        )
+        self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
+        self.assertEqual(json.loads(self.db.get(DiscoveryCache, 'steam-dlcs:109400').payload), [])
+        client.get.assert_called_once()
+
+    def test_dlc_import_failure_does_not_fail_completed_steam_sync(self):
+        settings = self.configured()
+        self.db.add(Videogame(user_id=self.user.id, name='Keep in collection'))
+        self.db.commit()
+        with patch.object(service, 'steam_wishlist', return_value=[]), \
+             patch.object(service, 'steam_owned_games', return_value=[]), \
+             patch.object(service, 'enrich_steam_with_igdb', return_value=(0, None)), \
+             patch.object(service, 'import_steam_dlc_catalogs', side_effect=RuntimeError('broken catalog')):
+            service.sync_steam(self.user.id, self.factory)
+        self.db.expire_all()
+        settings = self.db.get(DiscoverySettings, settings.user_id)
+        self.assertIsNone(settings.sync_error)
+        self.assertIn('Steam DLC import could not finish', settings.sync_warning)
+        self.assertIsNotNone(settings.last_sync_at)
+        self.assertEqual(self.db.query(Videogame).count(), 1)
+
+    def test_unexpected_sync_failure_identifies_its_stage(self):
+        settings = self.configured()
+        with patch.object(service, 'steam_wishlist', return_value=[]), \
+             patch.object(service, 'steam_owned_games', return_value=[]), \
+             patch.object(service, 'enrich_steam_with_igdb', return_value=(0, None)), \
+             patch.object(service, 'nest_known_steam_dlcs', side_effect=RuntimeError('broken link')):
+            service.sync_steam(self.user.id, self.factory)
+        self.db.expire_all()
+        settings = self.db.get(DiscoverySettings, settings.user_id)
+        self.assertIn('during known DLC linking', settings.sync_error)
+        self.assertIsNone(settings.sync_started_at)
+
     def test_uncertain_steam_title_waits_for_review_then_links_existing_game(self):
         original = Videogame(
             user_id=self.user.id, name='The Elder Scrolls V: Skyrim',
