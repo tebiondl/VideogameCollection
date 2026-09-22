@@ -37,3 +37,11 @@
 .modal-close:hover {
   color: var(--error-color);
 }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}

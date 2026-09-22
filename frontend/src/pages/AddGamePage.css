@@ -188,21 +188,6 @@ textarea.form-input {
   margin-left: 1rem;
 }
 
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: var(--transition);
-  color: var(--text-secondary);
-}
-
-.icon-btn:hover { background-color: var(--bg-tertiary); }
 .icon-btn.accept:hover { color: #10b981; border-color: #10b981; }
 .icon-btn.reject:hover { color: var(--error-color); border-color: var(--error-color); }
 .icon-btn.edit:hover { color: var(--accent-primary); border-color: var(--accent-primary); }
@@ -660,4 +645,3 @@ textarea.form-input {
   visibility: visible;
   opacity: 1;
 }
-

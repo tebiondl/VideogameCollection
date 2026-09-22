@@ -120,6 +120,35 @@ h3 { font-size: 1.5rem; }
   color: var(--text-primary);
 }
 
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+  color: var(--text-secondary);
+}
+
+.icon-btn:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.badge {
+  font-size: 0.7rem;
+  background-color: var(--bg-tertiary);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-round);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Forms */
 .form-group {
   display: flex;
