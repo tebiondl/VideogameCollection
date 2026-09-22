@@ -1036,13 +1036,26 @@ def remove_steam_imports(db, user_id):
     for game in games:
         copy_store.project_game(db, game)
         removed_content = content_appids_by_game.get(game.id, set())
-        if removed_content:
-            try:
-                dlcs = json.loads(game.dlcs or "[]")
-            except (TypeError, ValueError):
-                dlcs = []
-            dlcs = [row for row in dlcs if int(row.get("steam_appid") or 0) not in removed_content]
-            game.dlcs = json.dumps(dlcs) if dlcs else None
+        try:
+            dlcs = json.loads(game.dlcs or "[]")
+        except (TypeError, ValueError):
+            dlcs = []
+        retained = []
+        for row in dlcs:
+            if not isinstance(row, dict) or int(row.get("steam_appid") or 0) in removed_content:
+                continue
+            if row.get("source") == "Steam catalog":
+                if row.get("state") == "not_started":
+                    continue
+                # A changed play state is personal data; retain it as a manual row.
+                row = {key: value for key, value in row.items() if key not in (
+                    "steam_appid", "source", "store_url", "image_url",
+                )}
+            retained.append(row)
+        if removed_content or len(retained) != len(dlcs) or any(
+            row.get("source") == "Steam catalog" for row in dlcs if isinstance(row, dict)
+        ):
+            game.dlcs = json.dumps(retained) if retained else None
 
     wanted_removed = 0
     for wanted in db.query(WantedGame).filter_by(user_id=user_id).all():
@@ -1059,6 +1072,7 @@ def remove_steam_imports(db, user_id):
     db.query(SteamContentLink).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
     db.query(SteamOwnedGame).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
     db.query(SteamCopyTrash).filter_by(user_id=user_id, steam_id=scope).delete(synchronize_session=False)
+    db.query(DiscoveryCache).filter(DiscoveryCache.key.like(f"steam-dlcs-import:{user_id}:%")).delete(synchronize_session=False)
     db.flush()
 
     for game_id in created_game_ids:
@@ -1430,6 +1444,120 @@ def steam_details(db, client, appid):
     return fields
 
 
+def steam_dlc_catalog(db, client, appid):
+    """Read a game's public Steam DLC list, including names, in one request."""
+    key = f"steam-dlcs:{appid}"
+    cached = db.get(DiscoveryCache, key)
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(days=30):
+        try:
+            return json.loads(cached.payload)
+        except (TypeError, ValueError):
+            pass
+    raw = request_json(client, "https://store.steampowered.com/api/dlcforapp", params={
+        "appid": appid, "l": "english",
+    })
+    if isinstance(raw, dict) and raw.get("status") == 2:
+        raw = {"dlc": []}
+    if not isinstance(raw, dict) or not isinstance(raw.get("dlc"), list):
+        raise ValueError(f"Steam DLC metadata for app {appid} is unavailable; it will be retried.")
+    entries = []
+    seen = set()
+    for item in raw["dlc"]:
+        if not isinstance(item, dict):
+            continue
+        dlc_id, name = item.get("id"), item.get("name")
+        if not isinstance(dlc_id, int) or dlc_id <= 0 or not isinstance(name, str) or not name.strip() or dlc_id in seen:
+            continue
+        seen.add(dlc_id)
+        entries.append({"appid": dlc_id, "name": name.strip(), "image_url": item.get("header_image")})
+    if cached is None:
+        cached = DiscoveryCache(key=key)
+        db.add(cached)
+    cached.payload, cached.updated_at = json.dumps(entries), datetime.utcnow()
+    return entries
+
+
+def import_steam_dlc_catalogs(db, client, user_id, max_requests=150):
+    """Add newly discovered DLCs without replacing personal states or re-adding removals."""
+    scope = copy_store.steam_scope(db, user_id)
+    games = {game.id: game for game in db.query(Videogame).filter_by(user_id=user_id).all()
+             if not game.hidden and not game.is_dlc and not game.merged_into_game_id}
+    links = db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_id=scope).filter(
+        SteamCollectionLink.steam_appid.is_not(None)
+    ).order_by(SteamCollectionLink.collection_game_id, SteamCollectionLink.id).all()
+    requests, added, pending = 0, 0, 0
+    since_commit = 0
+    for link in links:
+        game = games.get(link.collection_game_id)
+        if game is None:
+            continue
+        appid = int(link.steam_appid)
+        catalog_key = f"steam-dlcs:{appid}"
+        cached = db.get(DiscoveryCache, catalog_key)
+        fresh = cached and cached.updated_at > datetime.utcnow() - timedelta(days=30)
+        marker_key = f"steam-dlcs-import:{user_id}:{game.id}:{appid}"
+        marker = db.get(DiscoveryCache, marker_key)
+        if fresh and marker:
+            continue
+        if not fresh and requests >= max_requests:
+            pending += 1
+            continue
+        if not fresh:
+            requests += 1
+            since_commit += 1
+        try:
+            catalog = steam_dlc_catalog(db, client, appid)
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            logger.warning("Steam DLC catalog lookup failed for app %s: %s", appid, type(exc).__name__)
+            pending += 1
+            if isinstance(exc, UpstreamRateLimit):
+                break
+            continue
+        try:
+            seen = set(json.loads(marker.payload)) if marker else set()
+            dlcs = json.loads(game.dlcs or "[]")
+            if not isinstance(dlcs, list):
+                dlcs = []
+        except (TypeError, ValueError):
+            seen, dlcs = set(), []
+        changed = False
+        for item in catalog:
+            dlc_id = item["appid"]
+            if dlc_id in seen:
+                continue
+            existing = next((row for row in dlcs if isinstance(row, dict) and row.get("steam_appid") == dlc_id), None)
+            if existing is None:
+                existing = next((row for row in dlcs if isinstance(row, dict) and (
+                    (match := compare_titles(row.get("name"), item["name"])).compatible
+                    and match.automatic and match.score >= 0.98
+                )), None)
+            if existing is not None:
+                existing.setdefault("steam_appid", dlc_id)
+                changed = True
+            elif len(dlcs) < 500:
+                dlcs.append({
+                    "name": item["name"], "state": "not_started", "steam_appid": dlc_id,
+                    "source": "Steam catalog", "store_url": f"https://store.steampowered.com/app/{dlc_id}/",
+                    "image_url": item.get("image_url"),
+                })
+                added += 1
+                changed = True
+            else:
+                continue
+            seen.add(dlc_id)
+        if changed:
+            game.dlcs = json.dumps(dlcs)
+        if marker is None:
+            marker = DiscoveryCache(key=marker_key)
+            db.add(marker)
+        marker.payload, marker.updated_at = json.dumps(sorted(seen)), datetime.utcnow()
+        # Release SQLite's writer lock between batches of Store requests.
+        if since_commit >= 20:
+            db.commit()
+            since_commit = 0
+    return added, (f"Steam DLC lookup is still pending for {pending} {'game' if pending == 1 else 'games'}; the next sync will continue." if pending else None)
+
+
 def claim_sync(db, user_id, force=False):
     now = datetime.utcnow()
     settings = db.get(DiscoverySettings, user_id)
@@ -1517,6 +1645,10 @@ def sync_steam(user_id, factory=SessionLocal):
             igdb_count, igdb_error = enrich_steam_with_igdb(db, client, user_id)
             if settings.sync_collection:
                 nest_known_steam_dlcs(db, user_id)
+                db.commit()
+                _, dlc_error = import_steam_dlc_catalogs(db, client, user_id) if owned_error is None else (0, None)
+            else:
+                dlc_error = None
             settings.last_sync_at = datetime.utcnow()
             if settings.sync_wishlist:
                 settings.last_import_count = count
@@ -1527,6 +1659,7 @@ def sync_steam(user_id, factory=SessionLocal):
             warnings = [message for message in (
                 f"{pending} games still need Steam metadata; they will be retried next sync." if pending else None,
                 igdb_error,
+                dlc_error,
             ) if message]
             settings.sync_error = owned_error
             settings.sync_warning = " ".join(warnings) or None

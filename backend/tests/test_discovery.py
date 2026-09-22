@@ -1102,6 +1102,81 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(parent.dlcs)[0]['steam_appid'], 81)
         self.assertEqual(wanted.collection_game_id, parent.id)
 
+    def test_steam_dlc_catalog_import_preserves_states_and_user_removals(self):
+        parent = Videogame(user_id=self.user.id, name='Grandblue Fantasy Relink',
+                           dlcs=json.dumps([{'name': 'Existing expansion', 'state': 'finished'}]))
+        self.db.add(parent)
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=parent.id, copy_id='steam:881020',
+            steam_id='', steam_appid=881020, name=parent.name, platform='PC', format='Digital',
+        ))
+        self.db.commit()
+        client = MagicMock()
+        request = httpx.Request('GET', 'https://store.steampowered.com/api/dlcforapp')
+        client.get.return_value = httpx.Response(200, request=request, json={
+            'status': 1, 'appid': '881020', 'name': 'Granblue Fantasy: Relink', 'dlc': [
+                {'id': 1001, 'name': 'Existing expansion'},
+                {'id': 1002, 'name': 'New expansion', 'header_image': 'https://example.com/dlc.jpg'},
+            ],
+        })
+        added, warning = service.import_steam_dlc_catalogs(self.db, client, self.user.id)
+        self.assertEqual((added, warning), (1, None))
+        dlcs = json.loads(parent.dlcs)
+        self.assertEqual([(row['name'], row['state'], row['steam_appid']) for row in dlcs], [
+            ('Existing expansion', 'finished', 1001), ('New expansion', 'not_started', 1002),
+        ])
+        self.assertEqual(dlcs[1]['source'], 'Steam catalog')
+        self.assertEqual(client.get.call_count, 1)
+
+        # An explicit deletion must not be undone by a later sync.
+        parent.dlcs = json.dumps(dlcs[:1])
+        self.db.commit()
+        added, warning = service.import_steam_dlc_catalogs(self.db, client, self.user.id)
+        self.assertEqual((added, warning), (0, None))
+        self.assertEqual(len(json.loads(parent.dlcs)), 1)
+        self.assertEqual(client.get.call_count, 1)
+
+        # New Store DLCs are still discovered when the cached catalog expires.
+        cache = self.db.get(DiscoveryCache, 'steam-dlcs:881020')
+        cache.updated_at = datetime.utcnow() - timedelta(days=31)
+        client.get.return_value = httpx.Response(200, request=request, json={
+            'status': 1, 'dlc': [
+                {'id': 1001, 'name': 'Existing expansion'},
+                {'id': 1002, 'name': 'New expansion'},
+                {'id': 1003, 'name': 'Later expansion'},
+            ],
+        })
+        added, warning = service.import_steam_dlc_catalogs(self.db, client, self.user.id)
+        self.assertEqual((added, warning), (1, None))
+        self.assertEqual([row['steam_appid'] for row in json.loads(parent.dlcs)], [1001, 1003])
+
+    def test_steam_dlc_catalog_request_budget_defers_without_changing_game(self):
+        parent = Videogame(user_id=self.user.id, name='Base')
+        self.db.add(parent)
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=parent.id, copy_id='steam:123',
+            steam_id='', steam_appid=123, name='Base', platform='PC', format='Digital',
+        ))
+        self.db.commit()
+        client = MagicMock()
+        added, warning = service.import_steam_dlc_catalogs(self.db, client, self.user.id, max_requests=0)
+        self.assertEqual(added, 0)
+        self.assertIn('pending for 1 game', warning)
+        self.assertIsNone(parent.dlcs)
+        client.get.assert_not_called()
+
+    def test_steam_dlc_catalog_caches_games_without_dlc(self):
+        client = MagicMock()
+        client.get.return_value = httpx.Response(
+            200, request=httpx.Request('GET', 'https://store.steampowered.com/api/dlcforapp'),
+            json={'status': 2},
+        )
+        self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
+        self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
+        client.get.assert_called_once()
+
     def test_uncertain_steam_title_waits_for_review_then_links_existing_game(self):
         original = Videogame(
             user_id=self.user.id, name='The Elder Scrolls V: Skyrim',
@@ -1405,6 +1480,11 @@ class DiscoveryTests(unittest.TestCase):
         )
         local = Videogame(
             user_id=self.user.id, name='Local game', status='Playing', mark=9,
+            dlcs=json.dumps([
+                {'name': 'Catalog untouched', 'state': 'not_started', 'source': 'Steam catalog', 'steam_appid': 11},
+                {'name': 'Catalog played', 'state': 'finished', 'source': 'Steam catalog', 'steam_appid': 12},
+                {'name': 'Manual DLC', 'state': 'playing'},
+            ]),
             copies=json.dumps([
                 {'id': 'switch', 'platform': 'Nintendo Switch', 'source': 'Retail'},
                 {'id': 'steam:1', 'platform': 'PC', 'source': 'Steam', 'steam_appid': 1},
@@ -1432,6 +1512,7 @@ class DiscoveryTests(unittest.TestCase):
             WantedGame(user_id=self.user.id, name='Steam wishlist', source='steam', steam_appid=4),
             WantedGame(user_id=self.user.id, name='Manual wanted', source='manual', steam_appid=1, collection_game_id=local.id, status='Acquired'),
             SteamMatchReview(user_id=self.user.id, steam_appid=5, steam_name='Maybe', candidate_game_id=local.id, candidate_name=local.name, confidence=.8, steam_data='{}'),
+            DiscoveryCache(key=f'steam-dlcs-import:{self.user.id}:{local.id}:1', payload='[11,12]'),
         ])
         self.db.commit()
 
@@ -1446,6 +1527,11 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual([copy['platform'] for copy in json.loads(local.copies)], ['Nintendo Switch'])
         self.assertEqual(local.status, 'Playing')
         self.assertEqual(local.mark, 9)
+        self.assertEqual(json.loads(local.dlcs), [
+            {'name': 'Catalog played', 'state': 'finished'},
+            {'name': 'Manual DLC', 'state': 'playing'},
+        ])
+        self.assertIsNone(self.db.get(DiscoveryCache, f'steam-dlcs-import:{self.user.id}:{local.id}:1'))
         self.assertIsNone(self.db.get(Videogame, imported.id))
         self.assertEqual([copy['platform'] for copy in json.loads(mixed_import.copies)], ['Nintendo Switch'])
         manual = self.db.query(WantedGame).filter_by(user_id=self.user.id).one()
@@ -1561,10 +1647,17 @@ class DiscoveryTests(unittest.TestCase):
         with patch.object(service, 'steam_wishlist', return_value=[]), patch.object(service, 'steam_owned_games', return_value=[{
             'appid': 301, 'name': 'Library Game', 'playtime_hours': 4.5, 'image_url': None,
             'store_url': 'https://store.steampowered.com/app/301/',
-        }]), patch.object(service, 'enrich_steam_with_igdb', return_value=(0, None)):
+        }]), patch.object(service, 'enrich_steam_with_igdb', return_value=(0, None)), \
+             patch.object(service, 'steam_dlc_catalog', return_value=[{
+                 'appid': 302, 'name': 'Library Game Expansion', 'image_url': None,
+             }]) as catalog:
             service.sync_steam(self.user.id, self.factory)
         self.db.expire_all()
-        self.assertEqual(self.db.query(Videogame).one().name, 'Library Game')
+        game = self.db.query(Videogame).one()
+        self.assertEqual(game.name, 'Library Game')
+        self.assertEqual(json.loads(game.dlcs)[0]['state'], 'not_started')
+        self.assertEqual(json.loads(game.dlcs)[0]['steam_appid'], 302)
+        catalog.assert_called_once()
         self.assertEqual(self.db.get(DiscoverySettings, settings.user_id).last_owned_import_count, 1)
 
     def test_copy_options_are_admin_managed_and_shared(self):
