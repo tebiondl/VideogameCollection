@@ -1,0 +1,48 @@
+.completion-date-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cdp-granularity-bar {
+  display: flex;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.2rem;
+  gap: 0.2rem;
+}
+
+.cdp-gran-btn {
+  flex: 1;
+  padding: 0.45rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.cdp-gran-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.cdp-gran-btn:not(.active):hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.cdp-inputs {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.cdp-inputs .form-input {
+  padding: 0.6rem 0.9rem;
+}

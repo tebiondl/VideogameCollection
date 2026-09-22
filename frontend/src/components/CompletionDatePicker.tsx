@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import './CompletionDatePicker.css';
 
 type Granularity = 'year' | 'month' | 'day';
 

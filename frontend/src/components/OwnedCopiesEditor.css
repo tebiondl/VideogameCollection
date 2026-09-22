@@ -1,0 +1,13 @@
+.owned-copies-editor { display:flex; flex-direction:column; gap:.8rem; }
+.owned-copy-editor { padding:0 1rem; background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; }
+.owned-copy-heading { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:1rem 0; cursor:pointer; list-style:none; }
+.owned-copy-heading::-webkit-details-marker { display:none; }
+.owned-copy-heading > span { display:flex; align-items:center; gap:.55rem; min-width:0; }
+.owned-copy-heading small { color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.owned-copy-heading svg:first-child { transition:transform .16s ease; }
+.owned-copy-editor[open] .owned-copy-heading svg:first-child { transform:rotate(180deg); }
+.owned-copy-grid { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+.owned-copy-editor .owned-copy-grid { padding:0 0 1rem; }
+.owned-copy-grid label { color:var(--text-secondary); font-size:.8rem; }
+.owned-copy-grid .wide { grid-column:1/-1; }
+.owned-copy-grid .form-input { margin-top:.35rem; }

@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import './Modal.css';
+import './DlcEditor.css';
 import { Plus, X, Search, Loader2, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';

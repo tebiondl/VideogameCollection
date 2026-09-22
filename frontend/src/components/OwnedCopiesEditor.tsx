@@ -1,4 +1,5 @@
 import { Archive, ChevronDown, Link2, Plus, CopyPlus, Trash2 } from 'lucide-react';
+import './OwnedCopiesEditor.css';
 import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import type { OwnedCopy } from '../lib/ownedCopies';
 import { parseCopies } from '../lib/ownedCopies';
