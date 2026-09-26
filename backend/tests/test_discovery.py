@@ -81,6 +81,46 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(game.comments, "Keep this")
         self.assertEqual(self.client.get(f"/api/videogames/{other.id}/metadata-lookup?name=Private").status_code, 404)
 
+    def test_collection_steam_dlc_lookup_finds_unlinked_game_without_changing_it(self):
+        game = Videogame(user_id=self.user.id, name='Grandblue Fantasy Relink',
+                         dlcs=json.dumps([{'name': 'Existing expansion', 'state': 'finished'}]))
+        other = Videogame(user_id=self.users[1].id, name='Private')
+        self.db.add_all([game, other])
+        self.db.commit()
+        path = f'/api/videogames/{game.id}/steam-dlcs?name=Grandblue%20Fantasy%20Relink'
+        with patch.object(videogames_router.discovery, 'steam_store_candidates', return_value=[{
+            'appid': 881020, 'name': 'Granblue Fantasy: Relink',
+        }]) as search, patch.object(videogames_router.discovery, 'steam_dlc_catalog', return_value=[{
+            'appid': 1002, 'name': 'New expansion', 'image_url': None,
+        }]) as catalog:
+            response = self.client.get(path)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['source_name'], 'Granblue Fantasy: Relink')
+        self.assertEqual(response.json()['dlcs'][0]['state'], 'not_owned')
+        self.assertEqual(response.json()['dlcs'][0]['steam_appid'], 1002)
+        self.assertEqual(response.json()['dlcs'][0]['steam_parent_appid'], 881020)
+        search.assert_called_once()
+        self.assertEqual(catalog.call_args.args[2], 881020)
+        self.assertTrue(catalog.call_args.kwargs['force_refresh'])
+        self.assertEqual(json.loads(game.dlcs), [{'name': 'Existing expansion', 'state': 'finished'}])
+        self.assertEqual(self.client.get(f'/api/videogames/{other.id}/steam-dlcs?name=Private').status_code, 404)
+
+    def test_collection_steam_dlc_lookup_uses_linked_appid(self):
+        game = Videogame(user_id=self.user.id, name='Custom title')
+        self.db.add(game)
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=game.id, copy_id='steam:881020',
+            steam_id='', steam_appid=881020, name=game.name, platform='PC', format='Digital',
+        ))
+        self.db.commit()
+        with patch.object(videogames_router.discovery, 'steam_store_candidates') as search, \
+             patch.object(videogames_router.discovery, 'steam_dlc_catalog', return_value=[]):
+            response = self.client.get(f'/api/videogames/{game.id}/steam-dlcs?name=Custom%20title')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['dlcs'], [])
+        search.assert_not_called()
+
     def test_crud_scoping_validation_and_collection_isolation(self):
         game = self.create(platform="Nintendo Switch", is_dlc=True, parent_game_name="Base", dlcs=json.dumps([{"name": "Extra", "state": "not_owned"}]))
         self.assertEqual(self.db.query(Videogame).count(), 0)
@@ -583,6 +623,20 @@ class DiscoveryTests(unittest.TestCase):
             [call.kwargs['params']['term'] for call in client.get.call_args_list],
             ['Doki Doki Literture Club', 'Doki Doki Literture', 'Doki Doki'],
         )
+
+    def test_store_search_uses_trailing_words_when_first_word_is_misspelled(self):
+        client = MagicMock()
+        request = httpx.Request('GET', 'https://store.steampowered.com/api/storesearch/')
+        empty = httpx.Response(200, request=request, json={'items': []})
+        found = httpx.Response(200, request=request, json={'items': [
+            {'type': 'app', 'id': 881020, 'name': 'Granblue Fantasy: Relink'},
+        ]})
+        client.get.side_effect = [empty, empty, found]
+        results = service.steam_store_candidates(client, 'Grandblue Fantasy Relink')
+        self.assertEqual(results[0]['appid'], 881020)
+        self.assertEqual([call.kwargs['params']['term'] for call in client.get.call_args_list], [
+            'Grandblue Fantasy Relink', 'Grandblue Fantasy', 'Fantasy Relink',
+        ])
 
     def test_store_search_accepts_an_appid_or_store_url(self):
         for query in ('698780', 'https://store.steampowered.com/app/698780/Doki_Doki_Literature_Club/'):
@@ -1162,7 +1216,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual((added, warning), (1, None))
         dlcs = json.loads(parent.dlcs)
         self.assertEqual([(row['name'], row['state'], row['steam_appid']) for row in dlcs], [
-            ('Existing expansion', 'finished', 1001), ('New expansion', 'not_started', 1002),
+            ('Existing expansion', 'finished', 1001), ('New expansion', 'not_owned', 1002),
         ])
         self.assertEqual(dlcs[1]['source'], 'Steam catalog')
         self.assertEqual(client.get.call_count, 1)
@@ -1189,6 +1243,144 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual((added, warning), (1, None))
         self.assertEqual([row['steam_appid'] for row in json.loads(parent.dlcs)], [1001, 1003])
 
+    def test_cached_catalog_links_later_manual_dlcs_and_keeps_custom_entries(self):
+        parent = Videogame(user_id=self.user.id, name='Grandblue Fantasy Relink', dlcs=json.dumps([
+            {'name': 'Endless Ragnarok Upgrade Kit', 'state': 'finished', 'source': 'Manual'},
+            {'name': 'My own bonus', 'state': 'not_owned', 'source': 'Manual'},
+        ]))
+        self.db.add(parent)
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=parent.id,
+                                copy_id='steam:881020', steam_id='', steam_appid=881020,
+                                name=parent.name, platform='PC', format='Digital'),
+            DiscoveryCache(key='steam-dlcs:881020', updated_at=datetime.utcnow(), payload=json.dumps([
+                {'appid': 1001, 'name': 'Granblue Fantasy: Relink - Endless Ragnarok Upgrade Kit'},
+                {'appid': 1002, 'name': 'Granblue Fantasy: Relink - New expansion'},
+            ])),
+            DiscoveryCache(key=f'steam-dlcs-import:{self.user.id}:{parent.id}:881020', payload='[1001]'),
+        ])
+        self.db.commit()
+        client = MagicMock()
+        added, warning = service.import_steam_dlc_catalogs(self.db, client, self.user.id)
+        self.assertEqual((added, warning), (1, None))
+        client.get.assert_not_called()
+        rows = json.loads(parent.dlcs)
+        self.assertEqual(len(rows), 3)
+        self.assertGreater(parent.version, 1)
+        self.assertEqual(rows[0]['steam_appid'], 1001)
+        self.assertEqual(rows[0]['steam_parent_appid'], 881020)
+        self.assertEqual(rows[0]['state'], 'finished')
+        self.assertEqual(rows[0]['source'], 'Steam catalog')
+        self.assertEqual(rows[1]['source'], 'Manual')
+        self.assertEqual(rows[2]['state'], 'not_owned')
+        self.assertEqual(service.import_steam_dlc_catalogs(self.db, client, self.user.id)[0], 0)
+        self.assertEqual(len(json.loads(parent.dlcs)), 3)
+        self.assertEqual(self.client.put(f'/api/videogames/{parent.id}', json={
+            'name': parent.name, 'dlcs': json.dumps(rows[:2]), 'version': 1,
+        }).status_code, 409)
+
+    def test_catalog_merges_manual_duplicate_without_confusing_numbered_packs(self):
+        rows, added, _ = service.dlc_catalog.merge_catalog([
+            {'name': 'Granblue Fantasy: Relink - Color Pack 1', 'state': 'not_owned',
+             'steam_appid': 101, 'source': 'Steam catalog'},
+            {'name': 'Grandblue Fantasy Relink - Color Pack 1', 'state': 'finished', 'source': 'Manual'},
+            {'name': 'Granblue Fantasy: Relink - Color Pack 2', 'state': 'playing', 'source': 'Manual'},
+        ], [
+            {'appid': 101, 'name': 'Granblue Fantasy: Relink - Color Pack 1'},
+            {'appid': 102, 'name': 'Granblue Fantasy: Relink - Color Pack 2'},
+        ], 881020, 'Grandblue Fantasy Relink', {101})
+        self.assertEqual(added, 0)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([(row['steam_appid'], row['state']) for row in rows], [(101, 'finished'), (102, 'playing')])
+
+    def test_ambiguous_manual_dlc_name_is_not_assigned_a_random_steam_id(self):
+        rows, added, _ = service.dlc_catalog.merge_catalog([
+            {'name': 'Endless Ragnarok Upgrade Kit', 'state': 'finished', 'source': 'Manual'},
+        ], [
+            {'appid': 101, 'name': 'Endless Ragnarok Upgrade Kit'},
+            {'appid': 102, 'name': 'Endless Ragnarok Upgrade Kit'},
+        ], 881020, 'Granblue Fantasy Relink', set())
+        self.assertEqual(added, 2)
+        self.assertEqual(len(rows), 3)
+        self.assertNotIn('steam_appid', rows[0])
+
+    def test_catalog_collapses_existing_duplicate_steam_ids(self):
+        rows, added, _ = service.dlc_catalog.merge_catalog([
+            {'name': 'Expansion', 'state': 'not_owned', 'steam_appid': 101},
+            {'name': 'Expansion', 'state': 'finished', 'steam_appid': 101},
+        ], [{'appid': 101, 'name': 'Expansion'}], 881020, 'Base game', {101})
+        self.assertEqual(added, 0)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['state'], 'finished')
+
+    def test_public_steam_catalog_dlc_can_be_saved_without_owned_entitlement(self):
+        game = Videogame(user_id=self.user.id, name='Granblue Fantasy: Relink')
+        self.db.add_all([game, DiscoveryCache(key='steam-dlcs:881020', payload=json.dumps([
+            {'appid': 4306890, 'name': 'Endless Ragnarok Upgrade Kit'},
+        ]), updated_at=datetime.utcnow())])
+        self.db.commit()
+        row = {'name': 'Endless Ragnarok Upgrade Kit', 'state': 'not_owned',
+               'steam_appid': 4306890, 'steam_parent_appid': 881020, 'source': 'Steam catalog'}
+        response = self.client.put(f'/api/videogames/{game.id}', json={
+            'name': game.name, 'dlcs': json.dumps([row]),
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(json.loads(game.dlcs)[0]['steam_appid'], 4306890)
+        forged = {**row, 'steam_appid': 999999}
+        self.assertEqual(self.client.put(f'/api/videogames/{game.id}', json={
+            'name': game.name, 'dlcs': json.dumps([forged]),
+        }).status_code, 409)
+
+    def test_removing_catalog_dlc_before_first_sync_is_respected(self):
+        game = Videogame(user_id=self.user.id, name='Base game', dlcs=json.dumps([
+            {'name': 'Unwanted DLC', 'state': 'not_owned', 'source': 'Steam catalog',
+             'steam_appid': 1001, 'steam_parent_appid': 881020},
+        ]))
+        self.db.add(game)
+        self.db.flush()
+        self.db.add_all([
+            SteamCollectionLink(user_id=self.user.id, collection_game_id=game.id,
+                                copy_id='steam:881020', steam_id='', steam_appid=881020,
+                                name=game.name, platform='PC', format='Digital'),
+            DiscoveryCache(key='steam-dlcs:881020', updated_at=datetime.utcnow(), payload=json.dumps([
+                {'appid': 1001, 'name': 'Unwanted DLC'},
+            ])),
+        ])
+        self.db.commit()
+        response = self.client.put(f'/api/videogames/{game.id}', json={'name': game.name, 'dlcs': '[]'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(json.loads(self.db.get(DiscoveryCache,
+            f'steam-dlcs-import:{self.user.id}:{game.id}:881020').payload), [1001])
+        self.assertEqual(service.import_steam_dlc_catalogs(self.db, MagicMock(), self.user.id)[0], 0)
+        self.assertIsNone(game.dlcs)
+
+    def test_saved_catalog_source_continues_sync_without_a_steam_copy(self):
+        game = Videogame(user_id=self.user.id, name='Base game', dlcs=json.dumps([
+            {'name': 'First DLC', 'state': 'finished', 'steam_appid': 1001,
+             'steam_parent_appid': 881020, 'source': 'Steam catalog'},
+        ]))
+        self.db.add_all([game, DiscoveryCache(key='steam-dlcs:881020', payload=json.dumps([
+            {'appid': 1001, 'name': 'First DLC'}, {'appid': 1002, 'name': 'Second DLC'},
+        ]), updated_at=datetime.utcnow())])
+        self.db.commit()
+        added, warning = service.import_steam_dlc_catalogs(self.db, MagicMock(), self.user.id)
+        self.assertEqual((added, warning), (1, None))
+        self.assertEqual([row['state'] for row in json.loads(game.dlcs)], ['finished', 'not_owned'])
+
+    def test_public_dlc_scheduler_runs_when_account_sync_is_disabled(self):
+        self.db.add(Videogame(user_id=self.user.id, name='Base game'))
+        self.db.add(DiscoverySettings(user_id=self.user.id, sync_enabled=False,
+                                      sync_collection=True, steam_id='76561198000000000'))
+        self.db.commit()
+        with patch.object(service, 'SessionLocal', self.factory), \
+             patch.object(service, 'import_steam_dlc_catalogs', return_value=(0, None)) as importer:
+            service.sync_due_dlc_catalogs()
+            service.sync_due_dlc_catalogs()
+        importer.assert_called_once()
+        self.assertEqual(importer.call_args.args[2], self.user.id)
+        self.assertEqual(importer.call_args.kwargs['max_requests'], 25)
+
     def test_steam_dlc_catalog_request_budget_defers_without_changing_game(self):
         parent = Videogame(user_id=self.user.id, name='Base')
         self.db.add(parent)
@@ -1213,6 +1405,21 @@ class DiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
         self.assertEqual(service.steam_dlc_catalog(self.db, client, 109400), [])
+        client.get.assert_called_once()
+
+    def test_manual_steam_dlc_refresh_replaces_stale_empty_catalog(self):
+        self.db.add(DiscoveryCache(
+            key='steam-dlcs:881020', payload='[]', updated_at=datetime.utcnow(),
+        ))
+        self.db.commit()
+        client = MagicMock()
+        client.get.return_value = httpx.Response(
+            200, request=httpx.Request('GET', 'https://store.steampowered.com/api/dlcforapp'),
+            json={'status': 1, 'dlc': [{'id': 4306890, 'name': 'Endless Ragnarok Upgrade Kit'}]},
+        )
+        catalog = service.steam_dlc_catalog(self.db, client, 881020, force_refresh=True)
+        self.assertEqual(catalog[0]['appid'], 4306890)
+        self.assertEqual(json.loads(self.db.get(DiscoveryCache, 'steam-dlcs:881020').payload)[0]['appid'], 4306890)
         client.get.assert_called_once()
 
     def test_invalid_cached_dlc_catalog_is_refetched(self):
@@ -1735,7 +1942,7 @@ class DiscoveryTests(unittest.TestCase):
         self.db.expire_all()
         game = self.db.query(Videogame).one()
         self.assertEqual(game.name, 'Library Game')
-        self.assertEqual(json.loads(game.dlcs)[0]['state'], 'not_started')
+        self.assertEqual(json.loads(game.dlcs)[0]['state'], 'not_owned')
         self.assertEqual(json.loads(game.dlcs)[0]['steam_appid'], 302)
         catalog.assert_called_once()
         self.assertEqual(self.db.get(DiscoverySettings, settings.user_id).last_owned_import_count, 1)

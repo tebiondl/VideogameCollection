@@ -1,21 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './Modal.css';
 import './DlcEditor.css';
 import { Plus, X, Search, Loader2, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
+import { addManualDlc, mergeSteamDlcs, type Dlc, type DlcState } from '../lib/steamDlcs';
 
-export type DlcState = 'not_owned' | 'not_started' | 'playing' | 'finished' | 'stopped';
-
-export interface Dlc {
-  name: string;
-  state: DlcState;
-  steam_appid?: number | null;
-  platform?: string | null;
-  source?: string | null;
-  playtime_hours?: number | null;
-  standalone_game_id?: number | null;
-}
+export type { Dlc, DlcState } from '../lib/steamDlcs';
 
 const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'playing', 'stopped', 'finished'];
 const STATE_LABELS: Record<DlcState, string> = {
@@ -45,32 +36,50 @@ function parseDlcs(value: string): Dlc[] {
   try {
     const parsed = JSON.parse(value);
     if (Array.isArray(parsed)) return parsed;
-  } catch {}
+  } catch {
+    return [];
+  }
   return [];
+}
+
+interface IgdbDlc {
+  name: string;
+  cover_url?: string | null;
 }
 
 interface Props {
   value: string; // JSON string
   onChange: (val: string) => void;
   gameName?: string;
+  gameId?: number;
   getPortalContainer?: () => Element;
   onOpenStandalone?: (gameId: number) => void;
 }
 
-export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpenStandalone }: Props) {
+export function DlcEditor({ value, onChange, gameName, gameId, getPortalContainer, onOpenStandalone }: Props) {
   const dlcs = parseDlcs(value);
+  const latestValue = useRef(value);
+  const latestGameId = useRef(gameId);
+  useEffect(() => {
+    latestValue.current = value;
+    latestGameId.current = gameId;
+  }, [value, gameId]);
   const [newName, setNewName] = useState('');
   const [showIgdbModal, setShowIgdbModal] = useState(false);
-  const [igdbDlcs, setIgdbDlcs] = useState<any[]>([]);
+  const [igdbDlcs, setIgdbDlcs] = useState<IgdbDlc[]>([]);
   const [isSearchingIgdb, setIsSearchingIgdb] = useState(false);
   const [igdbSearchQuery, setIgdbSearchQuery] = useState('');
+  const [isSearchingSteam, setIsSearchingSteam] = useState(false);
+  const [steamMessage, setSteamMessage] = useState('');
 
   const emit = (updated: Dlc[]) => onChange(JSON.stringify(updated));
 
   const addDlc = () => {
     const trimmed = newName.trim();
     if (!trimmed) return;
-    emit([...dlcs, { name: trimmed, state: 'not_owned' }]);
+    const result = addManualDlc(dlcs, trimmed, gameName);
+    if (result.dlcs !== dlcs) emit(result.dlcs);
+    setSteamMessage(result.linked ? 'That DLC is already linked to Steam.' : '');
     setNewName('');
   };
 
@@ -96,7 +105,7 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpe
       } else {
         setIgdbDlcs([]);
       }
-    } catch (e) {
+    } catch {
       setIgdbDlcs([]);
     } finally {
       setIsSearchingIgdb(false);
@@ -111,8 +120,29 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpe
   };
 
   const handleSelectIgdbDlc = (dlcName: string) => {
-    if (!dlcs.some(d => d.name.toLowerCase() === dlcName.toLowerCase())) {
-      emit([...dlcs, { name: dlcName, state: 'not_owned' }]);
+    const result = addManualDlc(dlcs, dlcName, gameName, 'IGDB');
+    if (result.dlcs !== dlcs) emit(result.dlcs);
+  };
+
+  const handleFindSteamDlcs = async () => {
+    if (!gameId || !gameName?.trim()) return;
+    setIsSearchingSteam(true);
+    setSteamMessage('');
+    try {
+      const response = await fetchWithAuth(`/videogames/${gameId}/steam-dlcs?name=${encodeURIComponent(gameName.trim())}`);
+      const data = await response.json();
+      if (latestGameId.current !== gameId) return;
+      if (!response.ok) throw new Error(data.detail || 'Steam DLC lookup failed.');
+      const result = mergeSteamDlcs(parseDlcs(latestValue.current), data.dlcs, gameName);
+      if (result.added || result.updated) onChange(JSON.stringify(result.dlcs));
+      setSteamMessage(result.added
+        ? `Added ${result.added} Steam DLC${result.added === 1 ? '' : 's'} as Not Owned. Save Changes to keep them.`
+        : result.updated ? `Linked ${result.updated} existing DLC${result.updated === 1 ? '' : 's'} to Steam. Save Changes to keep them.`
+          : data.dlcs.length ? 'All Steam DLCs are already listed.' : 'Steam lists no DLCs for this game.');
+    } catch (error) {
+      setSteamMessage(error instanceof Error ? error.message : 'Steam DLC lookup failed.');
+    } finally {
+      setIsSearchingSteam(false);
     }
   };
 
@@ -122,7 +152,7 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpe
         <p className="dlc-empty">No DLCs added yet.</p>
       )}
 
-      <div className="dlc-list">
+      <div className="dlc-list" role="region" aria-label="DLC list" tabIndex={dlcs.length ? 0 : -1}>
         {dlcs.map((dlc, idx) => (
           <div key={idx} className="dlc-row">
             <span className="dlc-name">{dlc.name}{(dlc.source || dlc.platform || dlc.playtime_hours != null) && <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 400, marginTop: '.2rem' }}>{[dlc.source, dlc.platform, dlc.playtime_hours != null ? `${dlc.playtime_hours} hrs` : null].filter(Boolean).join(' · ')}</small>}</span>
@@ -183,6 +213,7 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpe
       </div>
       
       {gameName && (
+        <>
         <button
           type="button"
           className="btn btn-ghost"
@@ -191,6 +222,12 @@ export function DlcEditor({ value, onChange, gameName, getPortalContainer, onOpe
         >
           <Search size={16} /> Search IGDB for DLCs
         </button>
+        {gameId && <button type="button" className="btn btn-ghost dlc-steam-search" onClick={handleFindSteamDlcs} disabled={isSearchingSteam || !gameName.trim()}>
+          {isSearchingSteam ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
+          {isSearchingSteam ? 'Checking Steam…' : 'Refresh Steam DLCs'}
+        </button>}
+        {steamMessage && <p className="dlc-search-message" role="status">{steamMessage}</p>}
+        </>
       )}
 
       {showIgdbModal && createPortal(

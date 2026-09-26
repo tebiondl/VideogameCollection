@@ -841,7 +841,7 @@ export function VideogamesDashboard() {
 
               <div className="form-group">
                 <label className="form-label">DLCs</label>
-                <DlcEditor value={editingGame.dlcs || ''} onChange={(val) => setEditingGame({...editingGame, dlcs: val})} gameName={editingGame.name} onOpenStandalone={gameId => {
+                <DlcEditor key={editingGame.id} value={editingGame.dlcs || ''} onChange={(val) => setEditingGame((current: (GameMetadataDraft & { id: number }) | null) => current?.id === editingGame.id ? {...current, dlcs: val} : current)} gameName={editingGame.name} gameId={editingGame.id} onOpenStandalone={gameId => {
                   const standalone = games.find(candidate => candidate.id === gameId);
                   if (standalone) setEditingGame(standalone);
                 }} />

@@ -70,6 +70,15 @@ class VideogameBase(BaseModel):
             standalone_id = item.get("standalone_game_id")
             if standalone_id is not None and int(standalone_id) <= 0:
                 raise ValueError("Invalid standalone DLC game")
+            for key in ("steam_appid", "steam_parent_appid"):
+                if item.get(key) is not None:
+                    try:
+                        appid = int(item[key]) if not isinstance(item[key], bool) else 0
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"Invalid {key}") from exc
+                    if appid <= 0:
+                        raise ValueError(f"Invalid {key}")
+                    item[key] = appid
         return json.dumps(items)
 
     @field_validator("copies")

@@ -10,6 +10,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from .. import schemas, models, database
+from ..discovery_models import SteamCollectionLink
 from .auth_router import get_current_user
 from .igdb_router import _get_twitch_token, search_games
 from ..services import copy_store, dlc_links, discovery
@@ -594,6 +595,65 @@ def lookup_game_metadata(
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         logger.info("Steam metadata lookup failed for game %s: %s", game_id, type(exc).__name__)
     raise HTTPException(status_code=404, detail="No matching game was found on IGDB or Steam. Check the title and try again.")
+
+
+@router.get("/{game_id}/steam-dlcs")
+def lookup_steam_dlcs(
+    game_id: int,
+    name: str = Query(..., min_length=1, max_length=200),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(database.get_db),
+):
+    """Preview the current public Steam catalog for a collection game's DLC editor."""
+    game = db.query(models.Videogame).filter_by(id=game_id, user_id=current_user.id).first()
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if game.is_dlc:
+        raise HTTPException(status_code=400, detail="Select a base game to look up DLCs.")
+    title = name.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Enter a game name before looking up DLCs.")
+
+    links = db.query(SteamCollectionLink).filter_by(
+        user_id=current_user.id, collection_game_id=game_id,
+    ).filter(SteamCollectionLink.steam_appid.is_not(None)).order_by(SteamCollectionLink.id).all()
+    appids = list(dict.fromkeys(int(link.steam_appid) for link in links))[:5]
+    source_name = game.name
+    try:
+        with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            if not appids:
+                matches = []
+                for item in discovery.steam_store_candidates(client, title):
+                    match = compare_titles(title, item.get("name"))
+                    if match.compatible and match.automatic and match.score >= 0.95:
+                        matches.append((match.score, item))
+                matches.sort(key=lambda pair: pair[0], reverse=True)
+                if not matches or (len(matches) > 1 and matches[0][0] - matches[1][0] < 0.03):
+                    raise HTTPException(status_code=404, detail="No clear Steam match was found. Check the game name or link its Steam copy.")
+                source_name = matches[0][1]["name"]
+                appids = [matches[0][1]["appid"]]
+
+            dlcs = []
+            seen = set()
+            for appid in appids:
+                for item in discovery.steam_dlc_catalog(db, client, appid, force_refresh=True):
+                    dlc_id = item["appid"]
+                    if dlc_id in seen:
+                        continue
+                    seen.add(dlc_id)
+                    dlcs.append({
+                        "name": item["name"], "state": "not_owned", "steam_appid": dlc_id,
+                        "steam_parent_appid": appid,
+                        "source": "Steam catalog", "image_url": item.get("image_url"),
+                        "store_url": f"https://store.steampowered.com/app/{dlc_id}/",
+                    })
+            db.commit()  # Cache the fresh public catalog; the collection game is only changed on Save.
+            return {"source_name": source_name, "dlcs": dlcs}
+    except discovery.UpstreamRateLimit as exc:
+        raise HTTPException(status_code=429, detail="Steam is rate limiting requests. Try again later.") from exc
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        logger.info("Steam DLC lookup failed for game %s: %s", game_id, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Steam DLC lookup is unavailable. Try again later.") from exc
 
 @router.post("/check-similar", response_model=List[schemas.VideogameResponse])
 def check_similar_game(

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..discovery_models import (
+    DiscoveryCache,
     DiscoverySettings,
     GameMergeRedirect,
     OwnedCopy,
@@ -353,9 +354,45 @@ def protect_linked_dlcs(db: Session, game: Videogame, raw_dlcs: str | None) -> s
     }
     links = db.query(SteamContentLink).filter_by(user_id=game.user_id, parent_game_id=game.id).all()
     linked_appids = {link.steam_appid for link in links}
-    unknown = set(incoming_by_app) - linked_appids
-    if unknown:
-        raise HTTPException(409, "Steam DLC identities can only be changed through Steam synchronization.")
+    unknown = set(incoming_by_app) - linked_appids - set(original_by_app)
+    for appid in unknown:
+        value = incoming_by_app[appid]
+        try:
+            parent_appid = int(value.get("steam_parent_appid") or 0)
+        except (TypeError, ValueError):
+            parent_appid = 0
+        cached = db.get(DiscoveryCache, f"steam-dlcs:{parent_appid}") if parent_appid > 0 else None
+        try:
+            catalog = json.loads(cached.payload) if cached else []
+        except (TypeError, ValueError):
+            catalog = []
+        if not any(isinstance(item, dict) and item.get("appid") == appid for item in catalog):
+            raise HTTPException(409, "Refresh the Steam DLC catalog before linking a DLC to Steam.")
+    removed_catalog_rows = [
+        row for row in original if isinstance(row, dict)
+        and row.get("source") == "Steam catalog" and isinstance(row.get("steam_appid"), int)
+        and row["steam_appid"] not in incoming_by_app
+    ]
+    for row in removed_catalog_rows:
+        parent_appid = row.get("steam_parent_appid")
+        if not isinstance(parent_appid, int) or parent_appid <= 0:
+            parent_ids = {copy.steam_appid for copy in db.query(OwnedCopy).filter_by(
+                user_id=game.user_id, collection_game_id=game.id,
+            ).filter(OwnedCopy.steam_appid.is_not(None)).all()}
+            parent_appid = next(iter(parent_ids)) if len(parent_ids) == 1 else None
+        if not parent_appid:
+            continue
+        marker_key = f"steam-dlcs-import:{game.user_id}:{game.id}:{int(parent_appid)}"
+        marker = db.get(DiscoveryCache, marker_key)
+        if marker is None:
+            marker = DiscoveryCache(key=marker_key, payload="[]")
+            db.add(marker)
+        try:
+            seen = set(json.loads(marker.payload))
+        except (TypeError, ValueError):
+            seen = set()
+        seen.add(int(row["steam_appid"]))
+        marker.payload, marker.updated_at = json.dumps(sorted(seen)), datetime.utcnow()
     for link in links:
         value = incoming_by_app.get(link.steam_appid)
         entitlement = db.query(SteamOwnedGame).filter_by(

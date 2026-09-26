@@ -20,7 +20,7 @@ from ..database import SessionLocal
 from ..models import Videogame
 from ..discovery_models import DiscoveryCache, DiscoverySettings, SteamCollectionLink, SteamCopyTrash, SteamMatchReview, SteamOwnedGame, WantedGame
 from ..discovery_models import SteamContentLink
-from . import copy_store, dlc_links
+from . import copy_store, dlc_catalog, dlc_links
 from .title_matching import compare_titles, is_reviewable_title_match
 from .secrets import resolve_steam_api_key
 
@@ -236,6 +236,7 @@ def _steam_store_queries(value):
             break
     if len(useful) >= 3:
         values.append(" ".join(useful[:2]))
+        values.append(" ".join(useful[-2:]))
     result = []
     seen = set()
     for query in values:
@@ -243,7 +244,7 @@ def _steam_store_queries(value):
         if key not in seen:
             seen.add(key)
             result.append(query)
-    return result[:4]
+    return result[:5]
 
 
 def steam_store_candidates(client, query, country="ES"):
@@ -266,7 +267,9 @@ def steam_store_candidates(client, query, country="ES"):
         }]
 
     target = _collection_title_key(query)
-    for search_query in _steam_store_queries(query):
+    searches = _steam_store_queries(query)
+    best_candidates = []
+    for search_query in searches:
         raw = request_json(client, "https://store.steampowered.com/api/storesearch/", params={
             "term": search_query, "l": "english", "cc": country,
         })
@@ -289,8 +292,11 @@ def steam_store_candidates(client, query, country="ES"):
             })
         if candidates:
             candidates.sort(key=lambda item: (-item["similarity"], item["name"].casefold()))
-            return candidates[:12]
-    return []
+            if candidates[0]["similarity"] >= 0.95:
+                return candidates[:12]
+            if not best_candidates or candidates[0]["similarity"] > best_candidates[0]["similarity"]:
+                best_candidates = candidates[:12]
+    return best_candidates
 
 
 def find_steam_store_games(db, user_id, query):
@@ -559,10 +565,7 @@ def attach_owned_dlc(parent, item):
     appid = item["appid"]
     entry = next((row for row in dlcs if int(row.get("steam_appid") or 0) == appid), None)
     if entry is None:
-        entry = next((row for row in dlcs if (
-            (match := compare_titles(row.get("name"), item.get("name"))).compatible
-            and match.automatic and match.score >= 0.98
-        )), None)
+        entry = dlc_catalog.matching_manual_row(dlcs, [item], item, parent.name)
     if entry is None:
         entry = {"name": item.get("name") or f"Steam app {appid}", "state": "not_started"}
         dlcs.append(entry)
@@ -1444,11 +1447,11 @@ def steam_details(db, client, appid):
     return fields
 
 
-def steam_dlc_catalog(db, client, appid):
+def steam_dlc_catalog(db, client, appid, force_refresh=False):
     """Read a game's public Steam DLC list, including names, in one request."""
     key = f"steam-dlcs:{appid}"
     cached = db.get(DiscoveryCache, key)
-    if cached and cached.updated_at > datetime.utcnow() - timedelta(days=30):
+    if not force_refresh and cached and cached.updated_at > datetime.utcnow() - timedelta(days=7):
         try:
             entries = json.loads(cached.payload)
             if isinstance(entries, list) and all(
@@ -1485,27 +1488,40 @@ def steam_dlc_catalog(db, client, appid):
 
 
 def import_steam_dlc_catalogs(db, client, user_id, max_requests=150):
-    """Add newly discovered DLCs without replacing personal states or re-adding removals."""
+    """Sync public Steam DLCs while retaining manual entries and personal states."""
     scope = copy_store.steam_scope(db, user_id)
     games = {game.id: game for game in db.query(Videogame).filter_by(user_id=user_id).all()
              if not game.hidden and not game.is_dlc and not game.merged_into_game_id}
     links = db.query(SteamCollectionLink).filter_by(user_id=user_id, steam_id=scope).filter(
         SteamCollectionLink.steam_appid.is_not(None)
     ).order_by(SteamCollectionLink.collection_game_id, SteamCollectionLink.id).all()
+    sources = {(link.collection_game_id, int(link.steam_appid)) for link in links}
+    for game in games.values():
+        try:
+            rows = json.loads(game.dlcs or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("steam_parent_appid"):
+                try:
+                    appid = int(row["steam_parent_appid"])
+                except (TypeError, ValueError):
+                    continue
+                if appid > 0:
+                    sources.add((game.id, appid))
     requests, added, pending = 0, 0, 0
     since_commit = 0
-    for link in links:
-        game = games.get(link.collection_game_id)
+    for game_id, appid in sorted(sources):
+        game = games.get(game_id)
         if game is None:
             continue
-        appid = int(link.steam_appid)
         catalog_key = f"steam-dlcs:{appid}"
         cached = db.get(DiscoveryCache, catalog_key)
-        fresh = cached and cached.updated_at > datetime.utcnow() - timedelta(days=30)
+        fresh = cached and cached.updated_at > datetime.utcnow() - timedelta(days=7)
         marker_key = f"steam-dlcs-import:{user_id}:{game.id}:{appid}"
         marker = db.get(DiscoveryCache, marker_key)
-        if fresh and marker:
-            continue
         if not fresh and requests >= max_requests:
             pending += 1
             continue
@@ -1527,33 +1543,11 @@ def import_steam_dlc_catalogs(db, client, user_id, max_requests=150):
                 dlcs = []
         except (TypeError, ValueError):
             seen, dlcs = set(), []
-        changed = False
-        for item in catalog:
-            dlc_id = item["appid"]
-            if dlc_id in seen:
-                continue
-            existing = next((row for row in dlcs if isinstance(row, dict) and row.get("steam_appid") == dlc_id), None)
-            if existing is None:
-                existing = next((row for row in dlcs if isinstance(row, dict) and (
-                    (match := compare_titles(row.get("name"), item["name"])).compatible
-                    and match.automatic and match.score >= 0.98
-                )), None)
-            if existing is not None:
-                existing.setdefault("steam_appid", dlc_id)
-                changed = True
-            elif len(dlcs) < 500:
-                dlcs.append({
-                    "name": item["name"], "state": "not_started", "steam_appid": dlc_id,
-                    "source": "Steam catalog", "store_url": f"https://store.steampowered.com/app/{dlc_id}/",
-                    "image_url": item.get("image_url"),
-                })
-                added += 1
-                changed = True
-            else:
-                continue
-            seen.add(dlc_id)
-        if changed:
-            game.dlcs = json.dumps(dlcs)
+        merged, new_count, seen = dlc_catalog.merge_catalog(dlcs, catalog, appid, game.name, seen)
+        added += new_count
+        if merged != dlcs:
+            game.dlcs = json.dumps(merged)
+            game.version = (game.version or 1) + 1
         if marker is None:
             marker = DiscoveryCache(key=marker_key)
             db.add(marker)
@@ -1661,16 +1655,15 @@ def sync_steam(user_id, factory=SessionLocal):
                 nest_known_steam_dlcs(db, user_id)
                 db.commit()
                 dlc_error = None
-                if owned_error is None:
-                    try:
-                        _, dlc_error = import_steam_dlc_catalogs(db, client, user_id)
-                    except Exception:
-                        # DLC discovery is supplementary. Keep the committed library
-                        # snapshot and retry this step at the next sync.
-                        db.rollback()
-                        logger.exception("Steam DLC catalog import failed for user %s", user_id)
-                        settings = db.get(DiscoverySettings, user_id)
-                        dlc_error = "Steam DLC import could not finish; the next sync will retry."
+                try:
+                    _, dlc_error = import_steam_dlc_catalogs(db, client, user_id)
+                except Exception:
+                    # DLC discovery is supplementary. Keep the committed library
+                    # snapshot and retry this step at the next sync.
+                    db.rollback()
+                    logger.exception("Steam DLC catalog import failed for user %s", user_id)
+                    settings = db.get(DiscoverySettings, user_id)
+                    dlc_error = "Steam DLC import could not finish; the next sync will retry."
             else:
                 dlc_error = None
             stage = "sync status save"
@@ -1725,12 +1718,37 @@ def sync_due_wishlists():
             sync_steam(user_id)
 
 
+def sync_due_dlc_catalogs():
+    """Refresh public DLC catalogs independently of Steam account synchronization."""
+    now = datetime.utcnow()
+    with SessionLocal() as db, httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+        user_ids = [row[0] for row in db.query(Videogame.user_id).distinct().all()]
+        for user_id in user_ids:
+            key = f"steam-dlc-user-run:{user_id}"
+            marker = db.get(DiscoveryCache, key)
+            if marker and marker.updated_at > now - timedelta(days=1):
+                continue
+            try:
+                _, warning = import_steam_dlc_catalogs(db, client, user_id, max_requests=25)
+                if marker is None:
+                    marker = DiscoveryCache(key=key)
+                    db.add(marker)
+                marker.payload = "{}"
+                # Continue bounded batches hourly, and otherwise check daily.
+                marker.updated_at = now - timedelta(hours=23) if warning else now
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Public Steam DLC sync failed for user %s", user_id)
+
+
 async def scheduler():
     while True:
-        try:
-            await asyncio.to_thread(sync_due_wishlists)
-        except Exception:
-            logger.exception("Discovery scheduler tick failed")
+        for task in (sync_due_wishlists, sync_due_dlc_catalogs):
+            try:
+                await asyncio.to_thread(task)
+            except Exception:
+                logger.exception("Discovery scheduler tick failed during %s", task.__name__)
         await asyncio.sleep(60)
 
 
