@@ -760,9 +760,9 @@ export function VideogamesDashboard() {
       {/* Edit Game Modal */}
       {editingGame && (
         <div className="modal-overlay">
-          <div className="glass-card modal-content">
+          <div className="glass-card modal-content vg-edit-modal">
             <button className="modal-close" onClick={() => setEditingGame(null)} disabled={isSavingEdit}><X size={20}/></button>
-            <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '1.5rem', gap: '0.75rem' }}>
+            <div className="vg-edit-heading">
               <h2 style={{ margin: 0 }}>Edit Game</h2>
               <div className="info-tooltip-container">
                 <HelpCircle size={18} />
