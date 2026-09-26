@@ -144,6 +144,12 @@ export function VideogamesDashboard() {
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
   const editingGameId = editingGame?.id;
   const editingGameName = editingGame?.name;
+  useEffect(() => {
+    if (editingGameId == null) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [editingGameId]);
   const probableDuplicate = useMemo(
     () => editingGameId && editingGameName
       ? findProbableDuplicate({ id: editingGameId, name: editingGameName }, games)
@@ -759,7 +765,7 @@ export function VideogamesDashboard() {
 
       {/* Edit Game Modal */}
       {editingGame && (
-        <div className="modal-overlay">
+        <div className="modal-overlay vg-edit-overlay">
           <div className="glass-card modal-content vg-edit-modal">
             <button className="modal-close" onClick={() => setEditingGame(null)} disabled={isSavingEdit}><X size={20}/></button>
             <div className="vg-edit-heading">
