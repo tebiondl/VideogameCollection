@@ -602,6 +602,24 @@
   min-height: 42px;
 }
 
+.vg-name-lookup {
+  display: flex;
+  align-items: stretch;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+
+.vg-name-lookup .form-input { flex: 1 1 220px; }
+.vg-name-lookup .btn { white-space: nowrap; }
+
+.vg-lookup-message {
+  margin: .4rem 0 0;
+  color: var(--accent-primary);
+  font-size: .82rem;
+}
+
+.vg-lookup-message.error { color: #f87171; }
+
 .vg-parent-picker-modal {
   width: min(620px, calc(100vw - 2rem));
   max-height: min(720px, calc(100vh - 2rem));

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from typing import List, Annotated
 import json
@@ -11,8 +11,8 @@ from openai import OpenAI
 
 from .. import schemas, models, database
 from .auth_router import get_current_user
-from .igdb_router import _get_twitch_token
-from ..services import copy_store, dlc_links
+from .igdb_router import _get_twitch_token, search_games
+from ..services import copy_store, dlc_links, discovery
 from ..services.title_matching import compare_titles
 
 logger = logging.getLogger(__name__)
@@ -541,6 +541,59 @@ def get_videogames(
     ).all()
     copy_store.project_games(db, games)
     return games
+
+
+@router.get("/{game_id}/metadata-lookup")
+def lookup_game_metadata(
+    game_id: int,
+    name: str = Query(..., min_length=1, max_length=200),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(database.get_db),
+):
+    """Find one matching title, preferring IGDB and falling back to Steam."""
+    game = db.query(models.Videogame).filter_by(id=game_id, user_id=current_user.id).first()
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    title = name.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Enter a game name before looking up metadata.")
+
+    def exact_match(candidate):
+        match = compare_titles(title, candidate.get("name"))
+        return match.compatible and match.automatic and match.score == 1.0
+
+    try:
+        igdb_results = search_games(q=title, limit=20, current_user=current_user)
+        igdb_match = next((item for item in igdb_results if exact_match(item)), None)
+        if igdb_match:
+            return {
+                "source": "IGDB", "name": igdb_match["name"],
+                "description": igdb_match.get("summary"), "image_url": igdb_match.get("cover_url"),
+                "publication_year": igdb_match.get("release_year"),
+                "release_date": igdb_match.get("release_date"),
+                "is_dlc": igdb_match.get("is_dlc", False),
+                "parent_game_name": igdb_match.get("parent_game_name"),
+                "igdb_id": igdb_match["igdb_id"],
+            }
+    except (HTTPException, httpx.HTTPError, ValueError, KeyError) as exc:
+        logger.info("IGDB metadata lookup failed for game %s: %s", game_id, type(exc).__name__)
+
+    try:
+        with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
+            steam_match = next((item for item in discovery.steam_store_candidates(client, title) if exact_match(item)), None)
+            if steam_match:
+                fields = discovery.steam_details(db, client, steam_match["appid"])
+                if exact_match(fields):
+                    db.commit()  # Persist the existing Steam metadata cache.
+                    return {"source": "Steam", **{
+                        key: fields.get(key) for key in (
+                            "name", "description", "image_url", "publication_year",
+                            "release_date", "is_dlc", "parent_game_name",
+                        )
+                    }}
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        logger.info("Steam metadata lookup failed for game %s: %s", game_id, type(exc).__name__)
+    raise HTTPException(status_code=404, detail="No matching game was found on IGDB or Steam. Check the title and try again.")
 
 @router.post("/check-similar", response_model=List[schemas.VideogameResponse])
 def check_similar_game(

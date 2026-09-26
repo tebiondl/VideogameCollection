@@ -43,6 +43,44 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
+    def test_collection_metadata_lookup_prefers_igdb_then_steam_and_scopes_game(self):
+        game = Videogame(user_id=self.user.id, name="Portal 2", status="Finished", comments="Keep this")
+        other = Videogame(user_id=self.users[1].id, name="Private")
+        self.db.add_all([game, other])
+        self.db.commit()
+        igdb_result = {"igdb_id": 42, "name": "Portal 2", "summary": "IGDB description",
+                       "cover_url": "https://example.com/cover.jpg", "release_year": 2011,
+                       "release_date": "2011-04-19", "is_dlc": False, "parent_game_name": None}
+        path = f"/api/videogames/{game.id}/metadata-lookup?name=Portal%202"
+        with patch.object(videogames_router, "search_games", return_value=[igdb_result]), \
+             patch.object(videogames_router.discovery, "steam_store_candidates") as steam_search:
+            result = self.client.get(path)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()["source"], "IGDB")
+            self.assertEqual(result.json()["igdb_id"], 42)
+            steam_search.assert_not_called()
+
+        with patch.object(videogames_router, "search_games", return_value=[{"name": "Portal", "igdb_id": 1}]), \
+             patch.object(videogames_router.discovery, "steam_store_candidates", return_value=[{"appid": 620, "name": "Portal 2"}]), \
+             patch.object(videogames_router.discovery, "steam_details", return_value={
+                 "name": "Portal 2", "description": "Steam description", "image_url": None,
+                 "publication_year": 2011, "release_date": "2011-04-19",
+                 "is_dlc": False, "parent_game_name": None,
+             }):
+            result = self.client.get(path)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()["source"], "Steam")
+            self.assertEqual(result.json()["description"], "Steam description")
+
+        with patch.object(videogames_router, "search_games", side_effect=ValueError("IGDB unavailable")), \
+             patch.object(videogames_router.discovery, "steam_store_candidates", return_value=[{"appid": 620, "name": "Portal 2"}]), \
+             patch.object(videogames_router.discovery, "steam_details", return_value={"name": "Portal 2"}):
+            self.assertEqual(self.client.get(path).json()["source"], "Steam")
+
+        self.assertEqual(game.description, None)
+        self.assertEqual(game.comments, "Keep this")
+        self.assertEqual(self.client.get(f"/api/videogames/{other.id}/metadata-lookup?name=Private").status_code, 404)
+
     def test_crud_scoping_validation_and_collection_isolation(self):
         game = self.create(platform="Nintendo Switch", is_dlc=True, parent_game_name="Base", dlcs=json.dumps([{"name": "Extra", "state": "not_owned"}]))
         self.assertEqual(self.db.query(Videogame).count(), 0)

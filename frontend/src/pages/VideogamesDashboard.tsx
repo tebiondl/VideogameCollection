@@ -19,6 +19,7 @@ import { SteamLinkModal } from '../components/SteamLinkModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
 import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies, parseOldCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
+import { applyGameMetadata, type GameMetadata, type GameMetadataDraft } from '../lib/gameMetadata';
 import { findProbableDuplicate } from '../lib/titleSimilarity';
 import '../components/Modal.css';
 import './VideogamesDashboard.css';
@@ -136,6 +137,7 @@ export function VideogamesDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [metadataLookup, setMetadataLookup] = useState<{ gameId: number; name: string; loading: boolean; message: string; error: boolean } | null>(null);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
@@ -384,6 +386,26 @@ export function VideogamesDashboard() {
       alert(err instanceof Error ? err.message : 'Could not save the game.');
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const lookupMetadata = async () => {
+    if (!editingGame || !editingGame.name.trim() || metadataLookup?.loading) return;
+    const gameId = editingGame.id;
+    const name = editingGame.name.trim();
+    setMetadataLookup({ gameId, name, loading: true, message: '', error: false });
+    try {
+      const response = await fetchWithAuth(`/videogames/${gameId}/metadata-lookup?name=${encodeURIComponent(name)}`);
+      if (!response.ok) {
+        const problem = await response.json().catch(() => null);
+        throw new Error(problem?.detail || 'Could not find game metadata.');
+      }
+      const metadata: GameMetadata = await response.json();
+      setEditingGame((current: (GameMetadataDraft & { id: number }) | null) => current && current.id === gameId && current.name.trim() === name
+        ? applyGameMetadata(current, metadata) : current);
+      setMetadataLookup({ gameId, name: metadata.name, loading: false, message: `Filled game data from ${metadata.source}. Review the fields, then save changes.`, error: false });
+    } catch (reason) {
+      setMetadataLookup({ gameId, name, loading: false, message: reason instanceof Error ? reason.message : 'Could not find game metadata.', error: true });
     }
   };
 
@@ -773,7 +795,14 @@ export function VideogamesDashboard() {
                 <div style={{ flex: 1, minWidth: '250px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                      <label className="form-label">Name</label>
-                     <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
+                     <div className="vg-name-lookup">
+                       <input type="text" className="form-input" value={editingGame.name} onChange={e => setEditingGame({...editingGame, name: e.target.value})}/>
+                       <button type="button" className="btn btn-secondary" disabled={!editingGame.name.trim() || isSavingEdit || !!metadataLookup?.loading} onClick={lookupMetadata} title="Find metadata on IGDB, then Steam">
+                         {metadataLookup?.loading && metadataLookup.gameId === editingGame.id ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
+                         Fill from IGDB / Steam
+                       </button>
+                     </div>
+                     {metadataLookup && metadataLookup.gameId === editingGame.id && metadataLookup.name === editingGame.name.trim() && metadataLookup.message && <p className={`vg-lookup-message ${metadataLookup.error ? 'error' : ''}`} role="status">{metadataLookup.message}</p>}
                   </div>
                 </div>
               </div>
