@@ -1,172 +1,75 @@
-import { useState, useEffect, useMemo } from 'react';
-import { fetchWithAuth } from '../lib/api';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, Target, Clock, Trophy, Gamepad2, Sparkles, BarChart3 } from 'lucide-react';
-import { YearlyRewind, type RewindGame } from '../components/YearlyRewind';
+import { ArrowLeft, BarChart3, Clock3, Gamepad2, Library, Loader2, Medal, Sparkles, Star, Target, Trophy } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { fetchWithAuth } from '../lib/api';
+import { YearlyRewind } from '../components/YearlyRewind';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
-import { analyticsPlaytimeHours } from '../lib/ownedCopies';
-import {
-  PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid
-} from 'recharts';
+import { calculateVideogameStats, type StatsGame } from '../lib/videogameStats';
+import './AnalyticsDashboard.css';
+
+const COLORS = ['#818cf8', '#a78bfa', '#60a5fa', '#c084fc', '#2dd4bf', '#fbbf24'];
+const number = (value: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+const tooltipStyle = { backgroundColor: '#20232d', border: '1px solid #414655', borderRadius: 10, color: '#f5f5f5' };
+
+function Metric({ label, value, note, icon }: { label: string; value: string | number; note?: string; icon: React.ReactNode }) {
+  return <div className="glass-card vg-stat-metric"><span className="vg-stat-icon">{icon}</span><div><p>{label}</p><strong>{value}</strong>{note && <small>{note}</small>}</div></div>;
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="glass-card vg-stat-panel"><h2>{title}</h2>{children}</section>;
+}
 
 export function AnalyticsDashboard() {
-  const [games, setGames] = useState<RewindGame[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [games, setGames] = useState<StatsGame[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showRewind, setShowRewind] = useState(false);
-
   useEffect(() => {
-    const loadGames = async () => {
-      try {
-        const res = await fetchWithAuth('/videogames/');
-        if (res.ok) {
-          const rows = await res.json();
-          const seenSteamApps = new Set<number>();
-          setGames(rows.map((game: RewindGame & { copies?: string | null; playtime_mode?: string | null }) => ({ ...game, playtime_hours: analyticsPlaytimeHours(game, seenSteamApps) })));
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadGames();
+    fetchWithAuth('/videogames/').then(async response => {
+      if (!response.ok) throw new Error('Could not load your collection statistics.');
+      setGames(await response.json());
+    }).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not load statistics.'))
+      .finally(() => setLoading(false));
   }, []);
+  const stats = useMemo(() => calculateVideogameStats(games), [games]);
+  if (showRewind && !loading) return <YearlyRewind games={games.filter(game => !game.hidden && !game.merged_into_game_id)} onClose={() => setShowRewind(false)} />;
 
-  const stats = useMemo(() => {
-    const totalGames = games.length;
-    let totalPlaytime = 0;
-    let totalScore = 0;
-    let scoredGamesCount = 0;
-    let beatenThisYear = 0;
-    const currentYear = new Date().getFullYear();
-
-    const statusCounts: Record<string, number> = {
-      'Not Started': 0, 'Playing': 0, 'Finished': 0, 'Stopped': 0, 'Infinite': 0
-    };
-    const ratingCounts: Record<number, number> = {
-      1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0, 10:0
-    };
-
-    games.forEach(g => {
-      if (g.playtime_hours) totalPlaytime += g.playtime_hours;
-      
-      if (g.mark) {
-        totalScore += g.mark;
-        scoredGamesCount++;
-        if (g.mark >= 1 && g.mark <= 10) ratingCounts[g.mark]++;
-      }
-      
-      if (g.status) {
-        if (statusCounts[g.status] !== undefined) statusCounts[g.status]++;
-      }
-
-      if (g.status === 'Finished') {
-        if (g.completion_date && g.completion_date.startsWith(currentYear.toString())) {
-          beatenThisYear++;
-        }
-      }
-    });
-
-    const statusData = Object.keys(statusCounts).map(k => ({ name: k, value: statusCounts[k] })).filter(d => d.value > 0);
-    const ratingData = Object.keys(ratingCounts).map(k => ({ rating: k, count: ratingCounts[Number(k)] }));
-    const avgScore = scoredGamesCount > 0 ? (totalScore / scoredGamesCount).toFixed(1) : 'N/A';
-
-    return { totalGames, totalPlaytime, avgScore, beatenThisYear, statusData, ratingData };
-  }, [games]);
-
-  const COLORS = ['#818cf8', '#a78bfa', '#60a5fa', '#c084fc', '#94a3b8'];
-
-  if (showRewind && !isLoading) {
-    return <YearlyRewind games={games} onClose={() => setShowRewind(false)} />;
-  }
-
-  return (
-    <div className="container vg-support-page">
-      <div>
-        <Link to="/dashboard/videogames" className="vg-back-link">
-          <ArrowLeft size={18} />
-          Back to Tracker
-        </Link>
+  return <div className="container vg-support-page vg-stat-page">
+    <Link to="/dashboard/videogames" className="vg-back-link"><ArrowLeft size={18} /> Back to Videogames</Link>
+    <VideogamePageHeader eyebrow="Collection insights" icon={<BarChart3 />} title="Statistics" description="A closer look at what you own, what you play, and what you love." actions={<button className="btn btn-primary" disabled={loading || !!error} onClick={() => setShowRewind(true)}><Sparkles size={18} /> Open Yearly Rewind</button>} />
+    {loading ? <div className="vg-stat-loading"><Loader2 className="spinner" size={32} /></div> : error ? <div className="glass-card vg-stat-empty" role="alert">{error}</div> : <>
+      <div className="vg-stat-grid">
+        <Metric label="Games in collection" value={stats.totalGames} note={`${stats.dlcGames} standalone DLC entries · ${stats.hiddenGames} hidden`} icon={<Gamepad2 />} />
+        <Metric label="Time played" value={`${number(stats.totalPlaytime)} h`} note="Shared Steam time counted once" icon={<Clock3 />} />
+        <Metric label="Finished games" value={stats.finishedGames} note={`${number(stats.finishRate * 100)}% of games started`} icon={<Trophy />} />
+        <Metric label="Average rating" value={stats.avgRating == null ? '—' : number(stats.avgRating)} note={`${stats.ratedCount} rated · median ${stats.medianRating == null ? '—' : number(stats.medianRating)}`} icon={<Star />} />
+        <Metric label="Currently active" value={stats.activeGames} note="Playing or Infinite" icon={<Target />} />
+        <Metric label="Backlog" value={stats.backlogGames} note="Games not started" icon={<Library />} />
+        <Metric label="Finished this year" value={stats.finishedThisYear} note="Based on completion date" icon={<Medal />} />
+        <Metric label="Checked records" value={`${stats.reviewedCount}/${stats.totalGames}`} note={`${stats.totalGames ? number(stats.reviewedCount / stats.totalGames * 100) : 0}% reviewed`} icon={<Sparkles />} />
       </div>
-
-      <VideogamePageHeader
-        eyebrow="Collection insights"
-        icon={<BarChart3 />}
-        title="Analytics"
-        description="Understand your collection, playtime, ratings and progress."
-        actions={<button
-          className="btn btn-primary"
-          onClick={() => setShowRewind(true)}
-          disabled={isLoading}
-        >
-          <Sparkles size={19} />
-          Open Yearly Rewind
-        </button>}
-      />
-
-      {isLoading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
-          <Loader2 className="spinner" size={32} />
-        </div>
-      ) : (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
-            <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ padding: '1rem', background: 'rgba(99, 102, 241, 0.16)', borderRadius: 'var(--radius-md)', color: '#a5b4fc' }}><Gamepad2 size={24}/></div>
-              <div><p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0.2rem' }}>Total Games</p><h2 style={{ margin: 0 }}>{stats.totalGames}</h2></div>
-            </div>
-            <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ padding: '1rem', background: 'rgba(59, 130, 246, 0.14)', borderRadius: 'var(--radius-md)', color: '#93c5fd' }}><Clock size={24}/></div>
-              <div><p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0.2rem' }}>Total Playtime</p><h2 style={{ margin: 0 }}>{stats.totalPlaytime.toFixed(1)} hrs</h2></div>
-            </div>
-            <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ padding: '1rem', background: 'rgba(168, 85, 247, 0.14)', borderRadius: 'var(--radius-md)', color: '#d8b4fe' }}><Trophy size={24}/></div>
-              <div><p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0.2rem' }}>Average Rating</p><h2 style={{ margin: 0 }}>{stats.avgScore}</h2></div>
-            </div>
-            <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ padding: '1rem', background: 'rgba(124, 58, 237, 0.14)', borderRadius: 'var(--radius-md)', color: '#c4b5fd' }}><Target size={24}/></div>
-              <div><p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0.2rem' }}>Beaten This Year</p><h2 style={{ margin: 0 }}>{stats.beatenThisYear}</h2></div>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1.5rem' }}>
-            <div className="glass-card" style={{ padding: '1.5rem' }}>
-              <h3 style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Status Breakdown</h3>
-              <div style={{ width: '100%', height: 300 }}>
-                {stats.statusData.length > 0 ? (
-                  <ResponsiveContainer minWidth={0}>
-                    <PieChart>
-                      <Pie data={stats.statusData} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name} ${percent ? (percent * 100).toFixed(0) : 0}%`} outerRadius={100} fill="#818cf8" dataKey="value">
-                        {stats.statusData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip contentStyle={{ backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px' }} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : <p className="text-muted">Not enough data to display.</p>}
-              </div>
-            </div>
-
-            <div className="glass-card" style={{ padding: '1.5rem' }}>
-              <h3 style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Rating Distribution</h3>
-              <div style={{ width: '100%', height: 300 }}>
-                <ResponsiveContainer minWidth={0}>
-                  <BarChart data={stats.ratingData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                    <XAxis dataKey="rating" stroke="var(--text-muted)" />
-                    <YAxis allowDecimals={false} stroke="var(--text-muted)" />
-                    <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{ backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px' }} />
-                    <Bar dataKey="count" fill="var(--accent-primary)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
+      <div className="vg-stat-section-heading"><span>01 / PROGRESS</span><h2>How the collection is going</h2></div>
+      <div className="vg-stat-charts">
+        <ChartCard title="Status breakdown"><div className="vg-stat-chart">{stats.totalGames ? <ResponsiveContainer minWidth={0}><PieChart><Pie data={stats.statusCounts.filter(row => row.value)} dataKey="value" nameKey="name" innerRadius={66} outerRadius={105} paddingAngle={3}>{stats.statusCounts.filter(row => row.value).map((row, index) => <Cell key={row.name} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip contentStyle={tooltipStyle} /></PieChart></ResponsiveContainer> : <p className="text-muted">Add games to see their status.</p>}</div><div className="vg-stat-legend">{stats.statusCounts.map((row, index) => <div key={row.name}><i style={{ background: COLORS[index % COLORS.length] }} />{row.name}<strong>{row.value}</strong></div>)}</div></ChartCard>
+        <ChartCard title="Rating distribution"><div className="vg-stat-chart"><ResponsiveContainer minWidth={0}><BarChart data={stats.ratingCounts}><CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} /><XAxis dataKey="name" stroke="var(--text-muted)" /><YAxis allowDecimals={false} stroke="var(--text-muted)" /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="value" name="Games" fill="#818cf8" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div><p className="vg-stat-note">{stats.highRatedCount} games rated 9 or 10. {stats.averageCompletion == null ? 'Add completion percentages to track progress.' : `Average recorded completion of started games: ${number(stats.averageCompletion)}%.`}</p></ChartCard>
+        <ChartCard title="Finishes by year"><div className="vg-stat-chart">{stats.completionYears.length ? <ResponsiveContainer minWidth={0}><BarChart data={stats.completionYears}><CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} /><XAxis dataKey="name" stroke="var(--text-muted)" /><YAxis allowDecimals={false} stroke="var(--text-muted)" /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="value" name="Finished" fill="#2dd4bf" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer> : <p className="text-muted">Completion dates will appear here.</p>}</div></ChartCard>
+        <ChartCard title="Release decades"><div className="vg-stat-chart">{stats.releaseDecades.length ? <ResponsiveContainer minWidth={0}><BarChart data={stats.releaseDecades}><CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} /><XAxis dataKey="name" tickFormatter={value => `${value}s`} stroke="var(--text-muted)" /><YAxis allowDecimals={false} stroke="var(--text-muted)" /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="value" name="Games" fill="#c084fc" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer> : <p className="text-muted">Publication years will appear here.</p>}</div></ChartCard>
+      </div>
+      <div className="vg-stat-section-heading"><span>02 / LIBRARY</span><h2>What is on the shelf</h2></div>
+      <div className="vg-stat-grid vg-stat-grid-compact">
+        <Metric label="Owned copies" value={stats.ownedCopies} note={`${stats.oldCopies} old copies kept in history`} icon={<Library />} />
+        <Metric label="Steam copies" value={stats.steamCopies} note="Currently linked" icon={<Gamepad2 />} />
+        <Metric label="Physical / digital" value={`${stats.physicalCopies} / ${stats.digitalCopies}`} note="Among owned copies with a type" icon={<Library />} />
+        <Metric label="DLCs owned" value={`${stats.ownedDlcs}/${stats.dlcCount}`} note="Across base-game DLC lists" icon={<Trophy />} />
+      </div>
+      <div className="vg-stat-charts">
+        <ChartCard title="Top platforms"><div className="vg-stat-bars">{stats.platformCounts.slice(0, 8).map(row => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${row.value / (stats.platformCounts[0]?.value || 1) * 100}%` }} /></div><strong>{row.value}</strong></div>)}{!stats.platformCounts.length && <p className="text-muted">Add owned copies to see platforms.</p>}</div></ChartCard>
+        <ChartCard title="Most used tags"><div className="vg-stat-bars">{stats.tagCounts.slice(0, 8).map(row => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${row.value / (stats.tagCounts[0]?.value || 1) * 100}%` }} /></div><strong>{row.value}</strong></div>)}{!stats.tagCounts.length && <p className="text-muted">Tag games to see your themes.</p>}</div></ChartCard>
+        <ChartCard title="Most played"><ol className="vg-stat-toplist">{stats.mostPlayed.map(row => <li key={row.game.id}><span>{row.game.name}</span><strong>{number(row.hours)} h</strong></li>)}{!stats.mostPlayed.length && <p className="text-muted">Log playtime to see your most played games.</p>}</ol></ChartCard>
+        <ChartCard title="Highest rated"><ol className="vg-stat-toplist">{stats.favorites.map(game => <li key={game.id}><span>{game.name}</span><strong>{game.mark}/10</strong></li>)}{!stats.favorites.length && <p className="text-muted">Rate games to see your favorites.</p>}</ol><Link className="vg-stat-ranking-link" to="/dashboard/videogames/ranking">Open your Ranking →</Link></ChartCard>
+      </div>
+      <p className="vg-stat-footnote">Statistics use visible collection games. Standalone DLC entries and hidden records are shown separately. Playtime follows each game’s selected playtime mode.</p>
+    </>}
+  </div>;
 }

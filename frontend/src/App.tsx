@@ -9,6 +9,7 @@ const HomePage = lazy(() => import('./pages/HomePage').then(({ HomePage }) => ({
 const AuthPage = lazy(() => import('./pages/AuthPage').then(({ AuthPage }) => ({ default: AuthPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(({ DashboardPage }) => ({ default: DashboardPage })));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard').then(({ AnalyticsDashboard }) => ({ default: AnalyticsDashboard })));
+const RankingPage = lazy(() => import('./pages/RankingPage').then(({ RankingPage }) => ({ default: RankingPage })));
 const VideogamesDashboard = lazy(() => import('./pages/VideogamesDashboard').then(({ VideogamesDashboard }) => ({ default: VideogamesDashboard })));
 const AddGamePage = lazy(() => import('./pages/AddGamePage').then(({ AddGamePage }) => ({ default: AddGamePage })));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then(({ AdminDashboard }) => ({ default: AdminDashboard })));
@@ -48,6 +49,7 @@ function AppRoutes() {
         <Suspense fallback={<div className="page-loading">Loading...</div>}>
           <Routes>
           <Route path="/dashboard/videogames/collection" element={<ProtectedRoute><VideogamesDashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/ranking" element={<ProtectedRoute><RankingPage /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/trash" element={<ProtectedRoute><SteamTrash /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/discovery" element={<ProtectedRoute><DiscoveryDashboard /></ProtectedRoute>} />

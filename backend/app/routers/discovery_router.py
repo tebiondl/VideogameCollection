@@ -15,11 +15,11 @@ from ..discovery_models import (
 from ..discovery_schemas import (
     WantedInput, WantedResponse, AcquireInput, BatchInput, SettingsInput, SettingsResponse,
     CopyOptionsInput, CopyOptionsResponse, ReleaseInput, SteamMatchReviewResponse,
-    SteamMatchDecision, SteamGameLinkInput, CollectionDuplicateInput,
+    SteamMatchDecision, SteamGameLinkInput, OwnedSteamSyncInput, CollectionDuplicateInput,
 )
 from ..services import discovery as service
 from ..services import copy_store
-from ..services.title_matching import compare_titles
+from ..services.title_matching import compare_titles, is_reviewable_title_match
 from ..services.secrets import protect_secret, resolve_steam_api_key
 from .auth_router import get_current_user
 
@@ -455,6 +455,91 @@ def decide_steam_match(
     )
     commit(db)
     return result
+
+
+def _owned_steam_games(db: Session, user_id: int, scope: str, is_dlc: bool):
+    """Only Steam account entitlements, never unverified Store selections."""
+    return [row for row in db.query(SteamOwnedGame).filter_by(
+        user_id=user_id, steam_id=scope, active=True, is_dlc=is_dlc,
+    ).all() if not row.user_verified or row.stats_verified]
+
+
+@router.get("/steam/collection-games/{game_id}/sync-candidates")
+def steam_sync_candidates(
+    game_id: int, name: str | None = Query(default=None, min_length=1, max_length=200),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, hidden=False).first()
+    if game is None or game.merged_into_game_id is not None:
+        raise HTTPException(404, "Collection game not found.")
+    title = (name or game.name).strip()
+    if not title:
+        raise HTTPException(422, "Enter a game name before syncing with Steam.")
+    scope = copy_store.steam_scope(db, user.id)
+    owned = _owned_steam_games(db, user.id, scope, bool(game.is_dlc))
+    matches = []
+    for row in owned:
+        match = compare_titles(title, row.name)
+        if is_reviewable_title_match(match):
+            matches.append((match.score, row))
+    matches.sort(key=lambda value: (-value[0], value[1].name.casefold()))
+    appids = [row.steam_appid for _, row in matches[:5]]
+    links = db.query(SteamCollectionLink).filter_by(user_id=user.id, steam_id=scope).filter(
+        SteamCollectionLink.steam_appid.in_(appids)
+    ).all() if appids else []
+    linked_by_app = {}
+    for link in links:
+        linked_by_app.setdefault(link.steam_appid, []).append(link.collection_game_id)
+    linked_names = {row.id: row.name for row in db.query(Videogame).filter(
+        Videogame.id.in_({game_id for ids in linked_by_app.values() for game_id in ids})
+    ).all()} if linked_by_app else {}
+    return {
+        "connected": bool(scope or owned), "owned_count": len(owned),
+        "candidates": [{
+            "steam_appid": row.steam_appid, "name": row.name,
+            "image_url": row.image_url, "playtime_hours": row.playtime_hours,
+            "similarity": score,
+            "linked_games": [{"id": linked_id, "name": linked_names.get(linked_id, "Another game")}
+                             for linked_id in linked_by_app.get(row.steam_appid, [])],
+        } for score, row in matches[:5]],
+    }
+
+
+@router.post("/steam/collection-games/{game_id}/sync-link")
+def link_owned_steam_game(
+    game_id: int, payload: OwnedSteamSyncInput,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    game = db.query(Videogame).filter_by(id=game_id, user_id=user.id, hidden=False).first()
+    if game is None or game.merged_into_game_id is not None:
+        raise HTTPException(404, "Collection game not found.")
+    scope = copy_store.steam_scope(db, user.id)
+    steam = next((row for row in _owned_steam_games(db, user.id, scope, bool(game.is_dlc))
+                  if row.steam_appid == payload.steam_appid), None)
+    if steam is None:
+        raise HTTPException(404, "This game is not in your verified Steam library. Sync your Steam account first.")
+    existing = db.query(SteamCollectionLink).filter_by(
+        user_id=user.id, steam_id=scope, steam_appid=steam.steam_appid,
+    ).all()
+    if any(link.collection_game_id != game.id for link in existing):
+        raise HTTPException(409, "This Steam copy is linked to another collection game. Merge the duplicate games to move it here.")
+    if not existing:
+        service.attach_steam_copy(db, game, {
+            "appid": steam.steam_appid, "name": steam.name,
+            "playtime_hours": steam.playtime_hours, "store_url": steam.store_url,
+            "igdb_id": steam.igdb_id,
+        }, steam_id=scope)
+        link = db.query(SteamCollectionLink).filter_by(
+            user_id=user.id, steam_id=scope, collection_game_id=game.id,
+            steam_appid=steam.steam_appid,
+        ).one()
+        link.user_selected = True
+        copy_store.record_audit(db, user.id, "copy_linked", steam_id=scope,
+                                steam_appid=steam.steam_appid, game_id=game.id,
+                                copy_id=link.copy_id)
+        db.commit()
+        db.refresh(game)
+    return game
 
 
 @router.get("/steam/collection-games/{game_id}/copies/{copy_id}/candidates")

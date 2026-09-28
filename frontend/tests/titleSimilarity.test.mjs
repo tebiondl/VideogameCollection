@@ -52,6 +52,15 @@ test('prefilling the current title keeps a fuzzy duplicate visible and ranks it 
   assert.deepEqual(results.map(game => game.id), [2, 3]);
 });
 
+test('the merge search finds a joined Steam brand and subtitle for the same sequel', () => {
+  const current = { id: 1, name: 'Hunie Pop 2' };
+  const steam = { id: 2, name: 'HuniePop 2: Double Date' };
+  const other = { id: 3, name: 'HuniePop 3: Something Else' };
+  assert.deepEqual(searchTitleCandidates(current.id, current.name, [current, steam, other]).map(game => game.id), [2]);
+  assert.equal(findProbableDuplicate(current, [current, steam])?.game.id, 2);
+  assert.equal(compareTitles('Hunie Pop 2', 'HuniePop 2: Demo').compatible, false);
+});
+
 test('roman, Arabic and written sequel numbers are equivalent', () => {
   for (const [first, second] of [
     ['Trails of Cold Steel II', 'Trails of Cold Steel 2'],

@@ -209,11 +209,33 @@ def _base_similarity(left: str, right: str) -> float:
     return score
 
 
+def _compound_subtitle_alias(first: str | None, second: str | None,
+                             left: ParsedTitle, right: ParsedTitle) -> bool:
+    """Match a spaced brand to its joined Steam title plus a subtitle."""
+    if not left.installments or left.installments != right.installments or left.variants != right.variants:
+        return False
+    for short, long, short_parsed in ((first, second, left), (second, first, right)):
+        if ":" not in (long or ""):
+            continue
+        prefix, subtitle = long.split(":", 1)
+        short_name, prefix_name = normalize_title(short), normalize_title(prefix)
+        if (not subtitle.strip() or short_name == prefix_name
+                or len(short_name.replace(" ", "")) < 9
+                or short_name.replace(" ", "") != prefix_name.replace(" ", "")
+                or parse_title(prefix).installments != short_parsed.installments
+                or parse_title(subtitle).variants):
+            continue
+        return True
+    return False
+
+
 def compare_titles(first: str | None, second: str | None) -> TitleMatch:
     left, right = parse_title(first), parse_title(second)
     if left.normalized and left.normalized == right.normalized:
         relation = "same_installment" if left.installments else "same_title_family"
         return TitleMatch(1.0, True, True, relation, left, right)
+    if _compound_subtitle_alias(first, second, left, right):
+        return TitleMatch(0.96, True, True, "compound_subtitle_alias", left, right)
     base_score = _base_similarity(left.base, right.base)
 
     if left.installments and right.installments and left.installments != right.installments:

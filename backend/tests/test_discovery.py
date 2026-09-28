@@ -121,6 +121,67 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.json()['dlcs'], [])
         search.assert_not_called()
 
+    def test_game_sync_offers_only_owned_steam_matches_and_links_after_confirmation(self):
+        game = Videogame(user_id=self.user.id, name='Hunie Pop 2', status='Finished', mark=6)
+        self.db.add_all([
+            game,
+            SteamOwnedGame(user_id=self.user.id, steam_appid=930210,
+                           name='HuniePop 2: Double Date', playtime_hours=10.7),
+            SteamOwnedGame(user_id=self.user.id, steam_appid=999001,
+                           name='HuniePop 2: Double Date', user_verified=True),
+            SteamOwnedGame(user_id=self.users[1].id, steam_appid=999002,
+                           name='HuniePop 2: Double Date'),
+        ])
+        self.db.commit()
+
+        path = f'/api/discovery/steam/collection-games/{game.id}'
+        candidates = self.client.get(f'{path}/sync-candidates')
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual([row['steam_appid'] for row in candidates.json()['candidates']], [930210])
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 0)
+        self.assertEqual(self.client.post(f'{path}/sync-link', json={'steam_appid': 999001}).status_code, 404)
+        self.assertEqual(self.client.post(f'{path}/sync-link', json={'steam_appid': 999002}).status_code, 404)
+
+        linked = self.client.post(f'{path}/sync-link', json={'steam_appid': 930210})
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertEqual(linked.json()['name'], 'Hunie Pop 2')
+        self.assertEqual(linked.json()['status'], 'Finished')
+        self.assertEqual(linked.json()['mark'], 6)
+        self.assertEqual(json.loads(linked.json()['copies'])[0]['steam_appid'], 930210)
+        self.assertEqual(self.db.query(SteamCollectionLink).one().user_selected, True)
+        self.assertEqual(self.client.post(f'{path}/sync-link', json={'steam_appid': 930210}).status_code, 200)
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 1)
+
+    def test_game_sync_does_not_duplicate_a_steam_copy_linked_elsewhere(self):
+        target = Videogame(user_id=self.user.id, name='Portal 2')
+        existing = Videogame(user_id=self.user.id, name='Portal 2 Steam import')
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=620, name='Portal 2')
+        self.db.add_all([target, existing, steam])
+        self.db.flush()
+        self.db.add(SteamCollectionLink(user_id=self.user.id, collection_game_id=existing.id,
+                                         copy_id='steam:620', steam_appid=620, name=steam.name))
+        self.db.commit()
+
+        path = f'/api/discovery/steam/collection-games/{target.id}'
+        candidates = self.client.get(f'{path}/sync-candidates').json()['candidates']
+        self.assertEqual(candidates[0]['linked_games'], [{'id': existing.id, 'name': existing.name}])
+        response = self.client.post(f'{path}/sync-link', json={'steam_appid': 620})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 1)
+
+    def test_owned_library_sync_replaces_an_older_unverified_store_selection(self):
+        catalog = SteamOwnedGame(user_id=self.user.id, steam_appid=620,
+                                 name='Portal 2', user_verified=True)
+        self.db.add(catalog)
+        self.db.commit()
+
+        service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 620, 'name': 'Portal 2', 'playtime_hours': 2.0,
+        }])
+        self.db.flush()
+
+        self.assertFalse(catalog.user_verified)
+
     def test_crud_scoping_validation_and_collection_isolation(self):
         game = self.create(platform="Nintendo Switch", is_dlc=True, parent_game_name="Base", dlcs=json.dumps([{"name": "Extra", "state": "not_owned"}]))
         self.assertEqual(self.db.query(Videogame).count(), 0)
@@ -1563,6 +1624,24 @@ class DiscoveryTests(unittest.TestCase):
             self.db.query(SteamCollectionLink).filter_by(steam_appid=698780).one().collection_game_id,
             existing.id,
         )
+
+    def test_joined_brand_and_subtitle_link_the_existing_sequel(self):
+        existing = Videogame(user_id=self.user.id, name='Hunie Pop 2', status='Finished', mark=6)
+        self.db.add(existing)
+        self.db.commit()
+
+        imported = service.reconcile_steam_library(self.db, self.user.id, [{
+            'appid': 930210, 'name': 'HuniePop 2: Double Date',
+            'playtime_hours': 3.0, 'igdb_id': 72472,
+        }])
+        self.db.flush()
+
+        self.assertEqual(imported, 1)
+        self.assertEqual(self.db.query(Videogame).count(), 1)
+        self.assertEqual(self.db.query(SteamCollectionLink).one().collection_game_id, existing.id)
+        self.assertEqual(existing.status, 'Finished')
+        self.assertEqual(existing.mark, 6)
+        self.assertEqual(self.db.query(SteamMatchReview).count(), 0)
 
     def test_unverified_second_steam_app_with_same_title_requires_review(self):
         existing = Videogame(user_id=self.user.id, name='Lords of the Fallen', status='Finished')

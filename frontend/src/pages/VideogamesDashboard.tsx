@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink, RefreshCw } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -16,6 +16,7 @@ import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
 import { useAuth } from '../context/AuthContext';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { SteamLinkModal } from '../components/SteamLinkModal';
+import { SteamSyncModal } from '../components/SteamSyncModal';
 import { CollectionDuplicateModal } from '../components/CollectionDuplicateModal';
 import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveCopyToOldCopies, parseCopies, parseOldCopies } from '../lib/ownedCopies';
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
@@ -141,6 +142,7 @@ export function VideogamesDashboard() {
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
   const [steamLinkTarget, setSteamLinkTarget] = useState<{ game: any; copy: any } | null>(null);
+  const [steamSyncGame, setSteamSyncGame] = useState<any>(null);
   const [duplicateGame, setDuplicateGame] = useState<any>(null);
   const editingGameId = editingGame?.id;
   const editingGameName = editingGame?.name;
@@ -750,6 +752,7 @@ export function VideogamesDashboard() {
                 }}><ExternalLink size={14} /> Expansion of {game.parent_game_name || 'linked game'}</button>}
               </div>
               <div className="card-actions">
+                <button type="button" className="icon-btn steam-sync-btn" onClick={event => { event.stopPropagation(); setSteamSyncGame({ ...game }); }} title="Sync with Steam" aria-label={`Sync ${game.name} with Steam`}><RefreshCw size={16} /></button>
                 <button className="icon-btn edit-btn" onClick={event => { event.stopPropagation(); setEditingGame({ ...game }); }} title="Edit"><Edit2 size={16} /></button>
                 <button className="icon-btn delete-btn" onClick={event => { event.stopPropagation(); handleDelete(game.id); }} title="Delete"><Trash2 size={16} /></button>
               </div>
@@ -807,6 +810,7 @@ export function VideogamesDashboard() {
                          {metadataLookup?.loading && metadataLookup.gameId === editingGame.id ? <Loader2 className="spinner" size={16} /> : <Search size={16} />}
                          Fill from IGDB / Steam
                        </button>
+                       <button type="button" className="btn btn-secondary" disabled={!editingGame.name.trim() || isSavingEdit} onClick={() => setSteamSyncGame({ id: editingGame.id, name: editingGame.name })}><RefreshCw size={16} /> Sync with Steam</button>
                      </div>
                      {metadataLookup && metadataLookup.gameId === editingGame.id && metadataLookup.name === editingGame.name.trim() && metadataLookup.message && <p className={`vg-lookup-message ${metadataLookup.error ? 'error' : ''}`} role="status">{metadataLookup.message}</p>}
                   </div>
@@ -992,7 +996,13 @@ export function VideogamesDashboard() {
         setEditingGame(game);
       }} />}
 
-      {duplicateGame && <CollectionDuplicateModal game={duplicateGame} games={games} onClose={() => setDuplicateGame(null)} onMerged={result => {
+      {steamSyncGame && <SteamSyncModal game={steamSyncGame} onClose={() => setSteamSyncGame(null)} onLinked={updated => {
+        const game = updated as { id: number; copies: string | null; playtime_mode: string; version: number };
+        setGames(current => current.map(row => row.id === game.id ? game : row));
+        setEditingGame((current: (GameMetadataDraft & { id: number }) | null) => current?.id === game.id ? { ...current, copies: game.copies, playtime_mode: game.playtime_mode, version: game.version } : current);
+      }} onMerge={linkedGameName => { setDuplicateGame({ ...steamSyncGame, initialQuery: linkedGameName }); setSteamSyncGame(null); }} />}
+
+      {duplicateGame && <CollectionDuplicateModal game={duplicateGame} games={games} initialQuery={duplicateGame.initialQuery} onClose={() => setDuplicateGame(null)} onMerged={result => {
         setGames(current => current.map(row => row.id === result.collection_game.id ? result.collection_game : row.id === result.duplicate_game_id ? { ...row, hidden: true, copies: null } : row));
         setEditingGame(result.collection_game);
       }} />}

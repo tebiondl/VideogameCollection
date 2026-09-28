@@ -73,6 +73,14 @@ class TitleMatchingTests(unittest.TestCase):
                 self.assertTrue(result.automatic)
                 self.assertEqual(result.score, 1)
 
+    def test_joined_brand_with_subtitle_matches_the_same_numbered_game(self):
+        match = compare_titles('Hunie Pop 2', 'HuniePop 2: Double Date')
+        self.assertTrue(match.automatic)
+        self.assertGreaterEqual(match.score, .92)
+        self.assertTrue(is_reviewable_title_match(match))
+        self.assertFalse(compare_titles('Hunie Pop 3', 'HuniePop 2: Double Date').compatible)
+        self.assertFalse(compare_titles('Hunie Pop 2', 'HuniePop 2: Demo').compatible)
+
     def test_review_gate_rejects_incidental_shared_words(self):
         for first, second in (
             ('Portal', 'Portal Knights'),

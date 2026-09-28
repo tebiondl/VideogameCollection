@@ -18,7 +18,7 @@ export interface TitleMatch {
   score: number;
   compatible: boolean;
   automatic: boolean;
-  relation: 'same_title_family' | 'same_installment' | 'implicit_first_installment' | 'ambiguous_numbered_alias' | 'different_installment' | 'different_edition' | 'different_release';
+  relation: 'same_title_family' | 'same_installment' | 'compound_subtitle_alias' | 'implicit_first_installment' | 'ambiguous_numbered_alias' | 'different_installment' | 'different_edition' | 'different_release';
   left: ParsedTitle;
   right: ParsedTitle;
 }
@@ -159,11 +159,34 @@ function baseSimilarity(left: string, right: string): number {
   return score;
 }
 
+function compoundSubtitleAlias(first: string, second: string, left: ParsedTitle, right: ParsedTitle): boolean {
+  if (!left.installments.length || left.installments.join('|') !== right.installments.join('|')
+      || left.variants.size !== right.variants.size
+      || [...left.variants].some(token => !right.variants.has(token))) return false;
+  for (const [short, long, parsedShort] of [[first, second, left], [second, first, right]] as const) {
+    const colon = long.indexOf(':');
+    if (colon < 0) continue;
+    const prefix = long.slice(0, colon);
+    const subtitle = long.slice(colon + 1);
+    const shortName = normalizeTitle(short);
+    const prefixName = normalizeTitle(prefix);
+    if (!subtitle.trim() || shortName === prefixName || shortName.replaceAll(' ', '').length < 9
+        || shortName.replaceAll(' ', '') !== prefixName.replaceAll(' ', '')
+        || parseTitle(prefix).installments.join('|') !== parsedShort.installments.join('|')
+        || parseTitle(subtitle).variants.size) continue;
+    return true;
+  }
+  return false;
+}
+
 export function compareTitles(first: string, second: string): TitleMatch {
   const left = parseTitle(first);
   const right = parseTitle(second);
   if (left.normalized && left.normalized === right.normalized) {
     return { score: 1, compatible: true, automatic: true, relation: left.installments.length ? 'same_installment' : 'same_title_family', left, right };
+  }
+  if (compoundSubtitleAlias(first, second, left, right)) {
+    return { score: 0.96, compatible: true, automatic: true, relation: 'compound_subtitle_alias', left, right };
   }
   const baseScore = baseSimilarity(left.base, right.base);
   const sameNumbers = left.installments.join('|') === right.installments.join('|');

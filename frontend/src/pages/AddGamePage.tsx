@@ -7,8 +7,10 @@ import { TagMultiSelect } from '../components/TagMultiSelect';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { DlcEditor } from '../components/DlcEditor';
 import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
+import { OldCopiesEditor } from '../components/OldCopiesEditor';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
+import { copyPlaytimeHours, type PlaytimeMode } from '../lib/ownedCopies';
 import './AddGamePage.css';
 
 const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
@@ -44,6 +46,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [tags, setTags] = useState<string[]>([]);
   const [dlcs, setDlcs] = useState('');
   const [copies, setCopies] = useState<string | null>(null);
+  const [oldCopies, setOldCopies] = useState<string | null>(null);
+  const [playtimeMode, setPlaytimeMode] = useState<PlaytimeMode>('user');
+  const [reviewed, setReviewed] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // -------------------------
@@ -65,6 +71,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [igdbDlcs, setIgdbDlcs] = useState('');
   const [igdbComments, setIgdbComments] = useState('');
   const [igdbCopies, setIgdbCopies] = useState<string | null>(null);
+  const [igdbOldCopies, setIgdbOldCopies] = useState<string | null>(null);
+  const [igdbPlaytimeMode, setIgdbPlaytimeMode] = useState<PlaytimeMode>('user');
+  const [igdbReviewed, setIgdbReviewed] = useState(false);
+  const [igdbHidden, setIgdbHidden] = useState(false);
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -------------------------
@@ -143,6 +153,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     setIgdbDlcs('');
     setIgdbComments('');
     setIgdbCopies(null);
+    setIgdbOldCopies(null);
+    setIgdbPlaytimeMode('user');
+    setIgdbReviewed(false);
+    setIgdbHidden(false);
   };
 
   const buildIgdbPayload = () => ({
@@ -163,6 +177,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     is_dlc: !!selectedIgdbGame.is_dlc,
     parent_game_name: selectedIgdbGame.parent_game_name || null,
     copies: igdbCopies,
+    old_copies: igdbOldCopies,
+    playtime_mode: igdbPlaytimeMode,
+    reviewed: igdbReviewed,
+    hidden: igdbHidden,
   });
 
   const saveIgdbItem = async () => {
@@ -431,6 +449,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
         tags: tags.length > 0 ? tags.join(',') : null,
         dlcs: dlcs || null,
         copies,
+        old_copies: oldCopies,
+        playtime_mode: playtimeMode,
+        reviewed,
+        hidden,
       };
 
       const res = await fetchWithAuth('/videogames/', {
@@ -471,6 +493,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
         tags: tags.length > 0 ? tags.join(',') : null,
         dlcs: dlcs || null,
         copies,
+        old_copies: oldCopies,
+        playtime_mode: playtimeMode,
+        reviewed,
+        hidden,
       };
 
       const res = await fetchWithAuth(`/videogames/${gameId}`, {
@@ -594,10 +620,27 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
               <OwnedCopiesEditor value={copies} onChange={setCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
             </div>
+            <div className="form-group">
+              <label className="form-label">Old Copies</label>
+              <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Record copies you played but no longer own.</p>
+              <OldCopiesEditor value={oldCopies} onChange={setOldCopies} consoleOptions={copyOptions.platforms} />
+            </div>
           </div>
 
           <div className="data-section-user">
             <h3 className="section-title">User Data</h3>
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={reviewed} onChange={event => setReviewed(event.target.checked)} />
+                Checked / reviewed
+              </label>
+            </div>
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={hidden} onChange={event => setHidden(event.target.checked)} />
+                Hide from collection
+              </label>
+            </div>
             <div className="form-row">
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Status</label>
@@ -605,7 +648,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
-              {(status === 'Stopped' || status === 'Finished') && (
+              {(status === 'Stopped' || status === 'Finished' || status === 'Infinite') && (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Completion %</label>
                   <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
@@ -614,7 +657,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   </select>
                 </div>
               )}
-              {(status === 'Finished' || status === 'Stopped') ? (
+              {(status === 'Finished' || status === 'Stopped' || status === 'Infinite') ? (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Your Rating (1-10)</label>
                   <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
@@ -628,11 +671,15 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
             </div>
 
             <div className="form-group">
-              <label className="form-label">Playtime (Hours)</label>
+              <label className="form-label">My added playtime (hours)</label>
               <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={playtimeHours} onChange={e => setPlaytimeHours(e.target.value ? Number(e.target.value) : '')} />
             </div>
+            <div className="form-row">
+              <div className="form-group" style={{ flex: 1 }}><label className="form-label">Copies playtime</label><input className="form-input" value={`${copyPlaytimeHours(copies, oldCopies).toFixed(1)} hours`} disabled /></div>
+              <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={playtimeMode} onChange={event => setPlaytimeMode(event.target.value as PlaytimeMode)}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
+            </div>
 
-            {(status === 'Finished' || status === 'Stopped') && (
+            {(status === 'Finished' || status === 'Stopped' || status === 'Infinite') && (
               <div className="form-group">
                 <label className="form-label">Completion Date</label>
                 <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
@@ -1022,6 +1069,18 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="igdb-config-divider" />
 
               <h3 style={{ marginBottom: '1.25rem', color: 'var(--text-primary)' }}>Your Play Details</h3>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={igdbReviewed} onChange={event => setIgdbReviewed(event.target.checked)} />
+                  Checked / reviewed
+                </label>
+              </div>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={igdbHidden} onChange={event => setIgdbHidden(event.target.checked)} />
+                  Hide from collection
+                </label>
+              </div>
 
               {/* Status + Rating/Hype row */}
               <div className="form-row">
@@ -1031,7 +1090,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                     {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 </div>
-                {(igdbStatus === 'Stopped' || igdbStatus === 'Finished') && (
+                {(igdbStatus === 'Stopped' || igdbStatus === 'Finished' || igdbStatus === 'Infinite') && (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Completion %</label>
                     <select className="form-input" value={igdbCompletionPct} onChange={e => setIgdbCompletionPct(e.target.value ? Number(e.target.value) : '')}>
@@ -1040,7 +1099,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                     </select>
                   </div>
                 )}
-                {(igdbStatus === 'Finished' || igdbStatus === 'Stopped') ? (
+                {(igdbStatus === 'Finished' || igdbStatus === 'Stopped' || igdbStatus === 'Infinite') ? (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Your Rating (1-10)</label>
                     <input type="number" min="1" max="10" className="form-input" value={igdbMark} onChange={e => setIgdbMark(e.target.value ? Number(e.target.value) : '')} />
@@ -1055,8 +1114,12 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
 
               {/* Time Spent */}
               <div className="form-group">
-                <label className="form-label">Playtime (Hours)</label>
+                <label className="form-label">My added playtime (hours)</label>
                 <input type="number" step="0.1" min="0" className="form-input" placeholder="e.g. 50.5" value={igdbPlaytimeHours} onChange={e => setIgdbPlaytimeHours(e.target.value ? Number(e.target.value) : '')} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Copies playtime</label><input className="form-input" value={`${copyPlaytimeHours(igdbCopies, igdbOldCopies).toFixed(1)} hours`} disabled /></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={igdbPlaytimeMode} onChange={event => setIgdbPlaytimeMode(event.target.value as PlaytimeMode)}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
               </div>
 
               {/* Completion Date */}
@@ -1075,6 +1138,11 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                 <label className="form-label">Owned Copies</label>
                 <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
                 <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Old Copies</label>
+                <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Record copies you played but no longer own.</p>
+                <OldCopiesEditor value={igdbOldCopies} onChange={setIgdbOldCopies} consoleOptions={copyOptions.platforms} />
               </div>
 
               {/* Tags */}
@@ -1143,7 +1211,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
-              {(editingItem.status === 'Stopped' || editingItem.status === 'Finished') && (
+              {(editingItem.status === 'Stopped' || editingItem.status === 'Finished' || editingItem.status === 'Infinite') && (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Completion %</label>
                   <select className="form-input" value={editingItem.completion_percentage ?? ''} onChange={e => setEditingItem({ ...editingItem, completion_percentage: e.target.value ? Number(e.target.value) : null })}>
@@ -1152,7 +1220,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   </select>
                 </div>
               )}
-              {(editingItem.status === 'Finished' || editingItem.status === 'Stopped') ? (
+              {(editingItem.status === 'Finished' || editingItem.status === 'Stopped' || editingItem.status === 'Infinite') ? (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Rating (1-10)</label>
                   <input type="number" min="1" max="10" className="form-input" value={editingItem.mark || ''} onChange={e => setEditingItem({ ...editingItem, mark: e.target.value ? Number(e.target.value) : '' })} />

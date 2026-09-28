@@ -622,6 +622,9 @@ def reconcile_steam_library(db, user_id, items):
     }
     for item in items:
         catalog[item["appid"]] = upsert_steam_catalog(db, user_id, item, scope, generation)
+        if not item.get("user_verified"):
+            # A later owned-library result supersedes an earlier Store-only selection.
+            catalog[item["appid"]].user_verified = False
     db.flush()
     imported = 0
     for item in items:

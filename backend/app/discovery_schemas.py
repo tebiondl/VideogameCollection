@@ -184,6 +184,10 @@ class SteamGameLinkInput(BaseModel):
     store_query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class OwnedSteamSyncInput(BaseModel):
+    steam_appid: int = Field(gt=0)
+
+
 class CollectionDuplicateInput(BaseModel):
     other_game_id: int = Field(gt=0)
     direction: Literal["current_into_other", "other_into_current"]

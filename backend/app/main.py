@@ -8,7 +8,7 @@ from .discovery_models import (
     DiscoverySettings, SteamCollectionLink, SteamOwnedGame, WantedGame, SteamCopyTrash, SteamMatchReview,
     SteamContentLink,
 )
-from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router
+from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router, ranking_router
 from .services.discovery import scheduler
 from .services.backups import scheduler as backup_scheduler
 from contextlib import asynccontextmanager, suppress
@@ -609,6 +609,7 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(videogames_router.router)
+app.include_router(ranking_router.router)
 app.include_router(smart_import_router.router)
 app.include_router(filters_router.router)
 app.include_router(igdb_router.router)

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Shield, Trash2 } from 'lucide-react';
+import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Shield, Trash2, Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './CollectionNavigation.css';
 
@@ -21,11 +21,11 @@ export function CollectionNavigation() {
   const discovery = pathname.includes('/discovery');
   const wanted = pathname.includes('/wanted');
   const tab = discovery ? 'discovery' : wanted ? 'wanted' : 'collection';
-  const context = pathname.endsWith('/analytics') ? 'analytics' : pathname.endsWith('/admin') ? 'admin' : pathname.endsWith('/settings') ? 'settings' : pathname.endsWith('/smart') ? 'smart' : '';
+  const context = pathname.endsWith('/analytics') ? 'analytics' : pathname.endsWith('/ranking') ? 'ranking' : pathname.endsWith('/admin') ? 'admin' : pathname.endsWith('/settings') ? 'settings' : pathname.endsWith('/smart') ? 'smart' : '';
   const base = '/dashboard/videogames';
   const destination = (target: string) => target === 'discovery' ? `${base}/discovery`
-    : target === 'wanted' ? `${base}/wanted${context ? `/${context}` : ''}`
-    : context === 'admin' ? '/dashboard/admin' : context ? `${base}/${context}` : `${base}/collection`;
+    : target === 'wanted' ? `${base}/wanted${context && context !== 'ranking' ? `/${context}` : ''}`
+    : context === 'admin' ? '/dashboard/admin' : context && context !== 'ranking' ? `${base}/${context}` : `${base}/collection`;
   useEffect(() => {
     if (isVideogame && user) {
       try { localStorage.setItem(`videogame-tab:${user.id}`, tab); } catch { /* private storage */ }
@@ -42,7 +42,8 @@ export function CollectionNavigation() {
     {!discovery && <nav className="collection-tools" aria-label={`${tab} tools`}>
       <Link to={`${toolsBase}/smart`} aria-current={context === 'smart' ? 'page' : undefined}><Sparkles size={16} /> Smart Add</Link>
       {!wanted && <Link to={`${base}/trash`} aria-current={pathname.endsWith('/trash') ? 'page' : undefined}><Trash2 size={16} /> Trash</Link>}
-      <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Analytics</Link>
+      <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Statistics</Link>
+      {!wanted && <Link to={`${base}/ranking`} aria-current={context === 'ranking' ? 'page' : undefined}><Trophy size={16} /> Ranking</Link>}
       <Link to={`${base}/settings`}><Settings2 size={16} /> User Settings</Link>
       {user.is_admin && <Link to="/dashboard/admin"><Shield size={16} /> Admin</Link>}
     </nav>}

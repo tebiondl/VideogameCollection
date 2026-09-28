@@ -54,6 +54,38 @@ class Videogame(Base):
 
     owner = relationship("User", back_populates="videogames")
 
+class GameRankingEntry(Base):
+    __tablename__ = "game_ranking_entries"
+    __table_args__ = (UniqueConstraint("user_id", "game_id", name="uq_game_ranking_user_game"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    game_id = Column(Integer, ForeignKey("videogames.id"), nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+
+class GameTierList(Base):
+    __tablename__ = "game_tier_lists"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    filters_json = Column(String, nullable=False, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    entries = relationship("GameTierListEntry", back_populates="tier_list", cascade="all, delete-orphan")
+
+class GameTierListEntry(Base):
+    __tablename__ = "game_tier_list_entries"
+    __table_args__ = (UniqueConstraint("tier_list_id", "game_id", name="uq_tier_list_game"),)
+
+    id = Column(Integer, primary_key=True)
+    tier_list_id = Column(Integer, ForeignKey("game_tier_lists.id"), nullable=False, index=True)
+    game_id = Column(Integer, ForeignKey("videogames.id"), nullable=False, index=True)
+    tier = Column(String, nullable=True)
+    position = Column(Integer, nullable=False, default=0)
+    deleted = Column(Boolean, nullable=False, default=False)
+    tier_list = relationship("GameTierList", back_populates="entries")
+
 class SmartImportSession(Base):
     __tablename__ = "smart_import_sessions"
 

@@ -1,0 +1,12 @@
+.discovery-dialog.steam-sync-dialog { width: min(680px, calc(100vw - 2rem)); max-height: 86vh; }
+.steam-sync-candidates { display: flex; flex-direction: column; gap: .55rem; max-height: 42vh; overflow-y: auto; margin: 1rem 0; padding-right: .25rem; scrollbar-color: #4c456e transparent; scrollbar-width: thin; }
+.steam-sync-candidate { display: flex; align-items: center; gap: .8rem; padding: .75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); cursor: pointer; background: var(--bg-tertiary); }
+.steam-sync-candidate.selected { border-color: var(--accent-primary); background: rgba(139, 92, 246, .12); }
+.steam-sync-candidate img { width: 46px; height: 58px; flex: 0 0 auto; border-radius: var(--radius-sm); object-fit: cover; }
+.steam-sync-candidate > span { min-width: 0; display: flex; flex-direction: column; gap: .2rem; }
+.steam-sync-candidate strong { color: var(--text-primary); }
+.steam-sync-candidate small { color: var(--text-muted); }
+.steam-sync-status { display: flex; align-items: center; gap: .6rem; margin: 1.25rem 0; color: var(--text-secondary); }
+.steam-sync-confirmation { margin: 1rem 0; color: var(--text-secondary); line-height: 1.5; }
+.steam-sync-confirmation strong { color: var(--text-primary); }
+.steam-sync-actions { justify-content: flex-end; }

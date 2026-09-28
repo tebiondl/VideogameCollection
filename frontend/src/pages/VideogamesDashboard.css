@@ -152,7 +152,8 @@
   z-index: 10;
 }
 
-.vg-card:hover .card-actions {
+.vg-card:hover .card-actions,
+.vg-card:focus-within .card-actions {
   opacity: 1;
 }
 
@@ -178,6 +179,11 @@
 }
 
 .card-actions .edit-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--accent-primary);
+}
+
+.card-actions .steam-sync-btn:hover {
   background: var(--bg-secondary);
   color: var(--accent-primary);
 }

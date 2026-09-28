@@ -33,14 +33,15 @@ function shownValue(value: unknown) {
   return String(value);
 }
 
-export function CollectionDuplicateModal({ game, games, onClose, onMerged }: {
+export function CollectionDuplicateModal({ game, games, initialQuery, onClose, onMerged }: {
   game: CollectionGame;
   games: CollectionGame[];
+  initialQuery?: string;
   onClose: () => void;
   onMerged: (result: { collection_game: CollectionGame; duplicate_game_id: number }) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [query, setQuery] = useState(game.name);
+  const [query, setQuery] = useState(initialQuery || game.name);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [direction, setDirection] = useState<Direction>('current_into_other');
   const [fieldSources, setFieldSources] = useState<Record<string, FieldSource>>({});
