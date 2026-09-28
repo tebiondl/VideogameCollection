@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer,
 import { fetchWithAuth } from '../lib/api';
 import { YearlyRewind } from '../components/YearlyRewind';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
-import { calculateVideogameStats, type StatsGame } from '../lib/videogameStats';
+import { calculateVideogameStats, topRankedGames, type StatsGame } from '../lib/videogameStats';
 import './AnalyticsDashboard.css';
 
 const COLORS = ['#818cf8', '#a78bfa', '#60a5fa', '#c084fc', '#2dd4bf', '#fbbf24'];
@@ -22,17 +22,31 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 
 export function AnalyticsDashboard() {
   const [games, setGames] = useState<StatsGame[]>([]);
+  const [rankingIds, setRankingIds] = useState<number[]>([]);
+  const [rankingError, setRankingError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showRewind, setShowRewind] = useState(false);
   useEffect(() => {
-    fetchWithAuth('/videogames/').then(async response => {
-      if (!response.ok) throw new Error('Could not load your collection statistics.');
-      setGames(await response.json());
-    }).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not load statistics.'))
-      .finally(() => setLoading(false));
+    Promise.allSettled([
+      fetchWithAuth('/videogames/').then(async response => {
+        if (!response.ok) throw new Error('Could not load your collection statistics.');
+        return response.json() as Promise<StatsGame[]>;
+      }),
+      fetchWithAuth('/ranking').then(async response => {
+        if (!response.ok) throw new Error('Could not load your ranking.');
+        return response.json() as Promise<{ game_ids: number[] }>;
+      }),
+    ]).then(([collection, ranking]) => {
+      if (collection.status === 'fulfilled') setGames(collection.value);
+      else setError(collection.reason instanceof Error ? collection.reason.message : 'Could not load statistics.');
+      if (ranking.status === 'fulfilled') setRankingIds(ranking.value.game_ids);
+      else setRankingError('Could not load your ranking right now.');
+      setLoading(false);
+    });
   }, []);
   const stats = useMemo(() => calculateVideogameStats(games), [games]);
+  const topFive = useMemo(() => topRankedGames(games, rankingIds), [games, rankingIds]);
   if (showRewind && !loading) return <YearlyRewind games={games.filter(game => !game.hidden && !game.merged_into_game_id)} onClose={() => setShowRewind(false)} />;
 
   return <div className="container vg-support-page vg-stat-page">
@@ -67,7 +81,7 @@ export function AnalyticsDashboard() {
         <ChartCard title="Top platforms"><div className="vg-stat-bars">{stats.platformCounts.slice(0, 8).map(row => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${row.value / (stats.platformCounts[0]?.value || 1) * 100}%` }} /></div><strong>{row.value}</strong></div>)}{!stats.platformCounts.length && <p className="text-muted">Add owned copies to see platforms.</p>}</div></ChartCard>
         <ChartCard title="Most used tags"><div className="vg-stat-bars">{stats.tagCounts.slice(0, 8).map(row => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${row.value / (stats.tagCounts[0]?.value || 1) * 100}%` }} /></div><strong>{row.value}</strong></div>)}{!stats.tagCounts.length && <p className="text-muted">Tag games to see your themes.</p>}</div></ChartCard>
         <ChartCard title="Most played"><ol className="vg-stat-toplist">{stats.mostPlayed.map(row => <li key={row.game.id}><span>{row.game.name}</span><strong>{number(row.hours)} h</strong></li>)}{!stats.mostPlayed.length && <p className="text-muted">Log playtime to see your most played games.</p>}</ol></ChartCard>
-        <ChartCard title="Highest rated"><ol className="vg-stat-toplist">{stats.favorites.map(game => <li key={game.id}><span>{game.name}</span><strong>{game.mark}/10</strong></li>)}{!stats.favorites.length && <p className="text-muted">Rate games to see your favorites.</p>}</ol><Link className="vg-stat-ranking-link" to="/dashboard/videogames/ranking">Open your Ranking →</Link></ChartCard>
+        <ChartCard title="Top 5 in Ranking"><ol className="vg-stat-toplist">{topFive.map((game, index) => <li key={game.id}><span>#{index + 1} {game.name}</span><strong>{game.mark}/10</strong></li>)}{!topFive.length && <p className="text-muted">{rankingError || 'Rate games to see your favorites.'}</p>}</ol><Link className="vg-stat-ranking-link" to="/dashboard/videogames/ranking">Open your Ranking →</Link></ChartCard>
       </div>
       <p className="vg-stat-footnote">Statistics use visible collection games. Standalone DLC entries and hidden records are shown separately. Playtime follows each game’s selected playtime mode.</p>
     </>}

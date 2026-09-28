@@ -46,3 +46,22 @@ test('tier filters and buckets keep removed games out of the available pool', ()
   assert.deepEqual(Array.from(buckets.S), [1]);
   assert.deepEqual(Array.from(buckets.unranked), [3]);
 });
+
+test('ranking drop and direct position controls keep the complete order intact', () => {
+  const ids = [1, 2, 3, 4, 5];
+  assert.deepEqual(Array.from(ranking.moveRankedGame(ids, 5, 2, 'before')), [1, 5, 2, 3, 4]);
+  assert.deepEqual(Array.from(ranking.moveRankedGame(ids, 1, 4, 'after')), [2, 3, 4, 1, 5]);
+  assert.deepEqual(Array.from(ranking.moveRankedGameToPosition(ids, 5, 1)), [5, 1, 2, 3, 4]);
+  assert.deepEqual(Array.from(ranking.moveRankedGameToPosition(ids, 1, 5)), [2, 3, 4, 5, 1]);
+  assert.strictEqual(ranking.moveRankedGame(ids, 1, 1, 'before'), ids);
+  assert.strictEqual(ranking.moveRankedGameToPosition(ids, 1, 99), ids);
+});
+
+test('statistics top five follow saved ranking order instead of rating order', () => {
+  const games = [
+    { id: 1, name: 'Higher score', mark: 10 },
+    { id: 2, name: 'Personal favorite', mark: 7 },
+    { id: 3, name: 'Hidden', mark: 10, hidden: true },
+  ];
+  assert.deepEqual(Array.from(stats.topRankedGames(games, [2, 3, 1]).map(game => game.id)), [2, 1]);
+});

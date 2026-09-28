@@ -40,6 +40,22 @@ export const EMPTY_TIER_FILTERS: TierFilters = {
 export const TIERS = ['S', 'A', 'B', 'C', 'D', 'F'] as const;
 export const BUCKETS = [...TIERS, 'unranked'] as const;
 
+export type RankDropSide = 'before' | 'after';
+
+export function moveRankedGame(ids: number[], gameId: number, targetId: number, side: RankDropSide): number[] {
+  if (gameId === targetId || !ids.includes(gameId) || !ids.includes(targetId)) return ids;
+  const next = ids.filter(id => id !== gameId);
+  next.splice(next.indexOf(targetId) + (side === 'after' ? 1 : 0), 0, gameId);
+  return next;
+}
+
+export function moveRankedGameToPosition(ids: number[], gameId: number, position: number): number[] {
+  if (!ids.includes(gameId) || !Number.isInteger(position) || position < 1 || position > ids.length) return ids;
+  const next = ids.filter(id => id !== gameId);
+  next.splice(position - 1, 0, gameId);
+  return next;
+}
+
 export function gamePlatforms(game: RankingGame): string[] {
   return [...new Set([
     ...parseCopies(game.copies).map(copy => copy.platform),

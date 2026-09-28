@@ -48,6 +48,49 @@ class RankingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [low.id, high.id])
         self.assertEqual(self.client.put("/api/ranking/order", json={"game_ids": [high.id]}).status_code, 409)
 
+    def test_columns_default_to_four_and_are_saved_per_user(self):
+        self.assertEqual(self.client.get("/api/ranking/settings").json(), {"games_per_row": 4})
+        self.assertEqual(self.client.put("/api/ranking/settings", json={"games_per_row": 6}).json(), {"games_per_row": 6})
+        self.assertEqual(self.client.get("/api/ranking/settings").json(), {"games_per_row": 6})
+        self.assertEqual(self.client.put("/api/ranking/settings", json={"games_per_row": 1}).status_code, 422)
+        self.user = self.other
+        self.assertEqual(self.client.get("/api/ranking/settings").json(), {"games_per_row": 4})
+
+    def test_newly_rated_game_joins_its_rating_group_until_it_is_moved(self):
+        high = self.game("High", mark=10)
+        middle = self.game("Middle", mark=7)
+        low = self.game("Low", mark=4)
+        unrated = self.game("Unrated")
+        self.assertEqual(self.client.get("/api/ranking").json(), {
+            "game_ids": [high.id, middle.id, low.id], "new_game_ids": [],
+        })
+        self.client.put("/api/ranking/order", json={"game_ids": [low.id, high.id, middle.id], "moved_game_id": low.id})
+        unrated.mark = 7
+        self.db.commit()
+        added = self.client.get("/api/ranking").json()
+        self.assertEqual(added["game_ids"], [low.id, high.id, middle.id, unrated.id])
+        self.assertEqual(added["new_game_ids"], [unrated.id])
+        self.client.put("/api/ranking/order", json={
+            "game_ids": [high.id, low.id, middle.id, unrated.id], "moved_game_id": high.id,
+        })
+        self.assertEqual(self.client.get("/api/ranking").json()["new_game_ids"], [unrated.id])
+        moved = self.client.put("/api/ranking/order", json={
+            "game_ids": [unrated.id, high.id, low.id, middle.id], "moved_game_id": unrated.id,
+        }).json()
+        self.assertEqual(moved["new_game_ids"], [])
+
+    def test_rating_edits_sort_until_the_user_sets_a_custom_order(self):
+        first = self.game("First", mark=9)
+        second = self.game("Second", mark=5)
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [first.id, second.id])
+        second.mark = 10
+        self.db.commit()
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [second.id, first.id])
+        self.client.put("/api/ranking/order", json={"game_ids": [first.id, second.id], "moved_game_id": first.id})
+        first.mark = 1
+        self.db.commit()
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [first.id, second.id])
+
     def test_tier_snapshot_refresh_exclusion_restore_and_order(self):
         favorite = self.game("Favorite", mark=9, status="Finished", tags="RPG", publication_year=2021)
         low = self.game("Low", mark=3, status="Finished", tags="RPG")

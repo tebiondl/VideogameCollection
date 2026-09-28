@@ -62,6 +62,15 @@ class GameRankingEntry(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     game_id = Column(Integer, ForeignKey("videogames.id"), nullable=False, index=True)
     position = Column(Integer, nullable=False)
+    newly_added = Column(Boolean, nullable=False, default=False)
+
+class GameRankingSettings(Base):
+    __tablename__ = "game_ranking_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    games_per_row = Column(Integer, nullable=False, default=4)
+    initialized = Column(Boolean, nullable=False, default=False)
+    has_custom_order = Column(Boolean, nullable=False, default=False)
 
 class GameTierList(Base):
     __tablename__ = "game_tier_lists"

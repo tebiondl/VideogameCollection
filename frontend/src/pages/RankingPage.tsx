@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Layers3, Loader2, Plus, RotateCcw, Search, Trash2, Trophy, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, GripVertical, Layers3, Loader2, Plus, RotateCcw, Search, Trash2, Trophy, X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { tagNames } from '../lib/videogameStats';
-import { BUCKETS, EMPTY_TIER_FILTERS, gamePlatforms, matchesTierFilters, tierBuckets, TIERS, type RankingGame, type TierFilters, type TierList } from '../lib/ranking';
+import { BUCKETS, EMPTY_TIER_FILTERS, gamePlatforms, matchesTierFilters, moveRankedGame, moveRankedGameToPosition, tierBuckets, TIERS, type RankDropSide, type RankingGame, type TierFilters, type TierList } from '../lib/ranking';
 import './RankingPage.css';
 
 const STATUSES = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
@@ -42,10 +42,41 @@ function GameCover({ game }: { game?: RankingGame }) {
   return game?.image_url ? <img src={game.image_url} alt="" loading="lazy" /> : <span className="vg-rank-cover-fallback">🎮</span>;
 }
 
+function RankingCard({ game, position, total, canStepUp, canStepDown, isNew, busy, dragged, dropSide, dropRank, onDragStart, onDragOver, onDragEnd, onRating, onStep, onJump }: {
+  game: RankingGame;
+  position: number;
+  total: number;
+  canStepUp: boolean;
+  canStepDown: boolean;
+  isNew: boolean;
+  busy: boolean;
+  dragged: boolean;
+  dropSide: RankDropSide | null;
+  dropRank: number | null;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+  onDragOver: (event: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  onRating: (score: number) => void;
+  onStep: (direction: -1 | 1) => void;
+  onJump: (position: number) => void;
+}) {
+  const [jumpPosition, setJumpPosition] = useState('');
+  const jump = Number(jumpPosition);
+  const canJump = Number.isInteger(jump) && jump >= 1 && jump <= total && jump !== position;
+  return <article className="glass-card vg-rank-row" data-rank-id={game.id} data-dragged={dragged} draggable={!busy} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
+    <div className="vg-rank-card-heading"><span className="vg-rank-grip" title="Drag to change position"><GripVertical size={18} /></span><strong className="vg-rank-position">#{position}</strong>{isNew && <span className="vg-rank-new" title="Added by rating. Move this game to clear the mark.">New to ranking</span>}</div>
+    <div className="vg-rank-card-game"><div className="vg-rank-cover"><GameCover game={game} /></div><div className="vg-rank-row-info"><strong title={game.name}>{game.name}</strong><small>{game.status || 'No status'}{game.publication_year ? ` · ${game.publication_year}` : ''}</small></div></div>
+    <div className="vg-rank-card-controls"><label className="vg-rank-rating">Rating<select aria-label={`Rating for ${game.name}`} value={game.mark ?? ''} disabled={busy} onChange={event => onRating(Number(event.target.value))}>{Array.from({ length: 10 }, (_, i) => i + 1).map(score => <option key={score} value={score}>{score}/10</option>)}</select></label><div className="vg-rank-move"><button type="button" aria-label={`Move ${game.name} earlier`} disabled={busy || !canStepUp} onClick={() => onStep(-1)}><ArrowLeft size={17} /></button><button type="button" aria-label={`Move ${game.name} later`} disabled={busy || !canStepDown} onClick={() => onStep(1)}><ArrowRight size={17} /></button></div></div>
+    <form className="vg-rank-jump" onSubmit={event => { event.preventDefault(); if (canJump && !busy) { onJump(jump); setJumpPosition(''); } }}><label htmlFor={`rank-jump-${game.id}`}>Move to rank</label><input id={`rank-jump-${game.id}`} aria-label={`Move ${game.name} to rank`} type="number" min="1" max={total} value={jumpPosition} onChange={event => setJumpPosition(event.target.value)} placeholder={`1–${total}`} disabled={busy} /><button type="submit" disabled={busy || !canJump}>Move</button></form>
+    {dropSide && dropRank != null && <div className={`vg-rank-drop-preview ${dropSide}`} aria-hidden="true"><span>Drop at #{dropRank}</span></div>}
+  </article>;
+}
+
 export function RankingPage() {
   const [tab, setTab] = useState<'ranking' | 'tiers'>('ranking');
   const [games, setGames] = useState<RankingGame[]>([]);
   const [orderedIds, setOrderedIds] = useState<number[]>([]);
+  const [newRankIds, setNewRankIds] = useState<number[]>([]);
   const [tierLists, setTierLists] = useState<TierList[]>([]);
   const [selectedListId, setSelectedListId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +88,9 @@ export function RankingPage() {
   const [rankTag, setRankTag] = useState('');
   const [rankPlatform, setRankPlatform] = useState('');
   const [rankMinRating, setRankMinRating] = useState('');
+  const [gamesPerRow, setGamesPerRow] = useState(4);
+  const [layoutSaving, setLayoutSaving] = useState(false);
+  const [rankSaveState, setRankSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [creating, setCreating] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createFilters, setCreateFilters] = useState<TierFilters>(EMPTY_TIER_FILTERS);
@@ -68,6 +102,9 @@ export function RankingPage() {
   const [showDeleted, setShowDeleted] = useState(false);
   const [addSearch, setAddSearch] = useState('');
   const [draggedId, setDraggedId] = useState<number | null>(null);
+  const draggedIdRef = useRef<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ gameId: number; side: RankDropSide } | null>(null);
+  const dragPointer = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   const enqueue = <T,>(work: () => Promise<T>): Promise<T> => {
@@ -79,11 +116,14 @@ export function RankingPage() {
   useEffect(() => {
     Promise.all([
       fetchWithAuth('/videogames/').then(async response => { if (!response.ok) throw new Error('Could not load your games.'); return response.json() as Promise<RankingGame[]>; }),
-      rankingApi<{ game_ids: number[] }>(''),
+      rankingApi<{ game_ids: number[]; new_game_ids: number[] }>(''),
+      rankingApi<{ games_per_row: number }>('/settings'),
       rankingApi<TierList[]>('/tier-lists'),
-    ]).then(([rows, order, lists]) => {
+    ]).then(([rows, order, settings, lists]) => {
       setGames(rows);
       setOrderedIds(order.game_ids);
+      setNewRankIds(order.new_game_ids);
+      setGamesPerRow(settings.games_per_row);
       setTierLists(lists);
       setSelectedListId(lists[0]?.id ?? null);
       setNameDraft(lists[0]?.name ?? '');
@@ -91,6 +131,20 @@ export function RankingPage() {
     }).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not load Ranking.'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (draggedId == null) return;
+    let frame = 0;
+    const scrollNearEdge = () => {
+      const y = dragPointer.current;
+      const edge = 100;
+      const speed = y < edge ? -Math.ceil((edge - y) / 8) : y > window.innerHeight - edge ? Math.ceil((y - window.innerHeight + edge) / 8) : 0;
+      if (speed && y > 0 && y < window.innerHeight) window.scrollBy(0, speed);
+      frame = window.requestAnimationFrame(scrollNearEdge);
+    };
+    frame = window.requestAnimationFrame(scrollNearEdge);
+    return () => window.cancelAnimationFrame(frame);
+  }, [draggedId]);
 
   const byId = useMemo(() => new Map(games.map(game => [game.id, game])), [games]);
   const tagOptions = useMemo(() => [...new Set(games.flatMap(game => tagNames(game.tags)))].sort(), [games]);
@@ -145,19 +199,47 @@ export function RankingPage() {
 
   const rankedGames = orderedIds.map(id => byId.get(id)).filter((game): game is RankingGame => !!game && !game.hidden && !game.merged_into_game_id && game.mark != null);
   const visibleRanked = rankedGames.filter(game => game.name.toLowerCase().includes(search.trim().toLowerCase()) && (!rankStatus || game.status === rankStatus) && (!rankTag || tagNames(game.tags).includes(rankTag)) && (!rankPlatform || gamePlatforms(game).includes(rankPlatform)) && (!rankMinRating || game.mark! >= Number(rankMinRating)));
+  const rankGridStyle = { '--rank-columns': gamesPerRow, '--rank-columns-tablet': Math.min(gamesPerRow, 3), '--rank-columns-small': Math.min(gamesPerRow, 2) } as CSSProperties;
 
-  const persistRankOrder = async (next: number[]) => {
+  const persistRankOrder = async (next: number[], movedGameId: number) => {
+    if (next === orderedIds || next.every((id, index) => id === orderedIds[index])) return;
+    const previous = orderedIds;
+    setOrderedIds(next);
     setBusy(true); setError('');
-    try { const result = await rankingApi<{ game_ids: number[] }>('/order', 'PUT', { game_ids: next }); setOrderedIds(result.game_ids); setNotice('Ranking saved.'); }
-    catch (cause) { report(cause); }
+    setRankSaveState('saving');
+    try { const result = await rankingApi<{ game_ids: number[]; new_game_ids: number[] }>('/order', 'PUT', { game_ids: next, moved_game_id: movedGameId }); setOrderedIds(result.game_ids); setNewRankIds(result.new_game_ids); setRankSaveState('saved'); }
+    catch (cause) { setOrderedIds(previous); setRankSaveState('idle'); report(cause); }
     finally { setBusy(false); }
   };
-  const moveRank = (gameId: number, targetId: number) => {
-    if (gameId === targetId || busy) return;
-    const next = orderedIds.filter(id => id !== gameId);
-    const targetPosition = next.indexOf(targetId) + (orderedIds.indexOf(gameId) < orderedIds.indexOf(targetId) ? 1 : 0);
-    next.splice(targetPosition, 0, gameId);
-    void persistRankOrder(next);
+  const saveColumns = async (columns: number) => {
+    const previous = gamesPerRow;
+    setGamesPerRow(columns); setLayoutSaving(true); setError('');
+    try { await rankingApi<{ games_per_row: number }>('/settings', 'PUT', { games_per_row: columns }); }
+    catch (cause) { setGamesPerRow(previous); report(cause); }
+    finally { setLayoutSaving(false); }
+  };
+  const handleRankDragOver = (event: DragEvent<HTMLElement>, targetId: number) => {
+    const sourceId = draggedIdRef.current;
+    if (sourceId == null || busy) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    dragPointer.current = event.clientY;
+    if (sourceId === targetId) { setDropTarget(null); return; }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const side: RankDropSide = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const next = moveRankedGame(orderedIds, sourceId, targetId, side);
+    if (next.every((id, index) => id === orderedIds[index])) { setDropTarget(null); return; }
+    setDropTarget(current => current?.gameId === targetId && current.side === side ? current : { gameId: targetId, side });
+  };
+  const finishRankDrag = () => { draggedIdRef.current = null; setDraggedId(null); setDropTarget(null); dragPointer.current = 0; };
+  const dropRank = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const sourceId = draggedIdRef.current;
+    const hoveredCard = (event.target as HTMLElement).closest<HTMLElement>('[data-rank-id]');
+    const targetId = hoveredCard ? Number(hoveredCard.dataset.rankId) : dropTarget?.gameId;
+    const side: RankDropSide = hoveredCard ? (event.clientX < hoveredCard.getBoundingClientRect().left + hoveredCard.getBoundingClientRect().width / 2 ? 'before' : 'after') : dropTarget?.side || 'before';
+    if (sourceId != null && targetId != null && !busy) void persistRankOrder(moveRankedGame(orderedIds, sourceId, targetId, side), sourceId);
+    finishRankDrag();
   };
   const stepRank = (gameId: number, direction: -1 | 1) => {
     const index = visibleRanked.findIndex(game => game.id === gameId);
@@ -167,15 +249,19 @@ export function RankingPage() {
       const from = next.indexOf(gameId);
       const to = next.indexOf(target.id);
       [next[from], next[to]] = [next[to], next[from]];
-      void persistRankOrder(next);
+      void persistRankOrder(next, gameId);
     }
+  };
+  const jumpRank = (gameId: number, position: number) => {
+    if (!busy) void persistRankOrder(moveRankedGameToPosition(orderedIds, gameId, position), gameId);
   };
   const changeRating = async (gameId: number, mark: number) => {
     setBusy(true); setError('');
     try {
       const result = await rankingApi<{ mark: number; version: number }>(`/games/${gameId}/rating`, 'PATCH', { mark });
       setGames(current => current.map(game => game.id === gameId ? { ...game, mark: result.mark, version: result.version } : game));
-      setOrderedIds((await rankingApi<{ game_ids: number[] }>('')).game_ids);
+      const order = await rankingApi<{ game_ids: number[]; new_game_ids: number[] }>('');
+      setOrderedIds(order.game_ids); setNewRankIds(order.new_game_ids);
       setNotice('Rating saved.');
     } catch (cause) { report(cause); }
     finally { setBusy(false); }
@@ -255,10 +341,13 @@ export function RankingPage() {
     {error && <div className="vg-rank-alert error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
     {notice && !error && <div className="vg-rank-alert" role="status">{notice}<button type="button" onClick={() => setNotice('')} aria-label="Dismiss message"><X size={16} /></button></div>}
     {loading ? <div className="vg-rank-loading"><Loader2 className="spinner" size={30} /></div> : tab === 'ranking' ? <>
-      <div className="vg-rank-intro glass-card"><strong>{rankedGames.length} rated games</strong><p>Initially sorted by rating. Drag a game, or use the arrows, to set your own order. Changes save automatically.</p></div>
+      <div className="vg-rank-intro glass-card"><strong>{rankedGames.length} rated games</strong><p>Drag a card to either side of another card. The colored box shows its new rank. For distant moves, enter a rank on the card. Your order saves automatically.</p></div>
       <div className="vg-rank-toolbar glass-card"><label className="vg-rank-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search rated games…" aria-label="Search rated games" /></label><select aria-label="Filter ranking by status" value={rankStatus} onChange={event => setRankStatus(event.target.value)}><option value="">All statuses</option>{STATUSES.map(status => <option key={status}>{status}</option>)}</select><select aria-label="Filter ranking by platform" value={rankPlatform} onChange={event => setRankPlatform(event.target.value)}><option value="">All platforms</option>{platformOptions.map(platform => <option key={platform}>{platform}</option>)}</select><select aria-label="Filter ranking by tag" value={rankTag} onChange={event => setRankTag(event.target.value)}><option value="">All tags</option>{tagOptions.map(tag => <option key={tag}>{tag}</option>)}</select><select aria-label="Minimum ranking rating" value={rankMinRating} onChange={event => setRankMinRating(event.target.value)}><option value="">Any rating</option>{Array.from({ length: 10 }, (_, i) => i + 1).map(score => <option key={score} value={score}>{score}+ / 10</option>)}</select></div>
-      <div className="vg-rank-results">Showing {visibleRanked.length} of {rankedGames.length}</div>
-      <div className="vg-rank-list">{visibleRanked.map((game, index) => <article className="glass-card vg-rank-row" key={game.id} draggable={!busy} onDragStart={event => { event.dataTransfer.setData('text/plain', String(game.id)); setDraggedId(game.id); }} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const id = Number(event.dataTransfer.getData('text/plain')); if (id) moveRank(id, game.id); setDraggedId(null); }} onDragEnd={() => setDraggedId(null)} data-dragged={draggedId === game.id}><span className="vg-rank-grip"><GripVertical size={18} /></span><strong className="vg-rank-position">#{orderedIds.indexOf(game.id) + 1}</strong><div className="vg-rank-cover"><GameCover game={game} /></div><div className="vg-rank-row-info"><strong>{game.name}</strong><small>{game.status || 'No status'}{game.publication_year ? ` · ${game.publication_year}` : ''}</small></div><label className="vg-rank-rating">Rating<select aria-label={`Rating for ${game.name}`} value={game.mark ?? ''} disabled={busy} onChange={event => void changeRating(game.id, Number(event.target.value))}>{Array.from({ length: 10 }, (_, i) => i + 1).map(score => <option key={score} value={score}>{score}/10</option>)}</select></label><div className="vg-rank-move"><button type="button" aria-label={`Move ${game.name} up`} disabled={busy || index === 0} onClick={() => stepRank(game.id, -1)}><ArrowUp size={17} /></button><button type="button" aria-label={`Move ${game.name} down`} disabled={busy || index === visibleRanked.length - 1} onClick={() => stepRank(game.id, 1)}><ArrowDown size={17} /></button></div></article>)}{!visibleRanked.length && <div className="glass-card vg-rank-empty">{rankedGames.length ? 'No rated games match these filters.' : 'Rate a game in your collection to start your ranking.'}</div>}</div>
+      <div className="vg-rank-results"><span>Showing {visibleRanked.length} of {rankedGames.length}{visibleRanked.length !== rankedGames.length ? ' · Ranks refer to the full list' : ''}</span><div><span role="status" className="vg-rank-save-state">{rankSaveState === 'saving' ? 'Saving order…' : rankSaveState === 'saved' ? 'Order saved' : ''}</span><label className="vg-rank-columns">Games per row <select aria-label="Games per row" value={gamesPerRow} disabled={layoutSaving} onChange={event => void saveColumns(Number(event.target.value))}>{[2, 3, 4, 5, 6].map(count => <option key={count} value={count}>{count}</option>)}</select></label></div></div>
+      <div className="vg-rank-list" style={rankGridStyle} onDragOver={event => { if (draggedIdRef.current != null) { event.preventDefault(); dragPointer.current = event.clientY; } }} onDrop={dropRank} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) dragPointer.current = 0; }}>
+        {visibleRanked.map((game, index) => <RankingCard key={game.id} game={game} position={orderedIds.indexOf(game.id) + 1} total={rankedGames.length} canStepUp={index > 0} canStepDown={index < visibleRanked.length - 1} isNew={newRankIds.includes(game.id)} busy={busy} dragged={draggedId === game.id} dropSide={dropTarget?.gameId === game.id ? dropTarget.side : null} dropRank={dropTarget?.gameId === game.id && draggedId != null ? moveRankedGame(orderedIds, draggedId, game.id, dropTarget.side).indexOf(draggedId) + 1 : null} onDragStart={event => { if ((event.target as HTMLElement).closest('button, input, select')) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(game.id)); draggedIdRef.current = game.id; setDraggedId(game.id); setDropTarget(null); }} onDragOver={event => handleRankDragOver(event, game.id)} onDragEnd={finishRankDrag} onRating={score => void changeRating(game.id, score)} onStep={direction => stepRank(game.id, direction)} onJump={position => jumpRank(game.id, position)} />)}
+        {!visibleRanked.length && <div className="glass-card vg-rank-empty">{rankedGames.length ? 'No rated games match these filters.' : 'Rate a game in your collection to start your ranking.'}</div>}
+      </div>
     </> : <div className="vg-tier-layout">
       <aside className="glass-card vg-tier-sidebar"><div><h2>Your tier lists</h2><button type="button" className="btn btn-primary" onClick={() => { flushDrafts(); setCreating(true); setCreateName(''); setCreateFilters(EMPTY_TIER_FILTERS); }}><Plus size={17} /> New list</button></div>{tierLists.map(list => <button type="button" key={list.id} className={selectedListId === list.id && !creating ? 'selected' : ''} onClick={() => selectTierList(list)}><strong>{list.name}</strong><small>{list.entries.filter(entry => !entry.deleted).length} available games</small></button>)}{!tierLists.length && <p className="text-muted">Create your first list to start placing games in tiers.</p>}</aside>
       <div className="vg-tier-main">{creating ? <section className="glass-card vg-tier-setup"><h2>Create a tier list</h2><p>Choose filters, then create a fixed pool of matching games. New games only join when you use Update available games.</p><label className="vg-tier-name">List name<input value={createName} maxLength={100} onChange={event => setCreateName(event.target.value)} placeholder="My favorite RPGs" /></label><FilterEditor value={createFilters} onChange={setCreateFilters} tags={tagOptions} platforms={platformOptions} /><p className="vg-tier-preview">{previewCount} games currently match these filters.</p><div className="vg-tier-actions"><button type="button" className="btn btn-primary" disabled={busy || !createName.trim()} onClick={() => void createTierList()}>{busy ? 'Creating…' : 'Create tier list'}</button><button type="button" className="btn btn-ghost" onClick={() => setCreating(false)}>Cancel</button></div></section> : selectedList && buckets ? <>

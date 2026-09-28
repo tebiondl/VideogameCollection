@@ -31,6 +31,11 @@ export function tagNames(raw?: string | null): string[] {
   return raw.split(',').map(value => value.trim()).filter(Boolean);
 }
 
+export function topRankedGames(games: StatsGame[], rankedIds: number[]): StatsGame[] {
+  const byId = new Map(games.filter(game => !game.hidden && !game.merged_into_game_id && game.mark != null).map(game => [game.id, game]));
+  return rankedIds.map(id => byId.get(id)).filter((game): game is StatsGame => !!game).slice(0, 5);
+}
+
 function countBy(values: Array<string | number>) {
   const counts = new Map<string, number>();
   values.forEach(value => counts.set(String(value), (counts.get(String(value)) || 0) + 1));
@@ -95,6 +100,5 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
     platformCounts,
     tagCounts,
     mostPlayed: [...playtimes].filter(row => row.hours > 0).sort((a, b) => b.hours - a.hours).slice(0, 5),
-    favorites: [...rated].sort((a, b) => b.mark! - a.mark! || a.name.localeCompare(b.name)).slice(0, 5),
   };
 }

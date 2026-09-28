@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import GameRankingEntry, GameTierList, GameTierListEntry, User, Videogame
+from ..models import GameRankingEntry, GameRankingSettings, GameTierList, GameTierListEntry, User, Videogame
 from .auth_router import get_current_user
 
 router = APIRouter(prefix="/api/ranking", tags=["ranking"])
@@ -28,6 +28,11 @@ class TierFilters(BaseModel):
 
 class RankingOrder(BaseModel):
     game_ids: list[int]
+    moved_game_id: int | None = None
+
+
+class RankingSettingsChange(BaseModel):
+    games_per_row: int = Field(ge=2, le=6)
 
 
 class RatingChange(BaseModel):
@@ -137,9 +142,57 @@ def get_ranking(db: Session = Depends(get_db), user: User = Depends(get_current_
     entries = db.query(GameRankingEntry).filter_by(user_id=user.id).order_by(GameRankingEntry.position).all()
     by_id = {game.id: game for game in games}
     ordered = [entry.game_id for entry in entries if entry.game_id in by_id]
-    used = set(ordered)
-    ordered.extend(game.id for game in sorted(games, key=lambda game: (-game.mark, game.name.casefold(), game.id)) if game.id not in used)
-    return {"game_ids": ordered}
+    entry_by_id = {entry.game_id: entry for entry in entries}
+    settings = db.get(GameRankingSettings, user.id)
+    changed = settings is None or not settings.initialized
+    if settings is None:
+        settings = GameRankingSettings(user_id=user.id)
+        db.add(settings)
+    if entries and not settings.initialized:
+        settings.has_custom_order = True  # Older saved rankings only had rows after a manual move.
+    previously_initialized = bool(settings.initialized or entries)
+    if not settings.has_custom_order:
+        ordered.sort(key=lambda game_id: (-by_id[game_id].mark, entry_by_id[game_id].position))
+    missing = sorted((game for game in games if game.id not in entry_by_id), key=lambda game: (-game.mark, game.name.casefold(), game.id))
+    changed = changed or bool(missing)
+    for game in missing:
+        if previously_initialized:
+            matching_positions = [index for index, game_id in enumerate(ordered) if by_id[game_id].mark == game.mark]
+            if matching_positions:
+                position = matching_positions[-1] + 1
+            else:
+                position = next((index for index, game_id in enumerate(ordered) if by_id[game_id].mark < game.mark), len(ordered))
+            ordered.insert(position, game.id)
+        else:
+            ordered.append(game.id)
+        entry = GameRankingEntry(user_id=user.id, game_id=game.id, position=0, newly_added=previously_initialized)
+        db.add(entry)
+        entry_by_id[game.id] = entry
+    for position, game_id in enumerate(ordered):
+        changed = changed or entry_by_id[game_id].position != position
+        entry_by_id[game_id].position = position
+    settings.initialized = True
+    if changed:
+        db.commit()
+    return {"game_ids": ordered, "new_game_ids": [game_id for game_id in ordered if entry_by_id[game_id].newly_added]}
+
+
+@router.get("/settings")
+def get_ranking_settings(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    settings = db.get(GameRankingSettings, user.id)
+    return {"games_per_row": settings.games_per_row if settings else 4}
+
+
+@router.put("/settings")
+def save_ranking_settings(payload: RankingSettingsChange, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    settings = db.get(GameRankingSettings, user.id)
+    if settings is None:
+        settings = GameRankingSettings(user_id=user.id, games_per_row=payload.games_per_row)
+        db.add(settings)
+    else:
+        settings.games_per_row = payload.games_per_row
+    db.commit()
+    return {"games_per_row": settings.games_per_row}
 
 
 @router.put("/order")
@@ -147,14 +200,23 @@ def save_ranking(payload: RankingOrder, db: Session = Depends(get_db), user: Use
     rated_ids = {game.id for game in _active_games(db, user.id) if game.mark is not None}
     if len(payload.game_ids) != len(set(payload.game_ids)) or set(payload.game_ids) != rated_ids:
         raise HTTPException(409, "Rated games changed. Reload the ranking before saving its order.")
+    if payload.moved_game_id is not None and payload.moved_game_id not in rated_ids:
+        raise HTTPException(422, "Moved game must be in the ranking")
     existing = {entry.game_id: entry for entry in db.query(GameRankingEntry).filter_by(user_id=user.id).all()}
     for position, game_id in enumerate(payload.game_ids):
         if game_id in existing:
             existing[game_id].position = position
         else:
             db.add(GameRankingEntry(user_id=user.id, game_id=game_id, position=position))
+    if payload.moved_game_id is not None and payload.moved_game_id in existing:
+        existing[payload.moved_game_id].newly_added = False
+    settings = db.get(GameRankingSettings, user.id)
+    if settings is None:
+        settings = GameRankingSettings(user_id=user.id, initialized=True)
+        db.add(settings)
+    settings.has_custom_order = True
     db.commit()
-    return {"game_ids": payload.game_ids}
+    return {"game_ids": payload.game_ids, "new_game_ids": [game_id for game_id in payload.game_ids if game_id in existing and existing[game_id].newly_added]}
 
 
 @router.patch("/games/{game_id}/rating")

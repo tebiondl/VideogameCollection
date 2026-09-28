@@ -66,6 +66,9 @@ def _run_migrations():
         "ALTER TABLE boardgames ADD COLUMN is_expansion BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE boardgames ADD COLUMN parent_game_name VARCHAR",
         "ALTER TABLE boardgame_matches ADD COLUMN import_key VARCHAR",
+        "ALTER TABLE game_ranking_entries ADD COLUMN newly_added BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE game_ranking_settings ADD COLUMN initialized BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE game_ranking_settings ADD COLUMN has_custom_order BOOLEAN NOT NULL DEFAULT 0",
     ]
     with engine.connect() as conn:
         tables = set(inspect(conn).get_table_names())
