@@ -42,10 +42,11 @@ function GameCover({ game }: { game?: RankingGame }) {
   return game?.image_url ? <img src={game.image_url} alt="" loading="lazy" /> : <span className="vg-rank-cover-fallback">🎮</span>;
 }
 
-function RankingCard({ game, position, total, canStepUp, canStepDown, isNew, busy, dragged, dropSide, dropRank, onDragStart, onDragOver, onDragEnd, onRating, onStep, onJump }: {
+function RankingCard({ game, position, minRank, maxRank, canStepUp, canStepDown, isNew, busy, dragged, dropSide, dropRank, onDragStart, onDragOver, onDragEnd, onRating, onStep, onJump }: {
   game: RankingGame;
   position: number;
-  total: number;
+  minRank: number;
+  maxRank: number;
   canStepUp: boolean;
   canStepDown: boolean;
   isNew: boolean;
@@ -62,12 +63,12 @@ function RankingCard({ game, position, total, canStepUp, canStepDown, isNew, bus
 }) {
   const [jumpPosition, setJumpPosition] = useState('');
   const jump = Number(jumpPosition);
-  const canJump = Number.isInteger(jump) && jump >= 1 && jump <= total && jump !== position;
+  const canJump = Number.isInteger(jump) && jump >= minRank && jump <= maxRank && jump !== position;
   return <article className="glass-card vg-rank-row" data-rank-id={game.id} data-dragged={dragged} draggable={!busy} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
     <div className="vg-rank-card-heading"><span className="vg-rank-grip" title="Drag to change position"><GripVertical size={18} /></span><strong className="vg-rank-position">#{position}</strong>{isNew && <span className="vg-rank-new" title="Added by rating. Move this game to clear the mark.">New to ranking</span>}</div>
     <div className="vg-rank-card-game"><div className="vg-rank-cover"><GameCover game={game} /></div><div className="vg-rank-row-info"><strong title={game.name}>{game.name}</strong><small>{game.status || 'No status'}{game.publication_year ? ` · ${game.publication_year}` : ''}</small></div></div>
     <div className="vg-rank-card-controls"><label className="vg-rank-rating">Rating<select aria-label={`Rating for ${game.name}`} value={game.mark ?? ''} disabled={busy} onChange={event => onRating(Number(event.target.value))}>{Array.from({ length: 10 }, (_, i) => i + 1).map(score => <option key={score} value={score}>{score}/10</option>)}</select></label><div className="vg-rank-move"><button type="button" aria-label={`Move ${game.name} earlier`} disabled={busy || !canStepUp} onClick={() => onStep(-1)}><ArrowLeft size={17} /></button><button type="button" aria-label={`Move ${game.name} later`} disabled={busy || !canStepDown} onClick={() => onStep(1)}><ArrowRight size={17} /></button></div></div>
-    <form className="vg-rank-jump" onSubmit={event => { event.preventDefault(); if (canJump && !busy) { onJump(jump); setJumpPosition(''); } }}><label htmlFor={`rank-jump-${game.id}`}>Move to rank</label><input id={`rank-jump-${game.id}`} aria-label={`Move ${game.name} to rank`} type="number" min="1" max={total} value={jumpPosition} onChange={event => setJumpPosition(event.target.value)} placeholder={`1–${total}`} disabled={busy} /><button type="submit" disabled={busy || !canJump}>Move</button></form>
+    <form className="vg-rank-jump" onSubmit={event => { event.preventDefault(); if (canJump && !busy) { onJump(jump); setJumpPosition(''); } }}><label htmlFor={`rank-jump-${game.id}`}>Move to rank</label><input id={`rank-jump-${game.id}`} aria-label={`Move ${game.name} to rank`} type="number" min={minRank} max={maxRank} value={jumpPosition} onChange={event => setJumpPosition(event.target.value)} placeholder={`${minRank}–${maxRank}`} disabled={busy} /><button type="submit" disabled={busy || !canJump}>Move</button></form>
     {dropSide && dropRank != null && <div className={`vg-rank-drop-preview ${dropSide}`} aria-hidden="true"><span>Drop at #{dropRank}</span></div>}
   </article>;
 }
@@ -199,6 +200,13 @@ export function RankingPage() {
 
   const rankedGames = orderedIds.map(id => byId.get(id)).filter((game): game is RankingGame => !!game && !game.hidden && !game.merged_into_game_id && game.mark != null);
   const visibleRanked = rankedGames.filter(game => game.name.toLowerCase().includes(search.trim().toLowerCase()) && (!rankStatus || game.status === rankStatus) && (!rankTag || tagNames(game.tags).includes(rankTag)) && (!rankPlatform || gamePlatforms(game).includes(rankPlatform)) && (!rankMinRating || game.mark! >= Number(rankMinRating)));
+  const visibleRatingGroups = [...new Set(visibleRanked.map(game => game.mark!))].sort((a, b) => b - a).map(rating => ({ rating, games: visibleRanked.filter(game => game.mark === rating) }));
+  const ratingRanges = new Map<number, { min: number; max: number }>();
+  rankedGames.forEach((game, index) => {
+    const range = ratingRanges.get(game.mark!);
+    if (range) range.max = index + 1;
+    else ratingRanges.set(game.mark!, { min: index + 1, max: index + 1 });
+  });
   const rankGridStyle = { '--rank-columns': gamesPerRow, '--rank-columns-tablet': Math.min(gamesPerRow, 3), '--rank-columns-small': Math.min(gamesPerRow, 2) } as CSSProperties;
 
   const persistRankOrder = async (next: number[], movedGameId: number) => {
@@ -224,7 +232,7 @@ export function RankingPage() {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     dragPointer.current = event.clientY;
-    if (sourceId === targetId) { setDropTarget(null); return; }
+    if (sourceId === targetId || byId.get(sourceId)?.mark !== byId.get(targetId)?.mark) { setDropTarget(null); return; }
     const bounds = event.currentTarget.getBoundingClientRect();
     const side: RankDropSide = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
     const next = moveRankedGame(orderedIds, sourceId, targetId, side);
@@ -236,15 +244,15 @@ export function RankingPage() {
     event.preventDefault();
     const sourceId = draggedIdRef.current;
     const hoveredCard = (event.target as HTMLElement).closest<HTMLElement>('[data-rank-id]');
-    const targetId = hoveredCard ? Number(hoveredCard.dataset.rankId) : dropTarget?.gameId;
-    const side: RankDropSide = hoveredCard ? (event.clientX < hoveredCard.getBoundingClientRect().left + hoveredCard.getBoundingClientRect().width / 2 ? 'before' : 'after') : dropTarget?.side || 'before';
-    if (sourceId != null && targetId != null && !busy) void persistRankOrder(moveRankedGame(orderedIds, sourceId, targetId, side), sourceId);
+    const targetId = hoveredCard ? Number(hoveredCard.dataset.rankId) : null;
+    const side: RankDropSide = hoveredCard && event.clientX >= hoveredCard.getBoundingClientRect().left + hoveredCard.getBoundingClientRect().width / 2 ? 'after' : 'before';
+    if (sourceId != null && targetId != null && !busy && byId.get(sourceId)?.mark === byId.get(targetId)?.mark) void persistRankOrder(moveRankedGame(orderedIds, sourceId, targetId, side), sourceId);
     finishRankDrag();
   };
   const stepRank = (gameId: number, direction: -1 | 1) => {
     const index = visibleRanked.findIndex(game => game.id === gameId);
     const target = visibleRanked[index + direction];
-    if (target && !busy) {
+    if (target && !busy && byId.get(gameId)?.mark === target.mark) {
       const next = [...orderedIds];
       const from = next.indexOf(gameId);
       const to = next.indexOf(target.id);
@@ -253,7 +261,9 @@ export function RankingPage() {
     }
   };
   const jumpRank = (gameId: number, position: number) => {
-    if (!busy) void persistRankOrder(moveRankedGameToPosition(orderedIds, gameId, position), gameId);
+    const rating = byId.get(gameId)?.mark;
+    const range = rating == null ? undefined : ratingRanges.get(rating);
+    if (!busy && range && position >= range.min && position <= range.max) void persistRankOrder(moveRankedGameToPosition(orderedIds, gameId, position), gameId);
   };
   const changeRating = async (gameId: number, mark: number) => {
     setBusy(true); setError('');
@@ -341,11 +351,14 @@ export function RankingPage() {
     {error && <div className="vg-rank-alert error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
     {notice && !error && <div className="vg-rank-alert" role="status">{notice}<button type="button" onClick={() => setNotice('')} aria-label="Dismiss message"><X size={16} /></button></div>}
     {loading ? <div className="vg-rank-loading"><Loader2 className="spinner" size={30} /></div> : tab === 'ranking' ? <>
-      <div className="vg-rank-intro glass-card"><strong>{rankedGames.length} rated games</strong><p>Drag a card to either side of another card. The colored box shows its new rank. For distant moves, enter a rank on the card. Your order saves automatically.</p></div>
+      <div className="vg-rank-intro glass-card"><strong>{rankedGames.length} rated games</strong><p>Games stay in rating groups from 10 to 1. Drag cards within a group, or enter a rank in that group. Changing a rating moves the game to its new group. Your order saves automatically.</p></div>
       <div className="vg-rank-toolbar glass-card"><label className="vg-rank-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search rated games…" aria-label="Search rated games" /></label><select aria-label="Filter ranking by status" value={rankStatus} onChange={event => setRankStatus(event.target.value)}><option value="">All statuses</option>{STATUSES.map(status => <option key={status}>{status}</option>)}</select><select aria-label="Filter ranking by platform" value={rankPlatform} onChange={event => setRankPlatform(event.target.value)}><option value="">All platforms</option>{platformOptions.map(platform => <option key={platform}>{platform}</option>)}</select><select aria-label="Filter ranking by tag" value={rankTag} onChange={event => setRankTag(event.target.value)}><option value="">All tags</option>{tagOptions.map(tag => <option key={tag}>{tag}</option>)}</select><select aria-label="Minimum ranking rating" value={rankMinRating} onChange={event => setRankMinRating(event.target.value)}><option value="">Any rating</option>{Array.from({ length: 10 }, (_, i) => i + 1).map(score => <option key={score} value={score}>{score}+ / 10</option>)}</select></div>
       <div className="vg-rank-results"><span>Showing {visibleRanked.length} of {rankedGames.length}{visibleRanked.length !== rankedGames.length ? ' · Ranks refer to the full list' : ''}</span><div><span role="status" className="vg-rank-save-state">{rankSaveState === 'saving' ? 'Saving order…' : rankSaveState === 'saved' ? 'Order saved' : ''}</span><label className="vg-rank-columns">Games per row <select aria-label="Games per row" value={gamesPerRow} disabled={layoutSaving} onChange={event => void saveColumns(Number(event.target.value))}>{[2, 3, 4, 5, 6].map(count => <option key={count} value={count}>{count}</option>)}</select></label></div></div>
       <div className="vg-rank-list" style={rankGridStyle} onDragOver={event => { if (draggedIdRef.current != null) { event.preventDefault(); dragPointer.current = event.clientY; } }} onDrop={dropRank} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) dragPointer.current = 0; }}>
-        {visibleRanked.map((game, index) => <RankingCard key={game.id} game={game} position={orderedIds.indexOf(game.id) + 1} total={rankedGames.length} canStepUp={index > 0} canStepDown={index < visibleRanked.length - 1} isNew={newRankIds.includes(game.id)} busy={busy} dragged={draggedId === game.id} dropSide={dropTarget?.gameId === game.id ? dropTarget.side : null} dropRank={dropTarget?.gameId === game.id && draggedId != null ? moveRankedGame(orderedIds, draggedId, game.id, dropTarget.side).indexOf(draggedId) + 1 : null} onDragStart={event => { if ((event.target as HTMLElement).closest('button, input, select')) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(game.id)); draggedIdRef.current = game.id; setDraggedId(game.id); setDropTarget(null); }} onDragOver={event => handleRankDragOver(event, game.id)} onDragEnd={finishRankDrag} onRating={score => void changeRating(game.id, score)} onStep={direction => stepRank(game.id, direction)} onJump={position => jumpRank(game.id, position)} />)}
+        {visibleRatingGroups.map(group => <section className="vg-rank-group" key={group.rating} aria-label={`${group.rating} out of 10 games`}>
+          <div className="vg-rank-group-heading"><h2>{group.rating}/10</h2><span>{group.games.length} {group.games.length === 1 ? 'game' : 'games'}</span></div>
+          <div className="vg-rank-group-grid">{group.games.map((game, index) => <RankingCard key={game.id} game={game} position={orderedIds.indexOf(game.id) + 1} minRank={ratingRanges.get(group.rating)!.min} maxRank={ratingRanges.get(group.rating)!.max} canStepUp={index > 0} canStepDown={index < group.games.length - 1} isNew={newRankIds.includes(game.id)} busy={busy} dragged={draggedId === game.id} dropSide={dropTarget?.gameId === game.id ? dropTarget.side : null} dropRank={dropTarget?.gameId === game.id && draggedId != null ? moveRankedGame(orderedIds, draggedId, game.id, dropTarget.side).indexOf(draggedId) + 1 : null} onDragStart={event => { if ((event.target as HTMLElement).closest('button, input, select')) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(game.id)); draggedIdRef.current = game.id; setDraggedId(game.id); setDropTarget(null); }} onDragOver={event => handleRankDragOver(event, game.id)} onDragEnd={finishRankDrag} onRating={score => void changeRating(game.id, score)} onStep={direction => stepRank(game.id, direction)} onJump={position => jumpRank(game.id, position)} />)}</div>
+        </section>)}
         {!visibleRanked.length && <div className="glass-card vg-rank-empty">{rankedGames.length ? 'No rated games match these filters.' : 'Rate a game in your collection to start your ranking.'}</div>}
       </div>
     </> : <div className="vg-tier-layout">

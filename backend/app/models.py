@@ -63,6 +63,7 @@ class GameRankingEntry(Base):
     game_id = Column(Integer, ForeignKey("videogames.id"), nullable=False, index=True)
     position = Column(Integer, nullable=False)
     newly_added = Column(Boolean, nullable=False, default=False)
+    ranked_mark = Column(Integer, nullable=True)
 
 class GameRankingSettings(Base):
     __tablename__ = "game_ranking_settings"

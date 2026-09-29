@@ -151,21 +151,33 @@ def get_ranking(db: Session = Depends(get_db), user: User = Depends(get_current_
     if entries and not settings.initialized:
         settings.has_custom_order = True  # Older saved rankings only had rows after a manual move.
     previously_initialized = bool(settings.initialized or entries)
-    if not settings.has_custom_order:
-        ordered.sort(key=lambda game_id: (-by_id[game_id].mark, entry_by_id[game_id].position))
+    # Preserve manual order inside each rating, while keeping higher ratings first.
+    # A saved rating lets changes made elsewhere in the collection use the same rule.
+    rating_changes = []
+    for game_id in ordered:
+        entry = entry_by_id[game_id]
+        if entry.ranked_mark is None:
+            entry.ranked_mark = by_id[game_id].mark
+            changed = True
+        elif entry.ranked_mark != by_id[game_id].mark:
+            rating_changes.append((game_id, entry.ranked_mark, by_id[game_id].mark))
+            entry.ranked_mark = by_id[game_id].mark
+            changed = True
+    changed_ids = {game_id for game_id, _, _ in rating_changes}
+    ordered = [game_id for game_id in ordered if game_id not in changed_ids]
+    ordered.sort(key=lambda game_id: -by_id[game_id].mark)
+    for game_id, old_mark, new_mark in rating_changes:
+        if new_mark < old_mark:
+            position = next((index for index, existing_id in enumerate(ordered) if by_id[existing_id].mark <= new_mark), len(ordered))
+        else:
+            position = next((index for index, existing_id in enumerate(ordered) if by_id[existing_id].mark < new_mark), len(ordered))
+        ordered.insert(position, game_id)
     missing = sorted((game for game in games if game.id not in entry_by_id), key=lambda game: (-game.mark, game.name.casefold(), game.id))
     changed = changed or bool(missing)
     for game in missing:
-        if previously_initialized:
-            matching_positions = [index for index, game_id in enumerate(ordered) if by_id[game_id].mark == game.mark]
-            if matching_positions:
-                position = matching_positions[-1] + 1
-            else:
-                position = next((index for index, game_id in enumerate(ordered) if by_id[game_id].mark < game.mark), len(ordered))
-            ordered.insert(position, game.id)
-        else:
-            ordered.append(game.id)
-        entry = GameRankingEntry(user_id=user.id, game_id=game.id, position=0, newly_added=previously_initialized)
+        position = next((index for index, game_id in enumerate(ordered) if by_id[game_id].mark < game.mark), len(ordered))
+        ordered.insert(position, game.id)
+        entry = GameRankingEntry(user_id=user.id, game_id=game.id, position=0, newly_added=previously_initialized, ranked_mark=game.mark)
         db.add(entry)
         entry_by_id[game.id] = entry
     for position, game_id in enumerate(ordered):
@@ -197,17 +209,20 @@ def save_ranking_settings(payload: RankingSettingsChange, db: Session = Depends(
 
 @router.put("/order")
 def save_ranking(payload: RankingOrder, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    rated_ids = {game.id for game in _active_games(db, user.id) if game.mark is not None}
+    rated_games = {game.id: game for game in _active_games(db, user.id) if game.mark is not None}
+    rated_ids = set(rated_games)
     if len(payload.game_ids) != len(set(payload.game_ids)) or set(payload.game_ids) != rated_ids:
         raise HTTPException(409, "Rated games changed. Reload the ranking before saving its order.")
     if payload.moved_game_id is not None and payload.moved_game_id not in rated_ids:
         raise HTTPException(422, "Moved game must be in the ranking")
+    if any(rated_games[first].mark < rated_games[second].mark for first, second in zip(payload.game_ids, payload.game_ids[1:])):
+        raise HTTPException(422, "Games can only be reordered within the same rating")
     existing = {entry.game_id: entry for entry in db.query(GameRankingEntry).filter_by(user_id=user.id).all()}
     for position, game_id in enumerate(payload.game_ids):
         if game_id in existing:
             existing[game_id].position = position
         else:
-            db.add(GameRankingEntry(user_id=user.id, game_id=game_id, position=position))
+            db.add(GameRankingEntry(user_id=user.id, game_id=game_id, position=position, ranked_mark=rated_games[game_id].mark))
     if payload.moved_game_id is not None and payload.moved_game_id in existing:
         existing[payload.moved_game_id].newly_added = False
     settings = db.get(GameRankingSettings, user.id)

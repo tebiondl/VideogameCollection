@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.database import Base, get_db
-from backend.app.models import User, Videogame
+from backend.app.models import GameRankingEntry, User, Videogame
 from backend.app.routers import ranking_router
 
 
@@ -43,7 +43,7 @@ class RankingTests(unittest.TestCase):
         self.game("Hidden", mark=10, hidden=True)
         self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [high.id, low.id])
         response = self.client.put("/api/ranking/order", json={"game_ids": [low.id, high.id]})
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(self.client.patch(f"/api/ranking/games/{low.id}/rating", json={"mark": 10}).json()["mark"], 10)
         self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [low.id, high.id])
         self.assertEqual(self.client.put("/api/ranking/order", json={"game_ids": [high.id]}).status_code, 409)
@@ -56,6 +56,18 @@ class RankingTests(unittest.TestCase):
         self.user = self.other
         self.assertEqual(self.client.get("/api/ranking/settings").json(), {"games_per_row": 4})
 
+    def test_existing_cross_rating_order_is_grouped_without_losing_order_within_a_rating(self):
+        nine_a = self.game("Nine A", mark=9)
+        eight = self.game("Eight", mark=8)
+        nine_b = self.game("Nine B", mark=9)
+        self.db.add_all([
+            GameRankingEntry(user_id=self.user.id, game_id=game.id, position=position)
+            for position, game in enumerate((nine_b, eight, nine_a))
+        ])
+        self.db.commit()
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [nine_b.id, nine_a.id, eight.id])
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [nine_b.id, nine_a.id, eight.id])
+
     def test_newly_rated_game_joins_its_rating_group_until_it_is_moved(self):
         high = self.game("High", mark=10)
         middle = self.game("Middle", mark=7)
@@ -64,32 +76,38 @@ class RankingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/ranking").json(), {
             "game_ids": [high.id, middle.id, low.id], "new_game_ids": [],
         })
-        self.client.put("/api/ranking/order", json={"game_ids": [low.id, high.id, middle.id], "moved_game_id": low.id})
+        self.assertEqual(self.client.put("/api/ranking/order", json={"game_ids": [low.id, high.id, middle.id], "moved_game_id": low.id}).status_code, 422)
         unrated.mark = 7
         self.db.commit()
         added = self.client.get("/api/ranking").json()
-        self.assertEqual(added["game_ids"], [low.id, high.id, middle.id, unrated.id])
+        self.assertEqual(added["game_ids"], [high.id, middle.id, unrated.id, low.id])
         self.assertEqual(added["new_game_ids"], [unrated.id])
         self.client.put("/api/ranking/order", json={
-            "game_ids": [high.id, low.id, middle.id, unrated.id], "moved_game_id": high.id,
+            "game_ids": [high.id, middle.id, unrated.id, low.id], "moved_game_id": high.id,
         })
         self.assertEqual(self.client.get("/api/ranking").json()["new_game_ids"], [unrated.id])
         moved = self.client.put("/api/ranking/order", json={
-            "game_ids": [unrated.id, high.id, low.id, middle.id], "moved_game_id": unrated.id,
+            "game_ids": [high.id, unrated.id, middle.id, low.id], "moved_game_id": unrated.id,
         }).json()
         self.assertEqual(moved["new_game_ids"], [])
 
-    def test_rating_edits_sort_until_the_user_sets_a_custom_order(self):
-        first = self.game("First", mark=9)
-        second = self.game("Second", mark=5)
-        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [first.id, second.id])
-        second.mark = 10
+    def test_rating_changes_move_to_first_when_lowered_and_last_when_raised(self):
+        high = self.game("High", mark=10)
+        nine_a = self.game("Nine A", mark=9)
+        nine_b = self.game("Nine B", mark=9)
+        eight_a = self.game("Eight A", mark=8)
+        eight_b = self.game("Eight B", mark=8)
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [high.id, nine_a.id, nine_b.id, eight_a.id, eight_b.id])
+        self.assertEqual(self.client.put("/api/ranking/order", json={"game_ids": [high.id, nine_b.id, nine_a.id, eight_a.id, eight_b.id], "moved_game_id": nine_b.id}).status_code, 200)
+        self.assertEqual(self.client.put("/api/ranking/order", json={"game_ids": [nine_b.id, high.id, nine_a.id, eight_a.id, eight_b.id]}).status_code, 422)
+        self.client.patch(f"/api/ranking/games/{nine_a.id}/rating", json={"mark": 8})
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [high.id, nine_b.id, nine_a.id, eight_a.id, eight_b.id])
+        self.client.patch(f"/api/ranking/games/{eight_a.id}/rating", json={"mark": 9})
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [high.id, nine_b.id, eight_a.id, nine_a.id, eight_b.id])
+        # Rating edits outside the ranking page follow the same placement rules.
+        eight_b.mark = 9
         self.db.commit()
-        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [second.id, first.id])
-        self.client.put("/api/ranking/order", json={"game_ids": [first.id, second.id], "moved_game_id": first.id})
-        first.mark = 1
-        self.db.commit()
-        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [first.id, second.id])
+        self.assertEqual(self.client.get("/api/ranking").json()["game_ids"], [high.id, nine_b.id, eight_a.id, eight_b.id, nine_a.id])
 
     def test_tier_snapshot_refresh_exclusion_restore_and_order(self):
         favorite = self.game("Favorite", mark=9, status="Finished", tags="RPG", publication_year=2021)
