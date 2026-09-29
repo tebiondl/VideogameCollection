@@ -42,6 +42,13 @@ def normalized(value):
     return " ".join((value or "").casefold().split())
 
 
+def steam_identity_title(appid, title):
+    """Keep an app's release identity when its current Store title was reused."""
+    # App 2357570 launched on Steam as Overwatch 2. Its 2026 Store rename to
+    # Overwatch must not attach the Steam copy to a separate 2016 game card.
+    return "Overwatch 2" if appid == 2357570 else title
+
+
 def platform_key(value):
     value = normalized(value)
     return "pc" if value in ("pc (microsoft windows)", "windows", "steam", "pc") else value
@@ -310,9 +317,15 @@ def find_steam_store_games(db, user_id, query):
     try:
         with httpx.Client(timeout=20, headers={"User-Agent": "EpicTracker/1.0"}) as client:
             country = {"North America": "US", "Japan": "JP"}.get(settings.region if settings else None, "ES")
-            candidates = steam_store_candidates(client, query, country)
+            lookup = "2357570" if _collection_title_key(query) == "overwatch 2" else query
+            candidates = steam_store_candidates(client, lookup, country)
             for item in candidates:
                 stats_name = None
+                if not (_collection_title_key(query).isdigit() or "steampowered.com/app/" in query.casefold()):
+                    identity_title = steam_identity_title(item["appid"], item["name"])
+                    item["similarity"] = SequenceMatcher(
+                        None, _collection_title_key(query), _collection_title_key(identity_title)
+                    ).ratio()
                 # Avoid a burst of account calls for broad fallback searches;
                 # only strong matches are plausible automatic verification candidates.
                 if steam_id and api_key and item.get("similarity", 0) >= 0.9:
@@ -333,7 +346,7 @@ def find_verified_steam_game(db, user_id, title):
     verified = [
         item for item in find_steam_store_games(db, user_id, title)
         if item.get("stats_verified")
-        and (match := compare_titles(title, item.get("name"))).compatible
+        and (match := compare_titles(title, steam_identity_title(item["appid"], item.get("name")))).compatible
         and match.automatic and match.score >= 0.98
     ]
     return verified[0] if len(verified) == 1 else None
@@ -487,6 +500,7 @@ def attach_steam_copy(db, game, item, igdb_id=None, copy_id=None, steam_id=None)
         row = SteamCollectionLink(
             user_id=game.user_id, steam_id=scope, collection_game_id=game.id,
             copy_id=public_id, steam_appid=item["appid"],
+            steam_imported=True,
             position=len(used_ids), counts_toward_totals=copy_store.next_shared_playtime_flag(
                 db, game.user_id, scope, item["appid"],
             ),
@@ -630,10 +644,13 @@ def reconcile_steam_library(db, user_id, items):
     for item in items:
         created_collection_game = False
         appid = item["appid"]
+        identity_title = steam_identity_title(appid, item["name"])
         catalog_row = catalog[appid]
         wanted = wanted_by_app.get(appid)
         app_links = links_by_app.get(appid, [])
         if catalog_row.is_dlc or item.get("is_dlc") or (wanted and wanted.is_dlc):
+            if appid in trashed_appids:
+                continue
             parent_name = catalog_row.parent_game_name or item.get("parent_game_name") or (wanted.parent_game_name if wanted else None)
             parent = find_parent_game(matchable_collection, parent_name)
             if parent:
@@ -672,7 +689,7 @@ def reconcile_steam_library(db, user_id, items):
                 linked_game = collection_by_id.get(existing_link.collection_game_id)
                 primary = catalog.get(catalog_row.duplicate_of_appid) if catalog_row.duplicate_of_appid else None
                 reference_title = (primary.name if primary else None) or (linked_game.name if linked_game else None)
-                identity = compare_titles(item["name"], reference_title)
+                identity = compare_titles(identity_title, reference_title)
                 target_igdb_id = item.get("igdb_id") or catalog_row.igdb_id
                 external_identity_conflict = bool(
                     target_igdb_id and linked_game and linked_game.igdb_id
@@ -732,18 +749,35 @@ def reconcile_steam_library(db, user_id, items):
         if game is None and wanted and wanted.collection_game_id:
             game = collection_by_id.get(wanted.collection_game_id)
             identity_confirmed = game is not None
+        if appid == 2357570:
+            def conflicts_with_release(igdb_id):
+                return bool(igdb_id and any(
+                    int(igdb_id) in _known_game_igdb_ids(row)
+                    and not compare_titles(identity_title, row.name).compatible
+                    for row in matchable_collection
+                ))
+
+            # Older title-based enrichment may have identified the 2016 game.
+            # Clear that stale ID before it can defeat the AppID-based match.
+            if wanted and conflicts_with_release(wanted.igdb_id):
+                wanted.igdb_id = None
+            if conflicts_with_release(item.get("igdb_id")):
+                item = {**item, "igdb_id": None}
+            if conflicts_with_release(catalog_row.igdb_id):
+                catalog_row.igdb_id = None
         target_igdb_id = ((wanted.igdb_id if wanted else None) or item.get("igdb_id")
                           or catalog_row.igdb_id)
         if game is None and target_igdb_id:
             igdb_candidates = [
                 row for row in matchable_collection
                 if row.igdb_id == target_igdb_id or _copy_has_igdb_game(row, target_igdb_id)
+                if appid != 2357570 or compare_titles(identity_title, row.name).compatible
             ]
             if len(igdb_candidates) == 1:
                 game = igdb_candidates[0]
                 identity_confirmed = True
         if game is None:
-            title_names = [item["name"], wanted.name if wanted else ""]
+            title_names = [identity_title, wanted.name if wanted and identity_title == item["name"] else ""]
             exact_candidates = [row for row in matchable_collection if any(
                 (match := compare_titles(name, row.name)).compatible
                 and match.automatic and match.score >= 0.98
@@ -754,7 +788,7 @@ def reconcile_steam_library(db, user_id, items):
         if game is None:
             review = reviews_by_app.get(appid)
             matches, automatic = _collection_title_matches(
-                matchable_collection, [item["name"], wanted.name if wanted else ""], target_igdb_id,
+                matchable_collection, title_names, target_igdb_id,
             )
             try:
                 rejected = set(json.loads(review.rejected_candidate_ids or "[]")) if review else set()
@@ -764,7 +798,8 @@ def reconcile_steam_library(db, user_id, items):
             if automatic and review is None:
                 game = matches[0][0]
                 # The automatic identity came from Steam, so Steam supplies its canonical title.
-                game.name = item["name"]
+                if identity_title == item["name"]:
+                    game.name = item["name"]
                 game.version = (game.version or 1) + 1
             elif matches:
                 if review is None:
@@ -845,10 +880,11 @@ def reconcile_steam_library(db, user_id, items):
                 continue
             # Every identity chosen by sync uses Steam's canonical title. Manual
             # linking is handled by a separate endpoint and retains the local title.
-            game.name = item["name"]
+            if identity_title == item["name"]:
+                game.name = item["name"]
         if game is None:
             game = Videogame(
-                user_id=user_id, name=item["name"],
+                user_id=user_id, name=identity_title,
                 description=wanted.description if wanted else None, comments=wanted.comments if wanted else None,
                 image_url=(wanted.image_url if wanted else None) or item.get("image_url"), status="Not Started",
                 playtime_hours=None, playtime_mode="copies", hype=wanted.hype if wanted else None,
@@ -1295,6 +1331,8 @@ def enrich_steam_with_igdb(db, client, user_id):
     for row in catalog_rows:
         if row.igdb_id is None:
             targets.setdefault(row.steam_appid, {"name": row.name, "is_dlc": row.is_dlc})
+    for appid, target in targets.items():
+        target["name"] = steam_identity_title(appid, target["name"])
     if not targets:
         return 0, None
 

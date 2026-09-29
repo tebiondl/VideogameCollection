@@ -86,6 +86,8 @@ class OwnedCopy(Base):
     playtime_hours = Column(Float)
     steam_id = Column(String, nullable=False, default="")
     steam_appid = Column(Integer, nullable=True, index=True)
+    # True only for copies created by Steam import/sync, even if later moved or selected.
+    steam_imported = Column(Boolean, nullable=False, default=False)
     # The collection card this copy occupied before a duplicate merge. Keeping
     # this on the copy makes a merge reversible without copying or overwriting
     # the user's game-level data.
@@ -145,6 +147,7 @@ class SteamCopyTrash(Base):
     collection_game_id = Column(Integer, nullable=False, default=0)
     copy_id = Column(String, nullable=False, default="")
     kind = Column(String, nullable=False, default="copy")
+    in_trash = Column(Boolean, nullable=False, default=True)
     collection_game_name = Column(String)
     copy_data = Column(String, nullable=False)
     game_data = Column(String)

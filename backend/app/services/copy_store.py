@@ -128,6 +128,7 @@ def ensure_copies(db: Session, game: Videogame) -> list[OwnedCopy]:
             price=value.get("price"), currency=value.get("currency") or "EUR",
             playtime_hours=value.get("playtime_hours"), steam_id=scope if appid else "",
             steam_appid=appid, counts_toward_totals=bool(value.get("counts_toward_totals", True)),
+            steam_imported=bool(value.get("steam_imported", appid and copy_id == f"steam:{appid}")),
         )
         db.add(row)
         rows.append(row)
@@ -144,6 +145,7 @@ def _copy_dict_with_entitlement(row: OwnedCopy, entitlement: SteamOwnedGame | No
         "igdb_id": row.igdb_id, "price": row.price, "currency": row.currency,
         "playtime_hours": row.playtime_hours,
         "steam_appid": row.steam_appid,
+        "steam_imported": bool(row.steam_imported or (row.steam_appid and row.copy_id == f"steam:{row.steam_appid}")),
         "merged_from_game_id": row.merged_from_game_id,
         "counts_toward_totals": bool(row.counts_toward_totals),
     }
@@ -236,26 +238,34 @@ def suppress_copy(db: Session, game: Videogame, row: OwnedCopy, *, reason: str =
     # autoflush of a half-populated NOT NULL record.
     value = copy_dict(db, row)
     game_snapshot = _snapshot(game)
+    kind = "copy" if value["steam_imported"] else "excluded"
     target = db.query(SteamCopyTrash).filter_by(
         user_id=game.user_id, steam_id=row.steam_id, steam_appid=row.steam_appid,
-        collection_game_id=game.id, copy_id=row.copy_id, kind="copy",
+        collection_game_id=game.id, copy_id=row.copy_id, kind=kind,
     ).first()
     if target is None:
         target = SteamCopyTrash(
             user_id=game.user_id, steam_id=row.steam_id, steam_appid=row.steam_appid,
             name=row.name or game.name, collection_game_id=game.id,
-            copy_id=row.copy_id, kind="copy", copy_data=json.dumps(value),
+            copy_id=row.copy_id, kind=kind, copy_data=json.dumps(value),
             game_data=game_snapshot,
         )
         db.add(target)
     target.name = value.get("name") or game.name
-    entitlement = db.query(SteamOwnedGame).filter_by(
-        user_id=game.user_id, steam_id=row.steam_id, steam_appid=row.steam_appid,
-    ).first()
-    target.image_url = (entitlement.image_url if entitlement else None) or game.image_url
-    target.collection_game_name = game.name
-    target.copy_data = json.dumps(value)
-    target.game_data = game_snapshot
+    if kind == "copy":
+        entitlement = db.query(SteamOwnedGame).filter_by(
+            user_id=game.user_id, steam_id=row.steam_id, steam_appid=row.steam_appid,
+        ).first()
+        target.image_url = (entitlement.image_url if entitlement else None) or game.image_url
+        target.collection_game_name = game.name
+        target.copy_data = json.dumps(value)
+        target.game_data = game_snapshot
+    else:
+        target.in_trash = False
+        target.image_url = None
+        target.collection_game_name = None
+        target.copy_data = "{}"
+        target.game_data = None
     target.deleted_at = datetime.utcnow()
     record_audit(
         db, game.user_id, "copy_suppressed", steam_id=row.steam_id,
@@ -263,6 +273,15 @@ def suppress_copy(db: Session, game: Videogame, row: OwnedCopy, *, reason: str =
         details={"reason": reason, "game_name": game.name},
     )
     return target
+
+
+def clear_copy_suppression(db: Session, user_id: int, steam_id: str, steam_appid: int, game_id: int | None = None) -> None:
+    query = db.query(SteamCopyTrash).filter_by(
+        user_id=user_id, steam_id=steam_id, steam_appid=steam_appid,
+    ).filter(SteamCopyTrash.kind.in_(("copy", "excluded")))
+    if game_id is not None:
+        query = query.filter_by(collection_game_id=game_id)
+    query.delete(synchronize_session=False)
 
 
 def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> list[OwnedCopy]:

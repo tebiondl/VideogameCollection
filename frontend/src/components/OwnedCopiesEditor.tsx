@@ -12,9 +12,11 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
   };
   const remove = (index: number) => {
     const copy = copies[index];
-    const message = copy.steam_appid
-      ? 'Move this linked Steam copy to the trash? Steam sync will not add it again unless you restore it.'
-      : 'Delete this copy?';
+    const message = copy.steam_imported
+      ? 'Move this Steam-imported copy to the trash? Steam sync will not add it again unless you restore it.'
+      : copy.steam_appid
+        ? 'Delete this manually created copy? It will not appear in the trash or return during Steam sync.'
+        : 'Delete this copy?';
     if (!window.confirm(message)) return;
     const next = copies.filter((_, copyIndex) => copyIndex !== index);
     onChange(next.length ? JSON.stringify(next) : null);
@@ -55,7 +57,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
           {canLinkSteam && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onLinkSteam!(copy, index)}><Link2 size={16} />{copy.steam_appid ? 'Change linked Steam game' : 'Link this copy to Steam'}</button>}
           {canRestoreDuplicate && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onRestoreDuplicate!(copy, index)}><CopyPlus size={16} />Move to new game entry</button>}
           {canLinkSteam && !copy.id && <small className="text-muted">Save changes before linking this new copy.</small>}
-          {onMoveToOldCopy && isSteam && <small className="text-muted">Moving this linked copy to old copies also puts its Steam link in the trash when saved, preventing sync from adding it again.</small>}
+          {onMoveToOldCopy && isSteam && <small className="text-muted">Moving this linked copy to old copies prevents sync from adding it again.{copy.steam_imported ? ' The imported copy will appear in the trash.' : ''}</small>}
         </div>}
       </div>
     </details>})}

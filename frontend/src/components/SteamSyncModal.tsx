@@ -22,6 +22,7 @@ export function SteamSyncModal({ game, onClose, onLinked, onMerge }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [ownedCount, setOwnedCount] = useState(0);
+  const [connected, setConnected] = useState(false);
   const [selectedAppid, setSelectedAppid] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [linking, setLinking] = useState(false);
@@ -39,6 +40,7 @@ export function SteamSyncModal({ game, onClose, onLinked, onMerge }: {
         if (!active) return;
         setCandidates(data.candidates);
         setOwnedCount(data.owned_count);
+        setConnected(data.connected);
         setSelectedAppid(data.candidates[0]?.steam_appid ?? null);
       })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Could not check your Steam library.'); })
@@ -81,7 +83,7 @@ export function SteamSyncModal({ game, onClose, onLinked, onMerge }: {
         </label>)}
       </div>
       {selected && <p className="steam-sync-confirmation">{linkedElsewhere ? <>This Steam copy is already linked to <strong>{linkedElsewhere.name}</strong>. Review the duplicate entries to move it to <strong>{game.name}</strong>.</> : linkedHere ? <>This Steam copy is already linked to <strong>{game.name}</strong>.</> : <>Found <strong>{selected.name}</strong> in your owned Steam library. Link this Steam copy to <strong>{game.name}</strong>?</>}</p>}
-    </> : !error && <p className="steam-sync-status" role="status">{ownedCount ? `No owned Steam game matched “${game.name}”. Try syncing your Steam account again if you recently acquired it.` : 'No owned Steam games are available yet. Connect and sync your Steam account in Discovery first.'}</p>}
+    </> : !error && <p className="steam-sync-status" role="status">{connected && game.name === 'Overwatch 2' ? 'Steam did not verify this free game in your account library or stats. If you play it on Steam, add and save a PC Steam copy to Overwatch 2, then choose Link this copy to Steam and select app 2357570.' : ownedCount ? `No owned Steam game matched “${game.name}”. Try syncing your Steam account again if you recently acquired it.` : 'No owned Steam games are available yet. Connect and sync your Steam account in Discovery first.'}</p>}
     <div className="modal-actions steam-sync-actions">
       <button type="button" className="btn btn-ghost" onClick={onClose} disabled={linking}>Cancel</button>
       {linkedElsewhere ? <button type="button" className="btn btn-secondary" onClick={() => onMerge(linkedElsewhere.name)}><GitMerge size={17} /> Review duplicate</button>

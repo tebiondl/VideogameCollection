@@ -52,6 +52,8 @@ def _run_migrations():
         "ALTER TABLE steam_entitlements ADD COLUMN stats_verified BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE steam_entitlements ADD COLUMN user_verified BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
+        "ALTER TABLE owned_copies ADD COLUMN steam_imported BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE steam_copy_suppressions ADD COLUMN in_trash BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",
         "ALTER TABLE steam_collection_links ADD COLUMN created_collection_game BOOLEAN NOT NULL DEFAULT 0",
@@ -85,6 +87,11 @@ def _run_migrations():
             if table not in tables or column in columns[table]:
                 continue
             conn.execute(text(stmt))
+            if table == "owned_copies" and column == "steam_imported":
+                conn.execute(text(
+                    "UPDATE owned_copies SET steam_imported = 1 "
+                    "WHERE steam_appid IS NOT NULL AND copy_id = 'steam:' || CAST(steam_appid AS VARCHAR)"
+                ))
             conn.commit()
             columns[table].add(column)
 
@@ -396,6 +403,7 @@ def _migrate_steam_integrity_v7():
                 row.price, row.currency = value.get("price"), value.get("currency") or "EUR"
                 row.playtime_hours = value.get("playtime_hours")
                 row.steam_id, row.steam_appid = scopes.get(game.user_id, "") if appid else "", appid
+                row.steam_imported = bool(row.steam_imported or value.get("steam_imported", appid and copy_id == f"steam:{appid}"))
                 row.created_collection_game = bool(legacy and legacy.get("created_collection_game"))
                 row.user_selected = bool(legacy and legacy.get("user_selected"))
                 row.counts_toward_totals = bool(value.get("counts_toward_totals", True))

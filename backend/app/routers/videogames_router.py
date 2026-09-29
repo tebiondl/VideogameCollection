@@ -770,6 +770,10 @@ def delete_videogame(
     db.query(WantedGame).filter_by(user_id=current_user.id, collection_game_id=db_game.id).update(
         {"collection_game_id": None, "status": "Wanted"}, synchronize_session=False,
     )
+    # Existing ranking tables have restrictive game FKs. Remove this game's
+    # placements before deleting the collection row; other games keep their order.
+    db.query(models.GameRankingEntry).filter_by(game_id=db_game.id).delete(synchronize_session=False)
+    db.query(models.GameTierListEntry).filter_by(game_id=db_game.id).delete(synchronize_session=False)
     db.delete(db_game)
     db.commit()
     return {"status": "ok"}

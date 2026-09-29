@@ -152,6 +152,83 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.client.post(f'{path}/sync-link', json={'steam_appid': 930210}).status_code, 200)
         self.assertEqual(self.db.query(SteamCollectionLink).count(), 1)
 
+    def test_manually_created_linked_copy_does_not_enter_trash(self):
+        game = Videogame(user_id=self.user.id, name='Manual Steam copy', status='Not Started', copies=json.dumps([
+            {'id': 'my-copy', 'name': 'My edition', 'platform': 'PC', 'format': 'Digital', 'source': 'Steam'},
+        ]))
+        steam = SteamOwnedGame(user_id=self.user.id, steam_appid=78, name='Manual Steam copy')
+        self.db.add_all([game, steam])
+        self.db.commit()
+        linked = self.client.post(f'/api/discovery/steam/collection-games/{game.id}/copies/my-copy/link', json={
+            'steam_appid': 78, 'mode': 'primary',
+        })
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertFalse(json.loads(linked.json()['copies'])[0]['steam_imported'])
+
+        removed = self.client.put(f'/api/videogames/{game.id}', json={'name': game.name, 'copies': None})
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(self.client.get('/api/discovery/steam/trash').json(), [])
+        suppression = self.db.query(SteamCopyTrash).one()
+        self.assertEqual(suppression.kind, 'excluded')
+        self.assertEqual(self.client.delete(f'/api/discovery/steam/trash/{suppression.id}').status_code, 404)
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [
+            {'appid': 78, 'name': game.name, 'playtime_hours': 1.0},
+        ]), 0)
+        self.db.commit()
+        self.assertIsNone(game.copies)
+
+    def test_delete_trash_item_hides_it_without_reimporting_steam_copy(self):
+        game = Videogame(user_id=self.user.id, name='Deleted Steam copy', status='Not Started')
+        self.db.add(game)
+        self.db.commit()
+        item = {'appid': 79, 'name': game.name, 'playtime_hours': 2.0}
+        service.attach_steam_copy(self.db, game, item)
+        self.db.commit()
+        self.assertTrue(json.loads(game.copies)[0]['steam_imported'])
+
+        removed = self.client.put(f'/api/videogames/{game.id}', json={'name': game.name, 'copies': None})
+        self.assertEqual(removed.status_code, 200, removed.text)
+        trash = self.client.get('/api/discovery/steam/trash').json()
+        self.assertEqual(len(trash), 1)
+        trash_id = trash[0]['id']
+        deleted = self.client.delete(f'/api/discovery/steam/trash/{trash_id}')
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+        self.assertEqual(self.client.get('/api/discovery/steam/trash').json(), [])
+        self.assertEqual(self.client.post(f'/api/discovery/steam/trash/{trash_id}/restore').status_code, 404)
+        self.assertEqual(self.client.delete(f'/api/discovery/steam/trash/{trash_id}').status_code, 404)
+        self.assertFalse(self.db.get(SteamCopyTrash, trash_id).in_trash)
+        self.assertEqual(self.db.get(SteamCopyTrash, trash_id).copy_data, '{}')
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [item]), 0)
+        self.db.commit()
+        self.assertIsNone(game.copies)
+
+    def test_cannot_delete_another_users_trash_item(self):
+        row = SteamCopyTrash(
+            user_id=self.users[1].id, steam_appid=80, name='Private',
+            collection_game_id=0, copy_id='steam:80', kind='copy', copy_data='{}',
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.assertEqual(self.client.delete(f'/api/discovery/steam/trash/{row.id}').status_code, 404)
+        self.assertTrue(self.db.get(SteamCopyTrash, row.id).in_trash)
+
+    def test_deleted_trashed_dlc_stays_excluded_from_sync(self):
+        parent = Videogame(user_id=self.user.id, name='Base Game')
+        self.db.add(parent)
+        self.db.flush()
+        row = SteamCopyTrash(
+            user_id=self.user.id, steam_appid=81, name='Expansion',
+            collection_game_id=parent.id, copy_id='', kind='dlc', copy_data='{}',
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.assertEqual(self.client.delete(f'/api/discovery/steam/trash/{row.id}').status_code, 204)
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [
+            {'appid': 81, 'name': 'Expansion', 'is_dlc': True, 'parent_game_name': parent.name},
+        ]), 0)
+        self.db.commit()
+        self.assertIsNone(parent.dlcs)
+
     def test_game_sync_does_not_duplicate_a_steam_copy_linked_elsewhere(self):
         target = Videogame(user_id=self.user.id, name='Portal 2')
         existing = Videogame(user_id=self.user.id, name='Portal 2 Steam import')
@@ -168,6 +245,94 @@ class DiscoveryTests(unittest.TestCase):
         response = self.client.post(f'{path}/sync-link', json={'steam_appid': 620})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(self.db.query(SteamCollectionLink).count(), 1)
+
+    def test_renamed_overwatch_steam_app_links_to_the_second_game(self):
+        original = Videogame(user_id=self.user.id, name='Overwatch', igdb_id=101)
+        successor = Videogame(user_id=self.user.id, name='Overwatch 2', igdb_id=202)
+        self.db.add_all([original, successor])
+        self.db.commit()
+        item = {'appid': 2357570, 'name': 'Overwatch', 'playtime_hours': 4.0, 'igdb_id': 101}
+
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [item]), 1)
+        self.db.commit()
+        link = self.db.query(SteamCollectionLink).filter_by(steam_appid=2357570).one()
+        self.assertEqual(link.collection_game_id, successor.id)
+        self.assertEqual(successor.name, 'Overwatch 2')
+        self.assertNotEqual(link.igdb_id, 101)
+        self.assertIsNone(original.copies)
+        self.assertEqual(self.client.get(f'/api/discovery/steam/collection-games/{original.id}/sync-candidates').json()['candidates'], [])
+        candidates = self.client.get(f'/api/discovery/steam/collection-games/{successor.id}/sync-candidates').json()['candidates']
+        self.assertEqual([candidate['steam_appid'] for candidate in candidates], [2357570])
+
+    def test_renamed_overwatch_repairs_an_old_automatic_link(self):
+        original = Videogame(user_id=self.user.id, name='Overwatch')
+        successor = Videogame(user_id=self.user.id, name='Overwatch 2')
+        self.db.add_all([original, successor])
+        self.db.flush()
+        self.db.add(SteamCollectionLink(
+            user_id=self.user.id, collection_game_id=original.id, copy_id='steam:2357570',
+            steam_appid=2357570, name='Overwatch', platform='PC', format='Digital',
+            source='Steam', user_selected=False,
+        ))
+        self.db.commit()
+
+        self.assertEqual(service.reconcile_steam_library(self.db, self.user.id, [
+            {'appid': 2357570, 'name': 'Overwatch', 'playtime_hours': 4.0},
+        ]), 1)
+        self.db.commit()
+        links = self.db.query(SteamCollectionLink).filter_by(steam_appid=2357570).all()
+        self.assertEqual([link.collection_game_id for link in links], [successor.id])
+
+    def test_renamed_overwatch_can_use_account_stats_when_steam_omits_free_entitlement(self):
+        original = Videogame(user_id=self.user.id, name='Overwatch')
+        successor = Videogame(user_id=self.user.id, name='Overwatch 2')
+        self.db.add_all([original, successor])
+        self.db.commit()
+        verified = {
+            'appid': 2357570, 'name': 'Overwatch', 'stats_verified': True,
+            'store_url': 'https://store.steampowered.com/app/2357570/',
+        }
+        with patch.object(service, 'find_verified_steam_game', return_value=verified) as lookup:
+            path = f'/api/discovery/steam/collection-games/{successor.id}'
+            candidates = self.client.get(f'{path}/sync-candidates').json()['candidates']
+            self.assertEqual([candidate['steam_appid'] for candidate in candidates], [2357570])
+            response = self.client.post(f'{path}/sync-link', json={'steam_appid': 2357570})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(lookup.call_count, 2)
+        self.assertEqual(json.loads(successor.copies)[0]['steam_appid'], 2357570)
+        self.assertIsNone(original.copies)
+
+    def test_unverified_overwatch_store_listing_cannot_be_linked_by_sync(self):
+        game = Videogame(user_id=self.user.id, name='Overwatch 2')
+        self.db.add(game)
+        self.db.commit()
+        with patch.object(service, 'find_verified_steam_game', return_value=None):
+            path = f'/api/discovery/steam/collection-games/{game.id}'
+            self.assertEqual(self.client.get(f'{path}/sync-candidates').json()['candidates'], [])
+            self.assertEqual(self.client.post(f'{path}/sync-link', json={'steam_appid': 2357570}).status_code, 404)
+        self.assertEqual(self.db.query(SteamCollectionLink).count(), 0)
+
+    def test_overwatch_two_store_lookup_uses_appid_and_account_stats(self):
+        self.db.add(DiscoverySettings(user_id=self.user.id, steam_id='76561197960434622'))
+        self.db.commit()
+        with patch.object(service, 'resolve_steam_api_key', return_value='test-key'), \
+             patch.object(service, 'steam_store_candidates', return_value=[{
+                 'appid': 2357570, 'name': 'Overwatch', 'similarity': .8,
+             }]) as store, \
+             patch.object(service, '_steam_account_stats_title', return_value='Overwatch') as stats:
+            result = service.find_verified_steam_game(self.db, self.user.id, 'Overwatch 2')
+        self.assertEqual(result['appid'], 2357570)
+        self.assertEqual(result['similarity'], 1.0)
+        self.assertEqual(store.call_args.args[1], '2357570')
+        stats.assert_called_once()
+        with patch.object(service, 'resolve_steam_api_key', return_value='test-key'), \
+             patch.object(service, 'steam_store_candidates', return_value=[{
+                 'appid': 2357570, 'name': 'Overwatch', 'similarity': 1.0,
+             }]), \
+             patch.object(service, '_steam_account_stats_title', return_value='Overwatch'):
+            by_id = service.find_steam_store_games(self.db, self.user.id, '2357570')
+        self.assertEqual(by_id[0]['similarity'], 1.0)
+        self.assertTrue(by_id[0]['stats_verified'])
 
     def test_owned_library_sync_replaces_an_older_unverified_store_selection(self):
         catalog = SteamOwnedGame(user_id=self.user.id, steam_appid=620,

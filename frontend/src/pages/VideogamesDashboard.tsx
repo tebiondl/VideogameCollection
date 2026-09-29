@@ -358,11 +358,14 @@ export function VideogamesDashboard() {
     if (!window.confirm("Are you sure you want to delete this game?")) return;
     try {
       const res = await fetchWithAuth(`/videogames/${gameId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setGames(games.filter(g => g.id !== gameId));
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(typeof data?.detail === 'string' ? data.detail : 'Could not delete the game. Please try again.');
       }
+      setGames(current => current.filter(game => game.id !== gameId));
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Could not delete the game. Please try again.');
     }
   };
 

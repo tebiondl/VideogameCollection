@@ -7,5 +7,6 @@
 .steam-trash-card p { margin:0 0 .3rem; color:var(--text-secondary); }
 .steam-trash-card small { color:var(--text-muted); }
 .steam-trash-card .trash-warning { margin-top:.45rem; color:#fbbf24; font-size:.82rem; }
+.steam-trash-actions { display:flex; gap:.5rem; flex-wrap:wrap; justify-content:flex-end; }
 .trash-empty { display:grid; place-items:center; gap:.5rem; padding:3rem; text-align:center; }
-@media(max-width:620px) { .steam-trash-card { grid-template-columns:52px minmax(0,1fr); } .steam-trash-card > img, .steam-trash-cover { width:52px; height:70px; } .steam-trash-card .btn { grid-column:1 / -1; } }
+@media(max-width:620px) { .steam-trash-card { grid-template-columns:52px minmax(0,1fr); } .steam-trash-card > img, .steam-trash-cover { width:52px; height:70px; } .steam-trash-actions { grid-column:1 / -1; justify-content:stretch; } .steam-trash-actions .btn { flex:1; } }
