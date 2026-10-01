@@ -47,7 +47,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [dlcs, setDlcs] = useState('');
   const [copies, setCopies] = useState<string | null>(null);
   const [oldCopies, setOldCopies] = useState<string | null>(null);
-  const [playtimeMode, setPlaytimeMode] = useState<PlaytimeMode>('user');
+  const [playtimeMode, setPlaytimeMode] = useState<PlaytimeMode>('copies');
   const [reviewed, setReviewed] = useState(false);
   const [playNext, setPlayNext] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -73,7 +73,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [igdbComments, setIgdbComments] = useState('');
   const [igdbCopies, setIgdbCopies] = useState<string | null>(null);
   const [igdbOldCopies, setIgdbOldCopies] = useState<string | null>(null);
-  const [igdbPlaytimeMode, setIgdbPlaytimeMode] = useState<PlaytimeMode>('user');
+  const [igdbPlaytimeMode, setIgdbPlaytimeMode] = useState<PlaytimeMode>('copies');
   const [igdbReviewed, setIgdbReviewed] = useState(false);
   const [igdbPlayNext, setIgdbPlayNext] = useState(false);
   const [igdbHidden, setIgdbHidden] = useState(false);
@@ -156,7 +156,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     setIgdbComments('');
     setIgdbCopies(null);
     setIgdbOldCopies(null);
-    setIgdbPlaytimeMode('user');
+    setIgdbPlaytimeMode('copies');
     setIgdbReviewed(false);
     setIgdbPlayNext(false);
     setIgdbHidden(false);
