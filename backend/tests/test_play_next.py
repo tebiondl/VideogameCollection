@@ -69,6 +69,17 @@ class PlayNextTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.json()["play_next"])
 
+    def test_save_as_new_allows_similar_titles_without_overwriting_original(self):
+        original = self.create_game(status="Finished", reviewed=True)
+        duplicate = self.create_game(play_next=True, playtime_mode="copies")
+        self.assertNotEqual(duplicate["id"], original["id"])
+        listed = {game["id"]: game for game in self.client.get("/api/videogames/").json()}
+        self.assertEqual(len(listed), 2)
+        self.assertEqual(listed[original["id"]]["status"], "Finished")
+        self.assertTrue(listed[original["id"]]["reviewed"])
+        self.assertTrue(listed[duplicate["id"]]["play_next"])
+        self.assertEqual(listed[duplicate["id"]]["playtime_mode"], "copies")
+
     def test_stale_edits_cannot_overwrite_selection(self):
         game = self.create_game()
         url = f'/api/videogames/{game["id"]}'

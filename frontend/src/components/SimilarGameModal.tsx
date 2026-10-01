@@ -14,15 +14,17 @@ interface Props {
   onCancel: () => void;
   onSaveNew: () => void;
   onUpdateExisting: (id: number) => void;
+  isSaving?: boolean;
+  error?: string;
 }
 
-export function SimilarGameModal({ matches, onCancel, onSaveNew, onUpdateExisting }: Props) {
+export function SimilarGameModal({ matches, onCancel, onSaveNew, onUpdateExisting, isSaving = false, error }: Props) {
   return (
     <div className="modal-overlay">
-      <div className="glass-card modal-content">
-        <button className="modal-close" onClick={onCancel}><X size={20}/></button>
+      <div className="glass-card modal-content" role="dialog" aria-modal="true" aria-labelledby="similar-games-title" aria-busy={isSaving}>
+        <button type="button" className="modal-close" onClick={onCancel} disabled={isSaving} aria-label="Close similar games"><X size={20}/></button>
         
-        <h2>Similar Games Detected</h2>
+        <h2 id="similar-games-title">Similar Games Detected</h2>
         <p className="text-secondary" style={{ marginBottom: '1.5rem', marginTop: '0.5rem' }}>
           We found {matches.length} game(s) in your collection with a very similar name. Do you want to update an existing one instead?
         </p>
@@ -42,6 +44,8 @@ export function SimilarGameModal({ matches, onCancel, onSaveNew, onUpdateExistin
                 </div>
               </div>
               <button 
+                type="button"
+                disabled={isSaving}
                 className="btn btn-secondary" 
                 onClick={() => onUpdateExisting(game.id)}
               >
@@ -51,12 +55,14 @@ export function SimilarGameModal({ matches, onCancel, onSaveNew, onUpdateExistin
           ))}
         </div>
 
+        {error && <div className="auth-error" role="alert" style={{ marginBottom: '1rem' }}>{error}</div>}
+
         <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={isSaving}>
             Return & Edit
           </button>
-          <button className="btn btn-primary" onClick={onSaveNew}>
-            Save as New Game
+          <button type="button" className="btn btn-primary" onClick={onSaveNew} disabled={isSaving}>
+            {isSaving ? 'Saving…' : 'Save as New Game'}
           </button>
         </div>
       </div>

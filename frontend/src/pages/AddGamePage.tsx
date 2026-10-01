@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, X, Check, Edit2, Search, Gamepad2, HelpCircle } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
+import { saveCollectionGame } from '../lib/saveCollectionGame';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
@@ -189,15 +190,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
 
   const saveIgdbItem = async () => {
     if (selectedIgdbGame.is_dlc) throw new Error('Expansions are stored inside a base game. Open the base game and add it in the DLC section.');
-    const res = await fetchWithAuth('/videogames/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildIgdbPayload()),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.detail || 'Failed to save game');
-    }
+    await saveCollectionGame(buildIgdbPayload());
     navigate('/dashboard/videogames');
   };
 
@@ -441,34 +434,40 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   };
 
   const saveManualItem = async () => {
+    const payload = {
+      name, description: description || null, comments: comments || null, image_url: imageUrl || null,
+      status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
+      mark: mark !== '' ? mark : null,
+      hype: hype !== '' ? hype : null,
+      completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
+      completion_percentage: completionPercentage !== '' ? completionPercentage : null,
+      tags: tags.length > 0 ? tags.join(',') : null,
+      dlcs: dlcs || null,
+      copies,
+      old_copies: oldCopies,
+      playtime_mode: playtimeMode,
+      reviewed,
+      play_next: playNext,
+      hidden,
+    };
+
+    await saveCollectionGame(payload);
+    navigate('/dashboard/videogames');
+  };
+
+  const handleSaveAsNew = async () => {
+    if (isSubmitting) return;
+    setError('');
     setIsSubmitting(true);
     try {
-      const payload = {
-        name, description: description || null, comments: comments || null, image_url: imageUrl || null,
-        status, playtime_hours: playtimeHours !== '' ? playtimeHours : null,
-        mark: mark !== '' ? mark : null,
-        hype: hype !== '' ? hype : null,
-        completion_date: completionDate || null, publication_year: pubYear !== '' ? pubYear : null,
-        completion_percentage: completionPercentage !== '' ? completionPercentage : null,
-        tags: tags.length > 0 ? tags.join(',') : null,
-        dlcs: dlcs || null,
-        copies,
-        old_copies: oldCopies,
-        playtime_mode: playtimeMode,
-        reviewed,
-        play_next: playNext,
-        hidden,
-      };
-
-      const res = await fetchWithAuth('/videogames/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error('Failed to save game');
-      navigate('/dashboard/videogames');
-    } catch (err: any) {
-      setError(err.message);
+      if (activeTab === 'search' && selectedIgdbGame) {
+        await saveIgdbItem();
+      } else {
+        await saveManualItem();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the game. Please try again.');
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -565,7 +564,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
         </div>
       </div>
 
-      {error && <div className="auth-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
+      {error && <div className="auth-error" role="alert" style={{ marginBottom: '1.5rem' }}>{error}</div>}
 
       {/* ------------------------------- */}
       {/* MANUAL TAB */}
@@ -1196,16 +1195,10 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
       {showFuzzyModal && !editingItem && (
         <SimilarGameModal
           matches={similarGames}
-          onCancel={() => setShowFuzzyModal(false)}
-          onSaveNew={() => {
-            setShowFuzzyModal(false);
-            if (activeTab === 'search' && selectedIgdbGame) {
-              setIsSubmitting(true);
-              saveIgdbItem().catch((err: Error) => { setError(err.message); setIsSubmitting(false); });
-            } else {
-              saveManualItem();
-            }
-          }}
+          isSaving={isSubmitting}
+          error={error}
+          onCancel={() => { if (!isSubmitting) setShowFuzzyModal(false); }}
+          onSaveNew={handleSaveAsNew}
           onUpdateExisting={performUpdateNativeData}
         />
       )}
