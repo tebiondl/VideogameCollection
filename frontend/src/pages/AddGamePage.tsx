@@ -49,6 +49,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [oldCopies, setOldCopies] = useState<string | null>(null);
   const [playtimeMode, setPlaytimeMode] = useState<PlaytimeMode>('user');
   const [reviewed, setReviewed] = useState(false);
+  const [playNext, setPlayNext] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -74,6 +75,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   const [igdbOldCopies, setIgdbOldCopies] = useState<string | null>(null);
   const [igdbPlaytimeMode, setIgdbPlaytimeMode] = useState<PlaytimeMode>('user');
   const [igdbReviewed, setIgdbReviewed] = useState(false);
+  const [igdbPlayNext, setIgdbPlayNext] = useState(false);
   const [igdbHidden, setIgdbHidden] = useState(false);
   const igdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -156,6 +158,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     setIgdbOldCopies(null);
     setIgdbPlaytimeMode('user');
     setIgdbReviewed(false);
+    setIgdbPlayNext(false);
     setIgdbHidden(false);
   };
 
@@ -180,6 +183,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     old_copies: igdbOldCopies,
     playtime_mode: igdbPlaytimeMode,
     reviewed: igdbReviewed,
+    play_next: igdbPlayNext,
     hidden: igdbHidden,
   });
 
@@ -452,6 +456,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
         old_copies: oldCopies,
         playtime_mode: playtimeMode,
         reviewed,
+        play_next: playNext,
         hidden,
       };
 
@@ -496,6 +501,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
         old_copies: oldCopies,
         playtime_mode: playtimeMode,
         reviewed,
+        play_next: playNext,
         hidden,
       };
 
@@ -629,6 +635,12 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
 
           <div className="data-section-user">
             <h3 className="section-title">User Data</h3>
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={playNext} onChange={event => setPlayNext(event.target.checked)} />
+                Planning to play next
+              </label>
+            </div>
             <div className="form-group">
               <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
                 <input type="checkbox" checked={reviewed} onChange={event => setReviewed(event.target.checked)} />
@@ -1069,6 +1081,12 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="igdb-config-divider" />
 
               <h3 style={{ marginBottom: '1.25rem', color: 'var(--text-primary)' }}>Your Play Details</h3>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={igdbPlayNext} onChange={event => setIgdbPlayNext(event.target.checked)} />
+                  Planning to play next
+                </label>
+              </div>
               <div className="form-group">
                 <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
                   <input type="checkbox" checked={igdbReviewed} onChange={event => setIgdbReviewed(event.target.checked)} />

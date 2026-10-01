@@ -138,6 +138,8 @@ export function VideogamesDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingGame, setEditingGame] = useState<any>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [savingPlayNext, setSavingPlayNext] = useState<Set<number>>(new Set());
+  const playNextRequests = useRef(new Set<number>());
   const [metadataLookup, setMetadataLookup] = useState<{ gameId: number; name: string; loading: boolean; message: string; error: boolean } | null>(null);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
@@ -369,6 +371,30 @@ export function VideogamesDashboard() {
     }
   };
 
+  const togglePlayNext = async (game: { id: number; name: string; version?: number }, playNext: boolean) => {
+    if (playNextRequests.current.has(game.id)) return;
+    playNextRequests.current.add(game.id);
+    setSavingPlayNext(new Set(playNextRequests.current));
+    try {
+      const res = await fetchWithAuth(`/videogames/${game.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: game.name, play_next: playNext, version: game.version }),
+      });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || 'Could not save your play-next selection.');
+      }
+      const saved = await res.json();
+      setGames(current => current.map(item => item.id === saved.id ? saved : item));
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not save your play-next selection.');
+    } finally {
+      playNextRequests.current.delete(game.id);
+      setSavingPlayNext(new Set(playNextRequests.current));
+    }
+  };
+
   const saveEdit = async () => {
     if (!editingGame || isSavingEdit) return;
     const draft = editingGame;
@@ -506,6 +532,8 @@ export function VideogamesDashboard() {
      if (!!g.hidden !== !!filterState.hiddenOnly) return false;
      if (filterState.reviewedState === 'reviewed' && !g.reviewed) return false;
      if (filterState.reviewedState === 'unreviewed' && !!g.reviewed) return false;
+     if (filterState.playNextState === 'planned' && !g.play_next) return false;
+     if (filterState.playNextState === 'unplanned' && !!g.play_next) return false;
      if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
      
      if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
@@ -732,7 +760,7 @@ export function VideogamesDashboard() {
           </div>
         ) : displayGames.length > 0 ? (
           pagedGames.map((game: any) => (
-            <div key={game.id} className="vg-card glass-card" onClick={() => setEditingGame({ ...game })}>
+            <div key={game.id} className={`vg-card glass-card${game.play_next ? ' vg-card--play-next' : ''}`} onClick={() => { if (!savingPlayNext.has(game.id)) setEditingGame({ ...game }); }}>
               <div className="vg-cover-wrapper">
                 {game.image_url ? (
                   <img src={game.image_url} alt={game.name} className="vg-cover" />
@@ -742,6 +770,12 @@ export function VideogamesDashboard() {
               </div>
               <div className="vg-info">
                 <h3>{game.name} {game.is_dlc && <span className="vg-dlc-badge" title="Standalone DLC / expansion"><Puzzle size={14} /> DLC</span>}</h3>
+                <label className="vg-play-next" onClick={event => event.stopPropagation()}>
+                  <input type="checkbox" checked={!!game.play_next} disabled={savingPlayNext.has(game.id)}
+                    aria-label={`Play ${game.name} next`}
+                    onChange={event => { void togglePlayNext(game, event.target.checked); }} />
+                  Play next
+                </label>
                 <div className="vg-player-data">
                   <span className="badge">{game.status}</span>
                   {displayPlaytimeHours(game) != null && <span><strong>{displayPlaytimeHours(game)}</strong> hrs</span>}
@@ -756,7 +790,7 @@ export function VideogamesDashboard() {
               </div>
               <div className="card-actions">
                 <button type="button" className="icon-btn steam-sync-btn" onClick={event => { event.stopPropagation(); setSteamSyncGame({ ...game }); }} title="Sync with Steam" aria-label={`Sync ${game.name} with Steam`}><RefreshCw size={16} /></button>
-                <button className="icon-btn edit-btn" onClick={event => { event.stopPropagation(); setEditingGame({ ...game }); }} title="Edit"><Edit2 size={16} /></button>
+                <button className="icon-btn edit-btn" disabled={savingPlayNext.has(game.id)} onClick={event => { event.stopPropagation(); setEditingGame({ ...game }); }} title="Edit"><Edit2 size={16} /></button>
                 <button className="icon-btn delete-btn" onClick={event => { event.stopPropagation(); handleDelete(game.id); }} title="Delete"><Trash2 size={16} /></button>
               </div>
             </div>
@@ -901,6 +935,13 @@ export function VideogamesDashboard() {
 
             <div className="data-section-user">
               <h3 className="section-title">User Data</h3>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!editingGame.play_next} onChange={event => setEditingGame({ ...editingGame, play_next: event.target.checked })} />
+                  Planning to play next
+                </label>
+                <p className="text-muted" style={{ margin: '.35rem 0 0', fontSize: '.82rem' }}>Give this game a teal halo so it is easy to find in your collection.</p>
+              </div>
               <div className="form-group">
                 <label className="form-label" style={{ display: 'flex', flexDirection: 'row', gap: '.55rem', alignItems: 'center', cursor: 'pointer' }}>
                   <input type="checkbox" checked={!!editingGame.reviewed} onChange={event => setEditingGame({ ...editingGame, reviewed: event.target.checked })} />

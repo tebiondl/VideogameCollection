@@ -28,3 +28,10 @@ test('removing every old copy sends null so persisted history is cleared', () =>
   const payload = collectionGameUpdatePayload({ name: 'Game', old_copies: null });
   assert.equal(payload.old_copies, null);
 });
+
+test('editing other game details preserves the play-next selection', () => {
+  const payload = collectionGameUpdatePayload({ name: 'Game', comments: 'Updated notes', play_next: true });
+  assert.equal(payload.play_next, true);
+  assert.equal(collectionGameUpdatePayload({ name: 'Game', play_next: false }).play_next, false);
+  assert.equal(collectionGameUpdatePayload({ name: 'Game' }).play_next, false);
+});

@@ -30,6 +30,7 @@ export interface FilterState {
   dateRange: { min: number | ''; max: number | '' };
   hiddenOnly: boolean;
   reviewedState: 'all' | 'reviewed' | 'unreviewed';
+  playNextState: 'all' | 'planned' | 'unplanned';
 }
 
 export const DEFAULT_FILTER_STATE: FilterState = {
@@ -44,6 +45,7 @@ export const DEFAULT_FILTER_STATE: FilterState = {
   dateRange: { min: '', max: '' },
   hiddenOnly: false,
   reviewedState: 'all',
+  playNextState: 'all',
 };
 
 interface Props {
@@ -275,6 +277,23 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                  <p className="text-muted" style={{ margin: '.65rem 0 0', fontSize: '.82rem' }}>
                    Use “Not checked” to continue reviewing your collection where you left off.
                  </p>
+               </div>
+
+               <div className="filter-section">
+                 <h3>Play next</h3>
+                 <div className="status-pills">
+                   {([
+                     ['all', 'All games'],
+                     ['planned', 'Planning to play next'],
+                     ['unplanned', 'Not planned next'],
+                   ] as const).map(([value, label]) => <button
+                     type="button"
+                     key={value}
+                     className={`status-pill ${filterState.playNextState === value ? 'active' : ''}`}
+                     aria-pressed={filterState.playNextState === value}
+                     onClick={() => onChange({ ...filterState, playNextState: value })}
+                   >{label}</button>)}
+                 </div>
                </div>
 
                <div className="filter-section">

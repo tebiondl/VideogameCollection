@@ -134,15 +134,18 @@ class VideogameBase(BaseModel):
 
 class VideogameCreate(VideogameBase):
     reviewed: bool = False
+    play_next: bool = False
 
 class VideogameUpdate(VideogameBase):
     id: int
     reviewed: bool = False
+    play_next: bool = False
 
 class VideogameResponse(VideogameBase):
     id: int
     user_id: int
     reviewed: bool = False
+    play_next: bool = False
 
     class Config:
         from_attributes = True

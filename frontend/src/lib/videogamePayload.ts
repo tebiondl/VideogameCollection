@@ -22,6 +22,7 @@ export interface EditableCollectionGame {
   old_copies?: string | null;
   hidden?: boolean;
   reviewed?: boolean;
+  play_next?: boolean;
   version?: number | null;
 }
 
@@ -50,6 +51,7 @@ export function collectionGameUpdatePayload(game: EditableCollectionGame) {
     old_copies: game.old_copies || null,
     hidden: !!game.hidden,
     reviewed: !!game.reviewed,
+    play_next: !!game.play_next,
     version: game.version ?? null,
   };
 }

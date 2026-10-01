@@ -48,6 +48,7 @@ class Videogame(Base):
     old_copies = Column(String, nullable=True) # JSON array of historical console / playtime records
     hidden = Column(Boolean, nullable=False, default=False)
     reviewed = Column(Boolean, nullable=False, default=False)
+    play_next = Column(Boolean, nullable=False, default=False)
     merged_into_game_id = Column(Integer, nullable=True, index=True)
     user_modified_at = Column(DateTime, nullable=True)
     version = Column(Integer, nullable=False, default=1)

@@ -169,6 +169,37 @@
 
 .vg-card:hover { border-color: #505978; }
 
+.vg-card.vg-card--play-next {
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, .45), 0 0 22px rgba(45, 212, 191, .28);
+}
+
+.vg-card.vg-card--play-next:hover {
+  border-color: #5eead4;
+  box-shadow: 0 0 0 1px rgba(94, 234, 212, .6), 0 0 28px rgba(45, 212, 191, .4);
+}
+
+.vg-play-next {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  margin-top: .55rem;
+  padding: .3rem .55rem;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: .8rem;
+  cursor: pointer;
+}
+
+.vg-card--play-next .vg-play-next {
+  color: #5eead4;
+  background: rgba(45, 212, 191, .1);
+}
+
+.vg-play-next input { accent-color: #2dd4bf; cursor: pointer; }
+.vg-play-next:focus-within { outline: 2px solid #5eead4; outline-offset: 2px; }
+.vg-play-next:has(input:disabled) { opacity: .6; cursor: wait; }
+
 .card-actions .icon-btn {
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
