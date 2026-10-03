@@ -420,6 +420,92 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.db.query(Videogame).count(), 1)
         self.assertEqual({copy['platform'] for copy in json.loads(owned.copies)}, {'Nintendo Switch', 'PC'})
 
+    def test_acquisition_can_select_existing_edition_and_preserves_owned_progress(self):
+        owned = Videogame(
+            user_id=self.user.id, name='The Witcher 3: Wild Hunt', status='Finished',
+            mark=10, playtime_hours=120, comments='My review',
+            copies=json.dumps([{'id': 'steam-copy', 'platform': 'PC', 'format': 'Digital',
+                                'source': 'Steam', 'steam_appid': 292030}]),
+        )
+        self.db.add(owned)
+        self.db.commit()
+        wanted = self.create('The Witcher 3: Wild Hunt - Complete Edition', platform='Nintendo Switch')
+        matches = self.client.post('/api/videogames/check-similar', json={'name': wanted['name']})
+        self.assertEqual(matches.status_code, 200, matches.text)
+        self.assertIn(owned.id, [row['id'] for row in matches.json()])
+        payload = {'name': wanted['name'], 'platform': 'Nintendo Switch', 'format': 'Physical',
+                   'source': 'Retail', 'collection_game_id': owned.id, 'price': 35,
+                   'status': 'Not Started', 'mark': 1, 'playtime_hours': 0, 'comments': 'New notes'}
+        response = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['collection_game_id'], owned.id)
+        self.assertEqual(self.db.query(Videogame).count(), 1)
+        self.assertEqual((owned.name, owned.status, owned.mark, owned.playtime_hours, owned.comments),
+                         ('The Witcher 3: Wild Hunt', 'Finished', 10, 120, 'My review'))
+        copies = json.loads(owned.copies)
+        self.assertEqual({copy['platform'] for copy in copies}, {'PC', 'Nintendo Switch'})
+        self.assertEqual(next(copy for copy in copies if copy['platform'] == 'PC')['steam_appid'], 292030)
+        self.assertEqual(next(copy for copy in copies if copy['platform'] == 'Nintendo Switch')['price'], 35)
+        repeated = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json=payload)
+        self.assertEqual(repeated.json(), response.json())
+        self.assertEqual(len(json.loads(owned.copies)), 2)
+
+    def test_acquisition_save_new_bypasses_exact_match_and_is_repeatable(self):
+        owned = Videogame(user_id=self.user.id, name='The Witcher 3', status='Finished')
+        self.db.add(owned)
+        self.db.commit()
+        wanted = self.create('The Witcher 3', platform='Nintendo Switch')
+        # A previous link (for example from Steam sync) must not override the choice.
+        self.db.get(WantedGame, wanted['id']).collection_game_id = owned.id
+        self.db.commit()
+        payload = {'name': wanted['name'], 'platform': 'Nintendo Switch', 'format': 'Physical',
+                   'source': 'Retail', 'create_new': True}
+        response = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        new_id = response.json()['collection_game_id']
+        self.assertNotEqual(new_id, owned.id)
+        self.assertEqual(self.db.query(Videogame).count(), 2)
+        repeated = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json=payload)
+        self.assertEqual(repeated.json(), response.json())
+        self.assertEqual(self.db.query(Videogame).count(), 2)
+        self.assertEqual(len(json.loads(self.db.get(Videogame, new_id).copies)), 1)
+        self.assertEqual(owned.status, 'Finished')
+
+    def test_acquisition_rejects_invalid_or_unavailable_collection_choices(self):
+        targets = [
+            Videogame(user_id=self.users[1].id, name='Private'),
+            Videogame(user_id=self.user.id, name='Hidden', hidden=True),
+            Videogame(user_id=self.user.id, name='Merged', merged_into_game_id=999),
+            Videogame(user_id=self.user.id, name='Expansion', is_dlc=True),
+        ]
+        self.db.add_all(targets)
+        self.db.commit()
+        wanted = self.create('The Witcher 3')
+        path = f"/api/discovery/games/{wanted['id']}/acquire"
+        for target in targets:
+            response = self.client.post(path, json={'name': wanted['name'], 'collection_game_id': target.id})
+            self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(self.client.post(path, json={
+            'name': wanted['name'], 'collection_game_id': targets[0].id, 'create_new': True,
+        }).status_code, 422)
+        self.assertEqual(self.db.get(WantedGame, wanted['id']).status, 'Wanted')
+        self.assertEqual(self.db.query(Videogame).count(), len(targets))
+
+    def test_copy_suggestions_exclude_unavailable_games_and_other_installments(self):
+        owned = Videogame(user_id=self.user.id, name='The Witcher 3')
+        self.db.add_all([
+            owned,
+            Videogame(user_id=self.users[1].id, name='The Witcher 3'),
+            Videogame(user_id=self.user.id, name='The Witcher 3', hidden=True),
+            Videogame(user_id=self.user.id, name='The Witcher 3', merged_into_game_id=999),
+            Videogame(user_id=self.user.id, name='The Witcher 3', is_dlc=True),
+            Videogame(user_id=self.user.id, name='The Witcher 2'),
+        ])
+        self.db.commit()
+        response = self.client.post('/api/videogames/check-similar', json={'name': 'The Witcher 3'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([game['id'] for game in response.json()], [owned.id])
+
     def test_settings_are_personal_and_sync_interval_is_bounded(self):
         self.assertEqual(self.client.put('/api/discovery/settings', json={"sync_enabled": True}).status_code, 422)
         self.assertEqual(self.client.put('/api/discovery/settings', json={"sync_hours": 1}).status_code, 422)

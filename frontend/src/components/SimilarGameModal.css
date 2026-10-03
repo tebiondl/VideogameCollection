@@ -33,3 +33,11 @@
 .match-thumb.placeholder {
   background-color: var(--bg-primary);
 }
+
+.similar-copy-dialog { max-width: 650px; }
+.similar-copy-dialog h2 { padding-right: 36px; }
+
+@media (max-width: 600px) {
+  .similar-copy-dialog .match-card { align-items: stretch; flex-direction: column; gap: 16px; }
+  .similar-copy-dialog .modal-actions { flex-wrap: wrap; }
+}

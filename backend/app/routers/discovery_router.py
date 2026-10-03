@@ -232,8 +232,19 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
         game.steam_wishlist_missing, game.updated_at = False, datetime.utcnow()
         commit(db)
         return {"collection_game_id": parent.id}
-    existing = db.query(Videogame).filter_by(id=game.collection_game_id, user_id=user.id).first() if game.collection_game_id else None
-    if existing is None:
+    existing = None
+    if payload.collection_game_id is not None:
+        existing = db.query(Videogame).filter_by(
+            id=payload.collection_game_id, user_id=user.id, hidden=False,
+            is_dlc=False, merged_into_game_id=None,
+        ).first()
+        if existing is None:
+            raise HTTPException(404, "The selected game is no longer in your collection. Return and try again.")
+    elif game.collection_game_id and (not payload.create_new or game.status == "Acquired"):
+        # Repeated submissions reuse the completed acquisition, including a
+        # game explicitly saved as new, without creating another owned copy.
+        existing = db.query(Videogame).filter_by(id=game.collection_game_id, user_id=user.id).first()
+    if existing is None and not payload.create_new and payload.collection_game_id is None:
         existing = next((row for row in db.query(Videogame).filter_by(user_id=user.id, hidden=False, is_dlc=False).all() if (
             not row.merged_into_game_id
             and (match := compare_titles(row.name, payload.name)).compatible

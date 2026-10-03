@@ -672,6 +672,8 @@ def check_similar_game(
     user_games = db.query(models.Videogame).filter(
         models.Videogame.user_id == current_user.id,
         models.Videogame.is_dlc.is_(False),
+        models.Videogame.hidden.is_(False),
+        models.Videogame.merged_into_game_id.is_(None),
     ).all()
     
     similar_games = []

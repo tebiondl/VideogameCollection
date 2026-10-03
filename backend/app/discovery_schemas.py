@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlparse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class WantedInput(BaseModel):
@@ -97,6 +97,14 @@ class AcquireInput(BaseModel):
     price: float | None = Field(default=None, ge=0, le=1000000, allow_inf_nan=False)
     currency: Literal["EUR", "USD", "GBP", "JPY"] = "EUR"
     parent_game_id: int | None = Field(default=None, gt=0)
+    collection_game_id: int | None = Field(default=None, gt=0)
+    create_new: bool = False
+
+    @model_validator(mode="after")
+    def valid_collection_choice(self):
+        if self.create_new and self.collection_game_id is not None:
+            raise ValueError("Choose an existing game or create a new game, not both.")
+        return self
 
     @field_validator("release_date")
     @classmethod

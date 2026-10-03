@@ -18,6 +18,8 @@ export interface AcquireDraft {
   source: string; store_url: string | null; steam_appid: number | null; igdb_id: number | null;
   price: number | null; currency: string;
   parent_game_id: number | null;
+  collection_game_id?: number | null;
+  create_new?: boolean;
 }
 export const emptyWanted = (): WantedDraft => ({ name: '', description: '', comments: '', image_url: '', platform: '', format: 'Any',
   status: 'Wanted', hype: null, target_price: null, currency: 'EUR', release_date: null, publication_year: null,

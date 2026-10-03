@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Search, X, Loader2 } from 'lucide-react';
 import { DlcEditor } from './DlcEditor';
 import { discoveryApi, errorMessage, fromIgdb, payload } from '../lib/discovery';
-import type { WantedDraft, IgdbGame } from '../lib/discovery';
+import type { WantedDraft, IgdbGame, CopyOptions } from '../lib/discovery';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from './TagMultiSelect';
 import './DiscoveryDialog.css';
@@ -15,10 +15,12 @@ export function WantedGameEditor({ initial, title, onClose, onSave }: { initial:
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [availableTags, setAvailableTags] = useState<{ id: number; name: string }[]>([]);
+  const [platformOptions, setPlatformOptions] = useState<string[]>([]);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     dialog.current?.showModal();
     fetchWithAuth('/videogames/tags').then(response => response.ok ? response.json() : []).then(setAvailableTags).catch(() => {});
+    discoveryApi<CopyOptions>('/copy-options').then(options => setPlatformOptions(options.platforms)).catch(reason => setError(errorMessage(reason)));
   }, []);
   const field = <K extends keyof WantedDraft>(key: K, value: WantedDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
   async function search() {
@@ -42,7 +44,7 @@ export function WantedGameEditor({ initial, title, onClose, onSave }: { initial:
     <form onSubmit={save} className="disc-form">
       <div className="disc-form-grid">
         <label className="wide">Name<input autoFocus required maxLength={300} value={draft.name} onChange={e => field('name', e.target.value)} /></label>
-        <label>Platform<input list="wanted-platforms" value={draft.platform} onChange={e => field('platform', e.target.value)} placeholder="e.g. Nintendo Switch" /><datalist id="wanted-platforms">{['Nintendo Switch', 'Nintendo Switch 2', 'PC', 'PlayStation 5', 'Xbox Series X|S'].map(platform => <option key={platform}>{platform}</option>)}</datalist></label>
+        <label>Platform<select value={draft.platform} onChange={e => field('platform', e.target.value)}><option value="">Platform unspecified</option>{[...new Set([draft.platform, ...platformOptions].filter(Boolean))].map(platform => <option key={platform} value={platform}>{platform}</option>)}</select></label>
         <label>Format<select value={draft.format} onChange={e => field('format', e.target.value)}>{['Any', 'Physical', 'Digital'].map(format => <option key={format}>{format}</option>)}</select></label>
         <label>Status<select value={draft.status} onChange={e => field('status', e.target.value)}>{['Wanted', 'Watching', 'Preordered', 'Acquired'].map(status => <option key={status}>{status}</option>)}</select></label>
         <label>Anticipation (1–10)<input type="number" min={1} max={10} value={draft.hype ?? ''} onChange={e => field('hype', e.target.value ? Number(e.target.value) : null)} /></label>

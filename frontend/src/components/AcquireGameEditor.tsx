@@ -6,6 +6,7 @@ import { EMPTY_COPY_OPTIONS, errorMessage } from '../lib/discovery';
 import type { AcquireDraft, CopyOptions } from '../lib/discovery';
 import { DlcEditor } from './DlcEditor';
 import { TagMultiSelect } from './TagMultiSelect';
+import { SimilarGameModal } from './SimilarGameModal';
 import './DiscoveryDialog.css';
 
 export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSave }: { initial: AcquireDraft; nonSteamOnly?: boolean; onClose: () => void; onSave: (draft: AcquireDraft) => Promise<void> }) {
@@ -15,6 +16,7 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
   const [collectionGames, setCollectionGames] = useState<{ id: number; name: string; is_dlc: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [copyChoice, setCopyChoice] = useState<{ draft: AcquireDraft; matches: { id: number; name: string; image_url: string | null; status: string }[] } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     dialog.current?.showModal();
@@ -81,7 +83,30 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
       steam_appid: keepSteamData ? draft.steam_appid : null,
       store_url: !keepSteamData && draft.store_url?.toLowerCase().includes('steampowered.com/app/') ? null : draft.store_url,
     };
-    try { await onSave(submitted); onClose(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+    try {
+      if (!submitted.is_dlc) {
+        const response = await fetchWithAuth('/videogames/check-similar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: submitted.name }),
+        });
+        if (!response.ok) throw new Error('Could not check your collection for possible copies. Please try again.');
+        const matches = await response.json();
+        if (matches.length) {
+          setCopyChoice({ draft: submitted, matches });
+          return;
+        }
+      }
+      await onSave({ ...submitted, create_new: !submitted.is_dlc });
+      onClose();
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  }
+  async function saveChoice(collectionGameId?: number) {
+    if (!copyChoice || busy) return;
+    setBusy(true); setError('');
+    try {
+      await onSave({ ...copyChoice.draft, collection_game_id: collectionGameId ?? null, create_new: collectionGameId === undefined });
+      onClose();
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   }
   const sourceOptions = compatibleCopySources(draft.platform, copyOptions.sources, copyOptions.platform_sources).filter(value => !nonSteamOnly || !isSteamSource(value));
   const sourceValue = sourceOptions.find(value => sameCopyValue(value, draft.source)) || '';
@@ -90,7 +115,7 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
   return <dialog ref={dialog} className="discovery-dialog discovery acquire-dialog" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="acquire-title">
     <div className="disc-section-heading"><div><p className="disc-eyebrow">REVIEW YOUR COPY</p><h2 id="acquire-title">{nonSteamOnly ? 'Add a non-Steam copy' : 'Move to collection'}</h2></div><button className="disc-icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
     <p className="disc-muted">{nonSteamOnly ? 'Steam collection sync manages the Steam copy. Add the other platform or edition you bought here.' : 'Confirm the copy you bought and adjust the game or player information before adding it.'}</p>
-    {error && <p className="disc-alert error" role="alert">{error}</p>}
+    {error && !copyChoice && <p className="disc-alert error" role="alert">{error}</p>}
     <form className="disc-form" onSubmit={submit}>
       <section className="disc-form-section"><h3>Owned copy</h3><div className="disc-form-grid">
         <label>Platform<select autoFocus required value={draft.platform} onChange={event => changePlatform(event.target.value)}>{[...new Set([draft.platform, ...copyOptions.platforms].filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select></label>
@@ -124,5 +149,9 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
       </div><div><h3>Included DLCs</h3><DlcEditor value={draft.dlcs || ''} onChange={value => field('dlcs', value)} gameName={draft.name} getPortalContainer={() => dialog.current || document.body} /></div></section>
       <div className="disc-actions"><button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn btn-primary" disabled={busy}>{busy ? 'Moving…' : nonSteamOnly ? 'Add copy to collection' : 'Add to collection'}</button></div>
     </form>
+    {copyChoice && <SimilarGameModal mode="copy" matches={copyChoice.matches} isSaving={busy} error={error}
+      onCancel={() => { setCopyChoice(null); setError(''); }}
+      onSaveNew={() => { void saveChoice(); }}
+      onUpdateExisting={id => { void saveChoice(id); }} />}
   </dialog>;
 }
