@@ -61,7 +61,7 @@ def _get_twitch_token() -> str:
 @router.get("/search")
 def search_games(
     q: str = Query(..., min_length=1, description="Search query"),
-    limit: int = Query(10, ge=1, le=20),
+    limit: int = Query(50, ge=1, le=50),
     current_user: models.User = Depends(get_current_user),
 ):
     """

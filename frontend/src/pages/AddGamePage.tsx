@@ -121,7 +121,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
     setIgdbLoading(true);
     setIgdbError('');
     try {
-      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(q)}&limit=12`);
+      const res = await fetchWithAuth(`/igdb/search?q=${encodeURIComponent(q)}&limit=50`);
       if (res.ok) {
         setIgdbResults(await res.json());
       } else {
