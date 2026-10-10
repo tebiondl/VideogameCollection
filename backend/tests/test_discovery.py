@@ -43,6 +43,53 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
+    def test_physical_copy_regions_persist_independently_through_create_edit_and_list(self):
+        copies = [
+            {"id": "spain", "platform": "Nintendo Switch", "format": "Physical", "region": " Spain "},
+            {"id": "uk", "platform": "Nintendo Switch", "format": "Physical", "region": "United Kingdom"},
+        ]
+        result = self.client.post('/api/videogames/', json={"name": "Regional editions", "copies": json.dumps(copies)})
+        self.assertEqual(result.status_code, 200, result.text)
+        game_id = result.json()['id']
+        saved = json.loads(result.json()['copies'])
+        self.assertEqual([copy['region'] for copy in saved], ['Spain', 'United Kingdom'])
+        self.db.expire_all()
+        rows = self.db.query(SteamCollectionLink).filter_by(collection_game_id=game_id).order_by(SteamCollectionLink.position).all()
+        self.assertEqual([row.region for row in rows], ['Spain', 'United Kingdom'])
+        saved[0]['region'] = 'Japan'
+        saved[1]['region'] = None
+        result = self.client.put(f'/api/videogames/{game_id}', json={"name": "Regional editions", "copies": json.dumps(saved)})
+        self.assertEqual(result.status_code, 200, result.text)
+        listed = self.client.get('/api/videogames/').json()
+        game = next(game for game in listed if game['id'] == game_id)
+        self.assertEqual([copy['region'] for copy in json.loads(game['copies'])], ['Japan', None])
+
+    def test_legacy_and_historical_copy_regions_are_preserved(self):
+        from backend.app.services import copy_store
+        game = Videogame(user_id=self.user.id, name='Imported edition', copies=json.dumps([
+            {"id": "legacy", "platform": "Nintendo DS", "format": "Physical", "region": "Custom market"},
+        ]))
+        self.db.add(game)
+        self.db.commit()
+        copy_store.ensure_copies(self.db, game)
+        self.db.commit()
+        self.assertEqual(json.loads(game.copies)[0]['region'], 'Custom market')
+        result = self.client.put(f'/api/videogames/{game.id}', json={
+            "name": game.name, "copies": None,
+            "old_copies": json.dumps([{"id": "legacy", "console": "Nintendo DS", "format": "Physical", "region": "Custom market"}]),
+        })
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(json.loads(result.json()['old_copies'])[0]['region'], 'Custom market')
+
+    def test_copy_region_validation_rejects_invalid_values_and_accepts_missing_regions(self):
+        for field in ('copies', 'old_copies'):
+            base = {"platform": "Nintendo Switch", "format": "Physical"} if field == 'copies' else {"console": "Nintendo Switch"}
+            for invalid in (123, [], 'x' * 121):
+                result = self.client.post('/api/videogames/', json={"name": "Invalid region", field: json.dumps([{**base, "region": invalid}])})
+                self.assertEqual(result.status_code, 422, result.text)
+            result = self.client.post('/api/videogames/', json={"name": "Unspecified region", field: json.dumps([base])})
+            self.assertEqual(result.status_code, 200, result.text)
+
     def test_collection_metadata_lookup_prefers_igdb_then_steam_and_scopes_game(self):
         game = Videogame(user_id=self.user.id, name="Portal 2", status="Finished", comments="Keep this")
         other = Videogame(user_id=self.users[1].id, name="Private")

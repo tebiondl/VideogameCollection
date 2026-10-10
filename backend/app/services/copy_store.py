@@ -23,7 +23,7 @@ from ..models import Videogame
 
 COPY_FIELDS = (
     "name", "platform", "format", "source", "store_url", "igdb_id", "price",
-    "currency", "playtime_hours",
+    "currency", "playtime_hours", "region",
 )
 
 
@@ -124,6 +124,7 @@ def ensure_copies(db: Session, game: Videogame) -> list[OwnedCopy]:
             user_id=game.user_id, collection_game_id=game.id, copy_id=copy_id,
             position=position, name=value.get("name"), platform=str(value.get("platform") or ""),
             format=str(value.get("format") or "Any"), source=value.get("source"),
+            region=value.get("region"),
             store_url=value.get("store_url"), igdb_id=value.get("igdb_id"),
             price=value.get("price"), currency=value.get("currency") or "EUR",
             playtime_hours=value.get("playtime_hours"), steam_id=scope if appid else "",
@@ -142,6 +143,7 @@ def _copy_dict_with_entitlement(row: OwnedCopy, entitlement: SteamOwnedGame | No
     result = {
         "id": row.copy_id, "name": row.name, "platform": row.platform,
         "format": row.format, "source": row.source, "store_url": row.store_url,
+        "region": row.region,
         "igdb_id": row.igdb_id, "price": row.price, "currency": row.currency,
         "playtime_hours": row.playtime_hours,
         "steam_appid": row.steam_appid,

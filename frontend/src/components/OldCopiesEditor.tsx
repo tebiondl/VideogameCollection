@@ -1,5 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react';
 import { parseOldCopies } from '../lib/ownedCopies';
+import { CopyRegionSelect } from './CopyRegionSelect';
 
 export function OldCopiesEditor({ value, onChange, consoleOptions }: {
   value: string | null | undefined;
@@ -18,6 +19,7 @@ export function OldCopiesEditor({ value, onChange, consoleOptions }: {
         <label>Platform<select className="form-input" value={copy.console} onChange={event => update(index, { console: event.target.value })}>{consoles.map(console => <option key={console}>{console}</option>)}</select></label>
         <label>Time played (hours)<input className="form-input" type="number" min="0" step="0.1" value={copy.playtime_hours ?? ''} onChange={event => update(index, { playtime_hours: event.target.value ? Number(event.target.value) : null })} /></label>
         <button type="button" className="icon-btn" onClick={() => save(copies.filter((_, copyIndex) => copyIndex !== index))} aria-label={`Delete old copy ${index + 1}`}><Trash2 size={16} /></button>
+        {(copy.format?.toLowerCase() === 'physical' || copy.region) && <div style={{ gridColumn: '1 / -1' }}><CopyRegionSelect value={copy.region} onChange={region => update(index, { region })} /></div>}
       </div>;
     })}
     <button type="button" className="btn btn-secondary" disabled={!consoleOptions.length} onClick={() => save([...copies, { id: crypto.randomUUID(), console: consoleOptions[0], playtime_hours: null }])}><Plus size={16} /> Add old copy</button>

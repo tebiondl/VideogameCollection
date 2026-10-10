@@ -54,6 +54,7 @@ def _run_migrations():
         "ALTER TABLE steam_entitlements ADD COLUMN user_verified BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
         "ALTER TABLE owned_copies ADD COLUMN steam_imported BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE owned_copies ADD COLUMN region VARCHAR",
         "ALTER TABLE steam_copy_suppressions ADD COLUMN in_trash BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",
@@ -399,6 +400,7 @@ def _migrate_steam_integrity_v7():
                 row.name = value.get("name") or (game.name if appid else None)
                 row.platform = value.get("platform") or ("PC" if appid else "")
                 row.format = value.get("format") or ("Digital" if appid else "Any")
+                row.region = value.get("region")
                 row.source = "Steam" if appid else value.get("source")
                 row.store_url, row.igdb_id = value.get("store_url"), value.get("igdb_id")
                 row.price, row.currency = value.get("price"), value.get("currency") or "EUR"

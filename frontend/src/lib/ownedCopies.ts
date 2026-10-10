@@ -3,6 +3,7 @@ export interface OwnedCopy {
   name?: string | null;
   platform: string;
   format: string;
+  region?: string | null;
   source?: string | null;
   store_url?: string | null;
   steam_appid?: number | null;
@@ -23,6 +24,7 @@ export interface OldCopy {
   console: string;
   platform?: string;
   format?: string | null;
+  region?: string | null;
   source?: string | null;
   steam_appid?: number | null;
   playtime_hours?: number | null;

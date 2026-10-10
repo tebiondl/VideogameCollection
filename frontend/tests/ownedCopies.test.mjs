@@ -61,7 +61,7 @@ test('old-copy hours count as copy time without becoming current copies', () => 
 });
 
 test('moving a sold copy preserves history, details and total playtime while removing only that copy', () => {
-  const sold = { id: 'sold', platform: 'Nintendo Switch', format: 'Physical', name: 'Special edition', price: 49.99, currency: 'EUR', playtime_hours: 42.5 };
+  const sold = { id: 'sold', platform: 'Nintendo Switch', format: 'Physical', region: 'Spain', name: 'Special edition', price: 49.99, currency: 'EUR', playtime_hours: 42.5 };
   const kept = { id: 'kept', platform: 'PC', format: 'Digital', playtime_hours: 12 };
   const historical = { id: 'older', console: 'Nintendo DS', playtime_hours: 8 };
   const current = JSON.stringify([kept, sold]);

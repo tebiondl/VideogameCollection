@@ -1,0 +1,63 @@
+// Country editions describe packaging markets, rather than supported languages.
+// Broad groups: https://en-americas-support.nintendo.com/app/answers/detail/a_id/22356
+export const COPY_REGIONS = [
+  ['United Kingdom', 'UK GB GBR UKV English Britain PAL'],
+  ['Spain', 'ES ESP Spanish España PAL'],
+  ['United States', 'US USA American NTSC-U'],
+  ['Japan', 'JP JPN Japanese NTSC-J'],
+  ['Europe', 'EU EUR European PAL multilingual'],
+  ['The Americas', 'North America Latin America NTSC-U'],
+  ['Australia / New Zealand', 'AU AUS NZ NZL Oceania PAL'],
+  ['Hong Kong / Taiwan / South Korea', 'HK TW KR Asia'],
+  ['China', 'CN CHN Chinese mainland iQue Tencent'],
+  ['France', 'FR FRA French PAL'],
+  ['Germany', 'DE GER NOE German PAL'],
+  ['Italy', 'IT ITA Italian PAL'],
+  ['Portugal', 'PT POR Portuguese PAL'],
+  ['Netherlands', 'NL HOL Dutch Holland PAL'],
+  ['Belgium', 'BE Belgian PAL'],
+  ['Luxembourg', 'LU PAL'],
+  ['Benelux', 'Belgium Netherlands Luxembourg FAH HOL PAL'],
+  ['Ireland', 'IE Irish PAL'],
+  ['Austria', 'AT Austrian PAL'],
+  ['Switzerland', 'CH Swiss PAL'],
+  ['Scandinavia / Nordic', 'SCN Sweden Norway Denmark Finland Iceland PAL'],
+  ['Sweden', 'SE Swedish PAL'],
+  ['Norway', 'NO Norwegian PAL'],
+  ['Denmark', 'DK Danish PAL'],
+  ['Finland', 'FI Finnish PAL'],
+  ['Iceland', 'IS Icelandic PAL'],
+  ['Poland', 'PL Polish PAL'],
+  ['Czech Republic', 'CZ Czechia Czech PAL'],
+  ['Slovakia', 'SK Slovak PAL'],
+  ['Hungary', 'HU Hungarian PAL'],
+  ['Greece', 'GR Greek PAL'],
+  ['Russia', 'RU RUS Russian PAL'],
+  ['Australia', 'AU AUS Australian PAL'],
+  ['New Zealand', 'NZ NZL PAL'],
+  ['Canada', 'CA CAN Canadian NTSC-U'],
+  ['Mexico', 'MX MEX Mexican NTSC-U'],
+  ['Brazil', 'BR BRA Brazilian PAL-M'],
+  ['Latin America', 'LATAM LTN Latin American'],
+  ['South Korea', 'KR KOR Korean NTSC-J'],
+  ['Hong Kong', 'HK HKG Chinese Asian'],
+  ['Taiwan', 'TW TWN CHT Chinese Asian'],
+  ['Asia', 'ASI Asian English Chinese multilingual'],
+  ['Southeast Asia', 'SEA Singapore Malaysia Thailand Indonesia Philippines'],
+  ['Singapore', 'SG SGP Asian'],
+  ['Middle East', 'MDE Saudi Arabia UAE United Arab Emirates'],
+  ['South Africa', 'ZA South African PAL'],
+  ['Worldwide / region free', 'WW WLD international global multi region'],
+  ['PAL', 'European Australia video standard'],
+  ['PAL-A', 'UK Italy Australia NES'],
+  ['PAL-B', 'continental Europe NES'],
+  ['NTSC-U / C', 'USA Canada North America'],
+  ['NTSC-J', 'Japan Japanese Asia'],
+].map(([value, aliases]) => ({ value, aliases }));
+
+const normalize = (text: string) => text.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+export function matchingCopyRegions(query: string) {
+  const words = normalize(query).trim().split(/\s+/).filter(Boolean);
+  return COPY_REGIONS.filter(region => words.every(word => normalize(`${region.value} ${region.aliases}`).includes(word)));
+}

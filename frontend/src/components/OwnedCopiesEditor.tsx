@@ -3,6 +3,7 @@ import './OwnedCopiesEditor.css';
 import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import type { OwnedCopy } from '../lib/ownedCopies';
 import { parseCopies } from '../lib/ownedCopies';
+import { CopyRegionSelect } from './CopyRegionSelect';
 
 export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOptions, typeOptions, platformSources, sourceTypes, onLinkSteam, onRestoreDuplicate, onMoveToOldCopy }: { value: string | null | undefined; onChange: (value: string | null) => void; platformOptions: string[]; sourceOptions: string[]; typeOptions: string[]; platformSources: Record<string, string[]>; sourceTypes: Record<string, string[]>; onLinkSteam?: (copy: OwnedCopy, index: number) => void; onRestoreDuplicate?: (copy: OwnedCopy, index: number) => void; onMoveToOldCopy?: (copy: OwnedCopy, index: number) => void }) {
   const copies = parseCopies(value);
@@ -35,7 +36,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
       const canLinkSteam = !!onLinkSteam && (isSteam || isSteamSource(sourceValue));
       const canRestoreDuplicate = !!onRestoreDuplicate && isSteam;
       return <details className="owned-copy-editor" key={copy.id || index}>
-      <summary className="owned-copy-heading"><span><ChevronDown size={16} /><strong>Copy {index + 1}</strong><small>{[copy.name, copy.platform || 'Choose platform', copy.format || 'Any format'].filter(Boolean).join(' · ')}</small></span><button type="button" className="icon-btn" onClick={event => { event.preventDefault(); event.stopPropagation(); remove(index); }} aria-label={`Remove copy ${index + 1}`}><Trash2 size={15} /></button></summary>
+      <summary className="owned-copy-heading"><span><ChevronDown size={16} /><strong>Copy {index + 1}</strong><small>{[copy.name, copy.platform || 'Choose platform', copy.format || 'Any format', copy.region].filter(Boolean).join(' · ')}</small></span><button type="button" className="icon-btn" onClick={event => { event.preventDefault(); event.stopPropagation(); remove(index); }} aria-label={`Remove copy ${index + 1}`}><Trash2 size={15} /></button></summary>
       <div className="owned-copy-grid">
         <label className="wide">Copy name / edition<input className="form-input" value={copy.name || ''} disabled={isSteam} onChange={event => update(index, { name: event.target.value || null })} placeholder="e.g. Final Fantasy VII (2013)" /></label>
         <label>Platform<select className="form-input" value={copy.platform || ''} disabled={isSteam} onChange={event => {
@@ -44,6 +45,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
           update(index, { platform, source, format: compatibleCopyFormat(platform, source, copy.format, typeOptions, sourceTypes) });
         }}><option value="" disabled>Choose platform</option>{platforms.map(value => <option key={value}>{value}</option>)}</select></label>
         <label>Type<select className="form-input" value={formatValue} disabled={isSteam} onChange={event => update(index, { format: event.target.value })}>{formats.map(value => <option key={value}>{value}</option>)}</select></label>
+        {!isSteam && sameCopyValue(formatValue, 'Physical') && <div className="wide"><CopyRegionSelect value={copy.region} onChange={region => update(index, { region })} /></div>}
         <label>Source<select className="form-input" value={sourceValue} disabled={isSteam} onChange={event => {
           const source = event.target.value;
           update(index, { source, format: compatibleCopyFormat(copy.platform, source, copy.format, typeOptions, sourceTypes) });

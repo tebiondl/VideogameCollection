@@ -2,6 +2,13 @@ import json
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal
 
+def _normalize_copy_region(item: dict) -> None:
+    region = item.get("region")
+    if region is not None:
+        if not isinstance(region, str) or len(region.strip()) > 120:
+            raise ValueError("Copy region must be text of at most 120 characters")
+        item["region"] = region.strip() or None
+
 class UserCreate(BaseModel):
     username: str
     password: str
@@ -94,6 +101,7 @@ class VideogameBase(BaseModel):
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("platform"), str):
                 raise ValueError("Each copy needs a platform")
+            _normalize_copy_region(item)
             if not isinstance(item.get("format", "Any"), str) or not item.get("format", "Any").strip():
                 raise ValueError("Each copy needs a type")
             if item.get("id"):
@@ -122,6 +130,7 @@ class VideogameBase(BaseModel):
         for item in items:
             if not isinstance(item, dict) or not str(item.get("console") or "").strip():
                 raise ValueError("Each old copy needs a console")
+            _normalize_copy_region(item)
             item_id = str(item.get("id") or "")
             if item_id and item_id in ids:
                 raise ValueError("Every old copy needs a unique ID")

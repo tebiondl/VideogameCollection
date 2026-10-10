@@ -1,0 +1,6 @@
+.copy-region-select { min-width:0; color:var(--text-secondary); font-size:.8rem; }
+.copy-region-select .form-input { width:100%; margin-top:.35rem; }
+.copy-region-select > small { display:block; margin-top:.35rem; }
+.copy-region-options { max-height:200px; overflow-y:auto; margin-top:.3rem; border:1px solid var(--border-color); border-radius:6px; background:var(--bg-secondary); }
+.copy-region-options button { display:block; width:100%; border:0; padding:.6rem .75rem; text-align:left; background:transparent; color:var(--text-primary); cursor:pointer; font:inherit; overflow-wrap:anywhere; }
+.copy-region-options button:hover, .copy-region-options button.active { background:var(--bg-tertiary); }

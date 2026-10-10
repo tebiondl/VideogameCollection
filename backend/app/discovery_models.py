@@ -78,6 +78,7 @@ class OwnedCopy(Base):
     name = Column(String)
     platform = Column(String, nullable=False, default="")
     format = Column(String, nullable=False, default="Any")
+    region = Column(String, nullable=True)
     source = Column(String)
     store_url = Column(String)
     igdb_id = Column(Integer)
