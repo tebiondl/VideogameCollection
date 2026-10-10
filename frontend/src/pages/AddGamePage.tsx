@@ -189,7 +189,6 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
   });
 
   const saveIgdbItem = async () => {
-    if (selectedIgdbGame.is_dlc) throw new Error('Expansions are stored inside a base game. Open the base game and add it in the DLC section.');
     await saveCollectionGame(buildIgdbPayload());
     navigate('/dashboard/videogames');
   };
@@ -1059,6 +1058,12 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                 {/* Meta */}
                 <div className="igdb-detail-meta">
                   <h2 style={{ color: 'var(--text-primary)' }}>{selectedIgdbGame.name}</h2>
+                  {selectedIgdbGame.is_dlc && (
+                    <p className="text-secondary" style={{ marginTop: '0.5rem' }}>
+                      This DLC / expansion will be saved as a standalone game in your collection.
+                      {selectedIgdbGame.parent_game_name && ` Base game: ${selectedIgdbGame.parent_game_name}.`}
+                    </p>
+                  )}
                   {selectedIgdbGame.release_year && (
                     <span className="badge" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
                       {selectedIgdbGame.release_year}
