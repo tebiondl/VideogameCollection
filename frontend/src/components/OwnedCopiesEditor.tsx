@@ -8,7 +8,14 @@ import { CopyRegionSelect } from './CopyRegionSelect';
 export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOptions, typeOptions, platformSources, sourceTypes, onLinkSteam, onRestoreDuplicate, onMoveToOldCopy }: { value: string | null | undefined; onChange: (value: string | null) => void; platformOptions: string[]; sourceOptions: string[]; typeOptions: string[]; platformSources: Record<string, string[]>; sourceTypes: Record<string, string[]>; onLinkSteam?: (copy: OwnedCopy, index: number) => void; onRestoreDuplicate?: (copy: OwnedCopy, index: number) => void; onMoveToOldCopy?: (copy: OwnedCopy, index: number) => void }) {
   const copies = parseCopies(value);
   const update = (index: number, patch: Partial<OwnedCopy>) => {
-    const next = copies.map((copy, copyIndex) => copyIndex === index ? { ...copy, ...patch } : copy);
+    const next = copies.map((copy, copyIndex) => {
+      if (copyIndex !== index) return copy;
+      const updated = { ...copy, ...patch };
+      if (!sameCopyValue(copy.format, 'Physical') && sameCopyValue(updated.format, 'Physical') && !updated.region) {
+        updated.region = 'Spain';
+      }
+      return updated;
+    });
     onChange(JSON.stringify(next));
   };
   const remove = (index: number) => {
@@ -67,7 +74,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
       const platform = platformOptions[0] || '';
       const source = preferredCopySource(platform, sourceOptions, false, platformSources);
       const format = compatibleCopyFormat(platform, source, typeOptions[0] || 'Any', typeOptions, sourceTypes);
-      onChange(JSON.stringify([...copies, { id: crypto.randomUUID(), platform, format, source, currency: 'EUR' }]));
+      onChange(JSON.stringify([...copies, { id: crypto.randomUUID(), platform, format, source, currency: 'EUR', region: sameCopyValue(format, 'Physical') ? 'Spain' : null }]));
     }}><Plus size={16} /> Add another copy</button>
   </div>;
 }
