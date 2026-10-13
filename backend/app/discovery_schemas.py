@@ -55,7 +55,7 @@ class WantedInput(BaseModel):
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
                 raise ValueError("Each DLC needs a name")
-            if item.get("state") not in ("not_owned", "not_started", "playing", "finished", "stopped"):
+            if item.get("state") not in ("not_owned", "not_started", "playing", "finished", "viewed", "stopped"):
                 raise ValueError("Invalid DLC state")
         return json.dumps(items)
 
@@ -76,7 +76,7 @@ class AcquireInput(BaseModel):
     description: str | None = Field(default=None, max_length=20000)
     comments: str | None = Field(default=None, max_length=20000)
     image_url: str | None = None
-    status: Literal["Not Started", "Playing", "Finished", "Stopped", "Infinite"] = "Not Started"
+    status: Literal["Not Started", "Playing", "Finished", "Viewed", "Stopped", "Infinite"] = "Not Started"
     playtime_hours: float | None = Field(default=None, ge=0)
     mark: int | None = Field(default=None, ge=1, le=10)
     hype: int | None = Field(default=None, ge=1, le=10)

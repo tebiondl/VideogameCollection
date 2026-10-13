@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Clock3, Gamepad2, Library, Loader2, Medal, Sparkles, Star, Target, Trophy } from 'lucide-react';
+import { ArrowLeft, BarChart3, Clock3, Eye, Gamepad2, Library, Loader2, Medal, Sparkles, Star, Target, Trophy } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchWithAuth } from '../lib/api';
 import { YearlyRewind } from '../components/YearlyRewind';
@@ -57,6 +57,7 @@ export function AnalyticsDashboard() {
         <Metric label="Games in collection" value={stats.totalGames} note={`${stats.dlcGames} standalone DLC entries · ${stats.hiddenGames} hidden`} icon={<Gamepad2 />} />
         <Metric label="Time played" value={`${number(stats.totalPlaytime)} h`} note="Shared Steam time counted once" icon={<Clock3 />} />
         <Metric label="Finished games" value={stats.finishedGames} note={`${number(stats.finishRate * 100)}% of games started`} icon={<Trophy />} />
+        <Metric label="Viewed games" value={stats.viewedGames} note="Watched on YouTube or elsewhere" icon={<Eye />} />
         <Metric label="Average rating" value={stats.avgRating == null ? '—' : number(stats.avgRating)} note={`${stats.ratedCount} rated · median ${stats.medianRating == null ? '—' : number(stats.medianRating)}`} icon={<Star />} />
         <Metric label="Currently active" value={stats.activeGames} note="Playing or Infinite" icon={<Target />} />
         <Metric label="Backlog" value={stats.backlogGames} note="Games not started" icon={<Library />} />

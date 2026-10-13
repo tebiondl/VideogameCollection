@@ -66,7 +66,7 @@ class VideogameBase(BaseModel):
         if not value:
             return None
         items = json.loads(value)
-        valid_states = {"not_owned", "not_started", "playing", "finished", "stopped"}
+        valid_states = {"not_owned", "not_started", "playing", "finished", "viewed", "stopped"}
         if not isinstance(items, list) or len(items) > 500:
             raise ValueError("DLCs must be a list of at most 500 entries")
         for item in items:

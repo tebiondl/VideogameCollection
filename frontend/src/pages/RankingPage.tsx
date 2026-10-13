@@ -7,7 +7,7 @@ import { tagNames } from '../lib/videogameStats';
 import { BUCKETS, EMPTY_TIER_FILTERS, gamePlatforms, matchesTierFilters, moveRankedGame, moveRankedGameToPosition, tierBuckets, TIERS, type RankDropSide, type RankingGame, type TierFilters, type TierList } from '../lib/ranking';
 import './RankingPage.css';
 
-const STATUSES = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+const STATUSES = ['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'];
 
 async function rankingApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetchWithAuth(`/ranking${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });

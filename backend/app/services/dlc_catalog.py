@@ -5,7 +5,7 @@ from .title_matching import compare_titles, normalize_title
 
 MATCH_THRESHOLD = 0.94
 AMBIGUITY_GAP = 0.03
-STATE_RANK = {"not_owned": 0, "not_started": 1, "stopped": 2, "playing": 3, "finished": 4}
+STATE_RANK = {"not_owned": 0, "not_started": 1, "stopped": 2, "playing": 3, "viewed": 4, "finished": 5}
 
 
 def title_score(manual_name: str | None, steam_name: str | None, parent_name: str | None = None) -> float:

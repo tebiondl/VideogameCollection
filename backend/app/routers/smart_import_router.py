@@ -58,8 +58,9 @@ def process_smart_import(session_id: int, files_payloads: List[dict]):
             "FIRST, you MUST output your internal thought process inside <think>...</think> XML tags, explicitly explaining how you interpret the file and map it to our schema. "
             "THEN, respond strictly with a valid JSON array of objects wrapped in ```json ... ``` markdown. "
             "Each JSON object MUST contain these exact fields: "
-            "'name' (string, required), 'description' (string or null), 'image_url' (string or null), 'status' (string, choices: 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'), "
+            "'name' (string, required), 'description' (string or null), 'image_url' (string or null), 'status' (string, choices: 'Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'), "
             "'playtime_hours' (float or null, extract numeric hours only from time spent, e.g. '50 hrs' -> 50.0), 'mark' (integer 1-10 or null), 'completion_date' (string or null), 'publication_year' (integer or null), 'completion_percentage' (integer 0-100 or null), 'tags' (string or null). "
+            "Use 'Viewed' for games the user watched on YouTube or elsewhere. "
             "If the user specifies particular tags, use them (Gacha, Online, Runs). Comma separate tags. If status is unknown, default to 'Not Started'."
         )
 

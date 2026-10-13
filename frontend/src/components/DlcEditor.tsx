@@ -8,12 +8,13 @@ import { addManualDlc, mergeSteamDlcs, type Dlc, type DlcState } from '../lib/st
 
 export type { Dlc, DlcState } from '../lib/steamDlcs';
 
-const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'playing', 'stopped', 'finished'];
+const STATE_CYCLE: DlcState[] = ['not_owned', 'not_started', 'playing', 'stopped', 'finished', 'viewed'];
 const STATE_LABELS: Record<DlcState, string> = {
   not_owned: 'Not Owned',
   not_started: 'Not Started',
   playing: 'Playing',
   finished: 'Finished',
+  viewed: 'Viewed',
   stopped: 'Stopped',
 };
 const STATE_COLORS: Record<DlcState, string> = {
@@ -21,6 +22,7 @@ const STATE_COLORS: Record<DlcState, string> = {
   not_started: 'var(--accent-primary)',
   playing: '#38bdf8',
   finished: '#4ade80',
+  viewed: '#a78bfa',
   stopped: '#fb923c',
 };
 const STATE_BG: Record<DlcState, string> = {
@@ -28,6 +30,7 @@ const STATE_BG: Record<DlcState, string> = {
   not_started: 'rgba(139,92,246,0.15)',
   playing: 'rgba(56,189,248,0.14)',
   finished: 'rgba(74,222,128,0.12)',
+  viewed: 'rgba(167,139,250,0.14)',
   stopped: 'rgba(251,146,60,0.14)',
 };
 
@@ -177,6 +180,7 @@ export function DlcEditor({ value, onChange, gameName, gameId, getPortalContaine
               {dlc.state === 'not_started' && '⏸ '}
               {dlc.state === 'playing' && '▶️ '}
               {dlc.state === 'finished' && '✅ '}
+              {dlc.state === 'viewed' && '👁 '}
               {dlc.state === 'stopped' && '⏹️ '}
               {STATE_LABELS[dlc.state]}
             </button>

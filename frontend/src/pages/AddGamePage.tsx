@@ -14,7 +14,7 @@ import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
 import { copyPlaytimeHours, type PlaytimeMode } from '../lib/ownedCopies';
 import './AddGamePage.css';
 
-const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'];
 
 interface FileConfig {
   filename: string;
@@ -658,7 +658,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
-              {(status === 'Stopped' || status === 'Finished' || status === 'Infinite') && (
+              {(status === 'Stopped' || status === 'Finished' || status === 'Viewed' || status === 'Infinite') && (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Completion %</label>
                   <select className="form-input" value={completionPercentage} onChange={e => setCompletionPercentage(e.target.value ? Number(e.target.value) : '')}>
@@ -667,7 +667,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   </select>
                 </div>
               )}
-              {(status === 'Finished' || status === 'Stopped' || status === 'Infinite') ? (
+              {(status === 'Finished' || status === 'Viewed' || status === 'Stopped' || status === 'Infinite') ? (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Your Rating (1-10)</label>
                   <input type="number" min="1" max="10" className="form-input" value={mark} onChange={e => setMark(e.target.value ? Number(e.target.value) : '')} />
@@ -689,7 +689,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={playtimeMode} onChange={event => setPlaytimeMode(event.target.value as PlaytimeMode)}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
             </div>
 
-            {(status === 'Finished' || status === 'Stopped' || status === 'Infinite') && (
+            {(status === 'Finished' || status === 'Viewed' || status === 'Stopped' || status === 'Infinite') && (
               <div className="form-group">
                 <label className="form-label">Completion Date</label>
                 <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
@@ -1112,7 +1112,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                     {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 </div>
-                {(igdbStatus === 'Stopped' || igdbStatus === 'Finished' || igdbStatus === 'Infinite') && (
+                {(igdbStatus === 'Stopped' || igdbStatus === 'Finished' || igdbStatus === 'Viewed' || igdbStatus === 'Infinite') && (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Completion %</label>
                     <select className="form-input" value={igdbCompletionPct} onChange={e => setIgdbCompletionPct(e.target.value ? Number(e.target.value) : '')}>
@@ -1121,7 +1121,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                     </select>
                   </div>
                 )}
-                {(igdbStatus === 'Finished' || igdbStatus === 'Stopped' || igdbStatus === 'Infinite') ? (
+                {(igdbStatus === 'Finished' || igdbStatus === 'Viewed' || igdbStatus === 'Stopped' || igdbStatus === 'Infinite') ? (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Your Rating (1-10)</label>
                     <input type="number" min="1" max="10" className="form-input" value={igdbMark} onChange={e => setIgdbMark(e.target.value ? Number(e.target.value) : '')} />
@@ -1227,7 +1227,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               </div>
-              {(editingItem.status === 'Stopped' || editingItem.status === 'Finished' || editingItem.status === 'Infinite') && (
+              {(editingItem.status === 'Stopped' || editingItem.status === 'Finished' || editingItem.status === 'Viewed' || editingItem.status === 'Infinite') && (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Completion %</label>
                   <select className="form-input" value={editingItem.completion_percentage ?? ''} onChange={e => setEditingItem({ ...editingItem, completion_percentage: e.target.value ? Number(e.target.value) : null })}>
@@ -1236,7 +1236,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
                   </select>
                 </div>
               )}
-              {(editingItem.status === 'Finished' || editingItem.status === 'Stopped' || editingItem.status === 'Infinite') ? (
+              {(editingItem.status === 'Finished' || editingItem.status === 'Viewed' || editingItem.status === 'Stopped' || editingItem.status === 'Infinite') ? (
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Rating (1-10)</label>
                   <input type="number" min="1" max="10" className="form-input" value={editingItem.mark || ''} onChange={e => setEditingItem({ ...editingItem, mark: e.target.value ? Number(e.target.value) : '' })} />

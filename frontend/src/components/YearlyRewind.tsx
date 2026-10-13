@@ -70,7 +70,7 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
     const years = new Set<number>([currentYear]);
     games.forEach(game => {
       const year = yearFromDate(game.completion_date);
-      if (year) years.add(year);
+      if (year && game.status !== 'Viewed') years.add(year);
     });
     return [...years].sort((a, b) => b - a);
   }, [games, currentYear]);
@@ -78,6 +78,7 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
 
   const rewind = useMemo(() => {
     const playedGames = games.filter(game => {
+      if (game.status === 'Viewed') return false;
       const completedInYear = yearFromDate(game.completion_date) === selectedYear;
       const activeNow = selectedYear === currentYear && (game.status === 'Playing' || game.status === 'Infinite');
       return completedInYear || activeNow;

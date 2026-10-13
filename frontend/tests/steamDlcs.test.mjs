@@ -11,6 +11,15 @@ const exports = {};
 vm.runInNewContext(code, { exports });
 const { addManualDlc, mergeSteamDlcs } = exports;
 
+test('Steam DLC merge preserves viewed progress when combining duplicate entries', () => {
+  const result = mergeSteamDlcs([
+    { name: 'Expansion', state: 'not_started', steam_appid: 101 },
+    { name: 'Expansion', state: 'viewed', steam_appid: 101 },
+  ], [{ name: 'Expansion', state: 'not_owned', steam_appid: 101 }]);
+  assert.equal(result.dlcs.length, 1);
+  assert.equal(result.dlcs[0].state, 'viewed');
+});
+
 test('Steam DLC merge adds new entries as unowned and preserves existing ownership states', () => {
   const existing = [
     { name: 'Granblue Fantasy: Relink - Color Pack', state: 'finished', steam_appid: 101 },

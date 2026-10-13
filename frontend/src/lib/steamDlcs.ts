@@ -1,4 +1,4 @@
-export type DlcState = 'not_owned' | 'not_started' | 'playing' | 'finished' | 'stopped';
+export type DlcState = 'not_owned' | 'not_started' | 'playing' | 'finished' | 'viewed' | 'stopped';
 
 export interface Dlc {
   name: string;
@@ -14,7 +14,7 @@ export interface Dlc {
 }
 
 const STATE_RANK: Record<DlcState, number> = {
-  not_owned: 0, not_started: 1, stopped: 2, playing: 3, finished: 4,
+  not_owned: 0, not_started: 1, stopped: 2, playing: 3, viewed: 4, finished: 5,
 };
 
 function nameKey(name: string): string {

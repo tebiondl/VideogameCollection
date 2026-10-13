@@ -303,7 +303,7 @@ export function VideogamesDashboard() {
   const [sortPanelPos, setSortPanelPos] = useState({ top: 0, left: 0 });
 
   // Need to recreate STATUS_OPTIONS here or import them (copying for simplicity)
-  const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+  const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'];
 
   // Close sort panel on outside click
   useEffect(() => {
@@ -548,7 +548,7 @@ export function VideogamesDashboard() {
      if (filterState.ratingRange.max !== '' && (g.mark === null || g.mark > filterState.ratingRange.max)) return false;
 
      const hasPercentage = g.completion_percentage !== null && g.completion_percentage !== undefined;
-     if (!hasPercentage || (g.status !== 'Stopped' && g.status !== 'Finished')) {
+     if (!hasPercentage || (g.status !== 'Stopped' && g.status !== 'Finished' && g.status !== 'Viewed')) {
          if (!filterState.completionRange.includeEmpty) return false;
      } else {
          const p = g.completion_percentage;
@@ -956,7 +956,7 @@ export function VideogamesDashboard() {
                     {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 </div>
-                {(editingGame.status === 'Stopped' || editingGame.status === 'Finished' || editingGame.status === 'Infinite') && (
+                {(editingGame.status === 'Stopped' || editingGame.status === 'Finished' || editingGame.status === 'Viewed' || editingGame.status === 'Infinite') && (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Completion %</label>
                     <select className="form-input" value={editingGame.completion_percentage ?? ''} onChange={e => setEditingGame({...editingGame, completion_percentage: e.target.value ? Number(e.target.value) : null})}>
@@ -965,7 +965,7 @@ export function VideogamesDashboard() {
                     </select>
                   </div>
                 )}
-                {(editingGame.status === 'Finished' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') ? (
+                {(editingGame.status === 'Finished' || editingGame.status === 'Viewed' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') ? (
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Rating (1-10)</label>
                     <input type="number" min="1" max="10" className="form-input" value={editingGame.mark || ''} onChange={e => setEditingGame({...editingGame, mark: e.target.value ? Number(e.target.value) : null})} />
@@ -987,7 +987,7 @@ export function VideogamesDashboard() {
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={editingGame.playtime_mode || 'user'} onChange={event => setEditingGame({ ...editingGame, playtime_mode: event.target.value })}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
               </div>
 
-              {(editingGame.status === 'Finished' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') && (
+              {(editingGame.status === 'Finished' || editingGame.status === 'Viewed' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') && (
                 <div className="form-group">
                   <label className="form-label">Completion Date</label>
                   <CompletionDatePicker value={editingGame.completion_date || ''} onChange={(val) => setEditingGame({...editingGame, completion_date: val})} />

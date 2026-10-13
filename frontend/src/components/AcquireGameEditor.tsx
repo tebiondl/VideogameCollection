@@ -138,7 +138,7 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
         <label className="wide">Cover image URL<input type="url" value={draft.image_url || ''} onChange={event => field('image_url', event.target.value || null)} /></label>
       </div></section>
       <section className="disc-form-section"><h3>Player information</h3><div className="disc-form-grid">
-        <label>Status<select value={draft.status} onChange={event => field('status', event.target.value)}>{['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'].map(value => <option key={value}>{value}</option>)}</select></label>
+        <label>Status<select value={draft.status} onChange={event => field('status', event.target.value)}>{['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'].map(value => <option key={value}>{value}</option>)}</select></label>
         <label>Playtime (hours)<input type="number" min={0} step="0.1" value={draft.playtime_hours ?? ''} onChange={event => field('playtime_hours', event.target.value ? Number(event.target.value) : null)} /></label>
         <label>Rating (1–10)<input type="number" min={1} max={10} value={draft.mark ?? ''} onChange={event => field('mark', event.target.value ? Number(event.target.value) : null)} /></label>
         <label>Anticipation (1–10)<input type="number" min={1} max={10} value={draft.hype ?? ''} onChange={event => field('hype', event.target.value ? Number(event.target.value) : null)} /></label>

@@ -52,7 +52,7 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
   const ratedMarks = rated.map(game => game.mark!).sort((a, b) => a - b);
   const medianRating = ratedMarks.length ? (ratedMarks[Math.floor((ratedMarks.length - 1) / 2)] + ratedMarks[Math.floor(ratedMarks.length / 2)]) / 2 : null;
   const completed = baseGames.filter(game => game.status === 'Finished');
-  const started = baseGames.filter(game => game.status && game.status !== 'Not Started');
+  const started = baseGames.filter(game => game.status && game.status !== 'Not Started' && game.status !== 'Viewed');
   const completionValues = started.map(game => game.completion_percentage).filter((value): value is number => value != null);
   const currentYear = now.getFullYear();
   const copies = baseGames.flatMap(game => parseCopies(game.copies));
@@ -61,7 +61,7 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
     try { const parsed = JSON.parse(game.dlcs || '[]'); return Array.isArray(parsed) ? parsed : []; }
     catch { return []; }
   });
-  const statusOrder = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+  const statusOrder = ['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'];
   const statusCounts = statusOrder.map(name => ({ name, value: baseGames.filter(game => game.status === name).length }));
   const ratingCounts = Array.from({ length: 10 }, (_, index) => ({ name: String(index + 1), value: ratedMarks.filter(mark => mark === index + 1).length }));
   const completionYears = countBy(completed.map(game => Number(game.completion_date?.slice(0, 4))).filter(year => year >= 1950 && year <= 2100)).sort((a, b) => Number(a.name) - Number(b.name));
@@ -76,6 +76,7 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
     totalPlaytime,
     playedGames: started.length,
     finishedGames: completed.length,
+    viewedGames: baseGames.filter(game => game.status === 'Viewed').length,
     finishedThisYear: completed.filter(game => game.completion_date?.startsWith(String(currentYear))).length,
     backlogGames: baseGames.filter(game => game.status === 'Not Started').length,
     activeGames: baseGames.filter(game => game.status === 'Playing' || game.status === 'Infinite').length,

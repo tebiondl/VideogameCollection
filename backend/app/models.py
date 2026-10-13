@@ -26,11 +26,11 @@ class Videogame(Base):
     description = Column(String, nullable=True)
     comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
-    status = Column(String, nullable=False, default="Not Started") # 'Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'
+    status = Column(String, nullable=False, default="Not Started") # 'Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'
     time_spent = Column(String, nullable=True) # DEPRECATED
     playtime_hours = Column(Float, nullable=True)
     playtime_mode = Column(String, nullable=False, default="user") # user | copies | combined
-    mark = Column(Integer, nullable=True)  # 1 to 10 — only for Finished/Stopped
+    mark = Column(Integer, nullable=True)  # 1 to 10 — Finished/Viewed/Stopped/Infinite
     hype = Column(Integer, nullable=True)  # 1 to 10 — anticipation for not-yet-played
     completion_date = Column(String, nullable=True) # string to support just '2024' or '2024-05'
     publication_year = Column(Integer, nullable=True)

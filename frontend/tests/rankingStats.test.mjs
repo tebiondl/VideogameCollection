@@ -47,6 +47,27 @@ test('tier filters and buckets keep removed games out of the available pool', ()
   assert.deepEqual(Array.from(buckets.unranked), [3]);
 });
 
+test('viewed games have their own count without changing played or finished statistics', () => {
+  const games = [
+    { id: 1, name: 'Played', status: 'Finished', completion_date: '2026-04', completion_percentage: 80 },
+    { id: 2, name: 'Watched', status: 'Viewed', completion_date: '2026-05', completion_percentage: 100, mark: 9 },
+    { id: 3, name: 'Hidden watched game', status: 'Viewed', hidden: true },
+    { id: 4, name: 'Watched expansion', status: 'Viewed', is_dlc: true },
+  ];
+  const result = stats.calculateVideogameStats(games, new Date('2026-09-28'));
+  assert.equal(result.totalGames, 2);
+  assert.equal(result.viewedGames, 1);
+  assert.equal(result.statusCounts.find(row => row.name === 'Viewed').value, 1);
+  assert.equal(result.playedGames, 1);
+  assert.equal(result.finishedGames, 1);
+  assert.equal(result.finishedThisYear, 1);
+  assert.equal(result.finishRate, 1);
+  assert.equal(result.averageCompletion, 80);
+  assert.equal(result.avgRating, 9);
+  assert.equal(ranking.matchesTierFilters(games[1], { ...ranking.EMPTY_TIER_FILTERS, statuses: ['Viewed'] }), true);
+  assert.equal(ranking.matchesTierFilters(games[0], { ...ranking.EMPTY_TIER_FILTERS, statuses: ['Viewed'] }), false);
+});
+
 test('ranking drop and direct position controls keep the complete order intact', () => {
   const ids = [1, 2, 3, 4, 5];
   assert.deepEqual(Array.from(ranking.moveRankedGame(ids, 5, 2, 'before')), [1, 5, 2, 3, 4]);

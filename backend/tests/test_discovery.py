@@ -43,6 +43,72 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
+    def test_viewed_status_persists_with_rating_and_completion_details(self):
+        response = self.client.post('/api/videogames/', json={
+            'name': 'Watched adventure', 'status': 'Viewed', 'mark': 8,
+            'completion_date': '2026-10', 'completion_percentage': 100,
+            'comments': 'Watched on YouTube',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        game = response.json()
+        response = self.client.put(f"/api/videogames/{game['id']}", json={
+            'name': game['name'], 'comments': 'Watched elsewhere',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        saved = self.client.get('/api/videogames/').json()[0]
+        self.assertEqual((saved['status'], saved['mark'], saved['completion_date'], saved['completion_percentage']),
+                         ('Viewed', 8, '2026-10', 100))
+
+    def test_acquisition_accepts_viewed_status(self):
+        wanted = self.create('Watched adventure')
+        response = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json={
+            'name': wanted['name'], 'status': 'Viewed', 'mark': 8,
+            'platform': 'PC', 'format': 'Digital', 'source': 'Other',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.db.query(Videogame).one().status, 'Viewed')
+
+    def test_viewed_dlc_status_syncs_in_both_directions_and_survives_parent_edits(self):
+        parent_response = self.client.post('/api/videogames/', json={'name': 'Base game'})
+        self.assertEqual(parent_response.status_code, 200, parent_response.text)
+        parent = parent_response.json()
+        child_response = self.client.post('/api/videogames/', json={
+            'name': 'Expansion', 'status': 'Viewed', 'is_dlc': True, 'parent_game_id': parent['id'],
+        })
+        self.assertEqual(child_response.status_code, 200, child_response.text)
+        child = child_response.json()
+        self.db.expire_all()
+        nested = json.loads(self.db.get(Videogame, parent['id']).dlcs)
+        self.assertEqual(nested[0]['state'], 'viewed')
+        for state, status in [('finished', 'Finished'), ('viewed', 'Viewed')]:
+            nested[0]['state'] = state
+            response = self.client.put(f"/api/videogames/{parent['id']}", json={
+                'name': parent['name'], 'dlcs': json.dumps(nested),
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            self.db.expire_all()
+            self.assertEqual(self.db.get(Videogame, child['id']).status, status)
+        response = self.client.put(f"/api/videogames/{parent['id']}", json={
+            'name': parent['name'], 'comments': 'Updated notes',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        self.assertEqual(self.db.get(Videogame, child['id']).status, 'Viewed')
+
+    def test_acquired_dlc_keeps_viewed_status(self):
+        parent = Videogame(user_id=self.user.id, name='Base game')
+        self.db.add(parent)
+        self.db.commit()
+        wanted = self.create('Watched expansion', is_dlc=True)
+        response = self.client.post(f"/api/discovery/games/{wanted['id']}/acquire", json={
+            'name': wanted['name'], 'status': 'Viewed', 'is_dlc': True,
+            'parent_game_id': parent.id, 'platform': 'PC', 'format': 'Digital', 'source': 'Other',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        self.assertEqual(json.loads(self.db.get(Videogame, parent.id).dlcs)[0]['state'], 'viewed')
+
     def test_physical_copy_regions_persist_independently_through_create_edit_and_list(self):
         copies = [
             {"id": "spain", "platform": "Nintendo Switch", "format": "Physical", "region": " Spain "},

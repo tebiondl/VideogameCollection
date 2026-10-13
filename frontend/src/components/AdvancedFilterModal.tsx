@@ -64,7 +64,7 @@ interface Props {
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, availableTags, copyFilterOptions, savedFilters, onSaveFilter, onLoadFilter, onDeleteFilter }: Props) {
-  const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Stopped', 'Infinite'];
+  const STATUS_OPTIONS = ['Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'];
   const [filterName, setFilterName] = React.useState('');
   const [showSavedList, setShowSavedList] = React.useState(false);
   const [showHelp, setShowHelp] = React.useState(false);
@@ -321,7 +321,7 @@ export function AdvancedFilterModal({ filterState, onChange, onApply, onClose, a
                    <label className="checkbox-label" style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                       <input type="checkbox" checked={filterState.completionRange.includeEmpty} onChange={e => onChange({...filterState, completionRange: {...filterState.completionRange, includeEmpty: e.target.checked}})} 
                              style={{ accentColor: 'var(--accent-primary)', width: '16px', height: '16px' }} />
-                      Show games with no percentage (or not Stopped/Finished)
+                      Show games with no percentage (or not Stopped/Finished/Viewed)
                    </label>
                  </div>
 

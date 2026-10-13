@@ -19,6 +19,7 @@ from ..discovery_schemas import (
 )
 from ..services import discovery as service
 from ..services import copy_store
+from ..services.dlc_links import GAME_TO_NESTED_STATUS
 from ..services.title_matching import compare_titles, is_reviewable_title_match
 from ..services.secrets import protect_secret, resolve_steam_api_key
 from .auth_router import get_current_user
@@ -199,7 +200,7 @@ def acquire_game(game_id: int, payload: AcquireInput | None = None, db: Session 
                 and match.automatic and match.score >= 0.98
             )), None)
         if entry is None:
-            entry = {"name": payload.name, "state": "not_started"}
+            entry = {"name": payload.name, "state": GAME_TO_NESTED_STATUS.get(payload.status, "not_started")}
             dlcs.append(entry)
         entry.update({
             "steam_appid": payload.steam_appid, "igdb_id": payload.igdb_id,

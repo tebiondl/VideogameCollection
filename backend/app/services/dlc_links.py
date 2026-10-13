@@ -14,11 +14,13 @@ NESTED_TO_GAME_STATUS = {
     "not_started": "Not Started",
     "playing": "Playing",
     "finished": "Finished",
+    "viewed": "Viewed",
     "stopped": "Stopped",
 }
 GAME_TO_NESTED_STATUS = {
     "Playing": "playing",
     "Finished": "finished",
+    "Viewed": "viewed",
     "Stopped": "stopped",
 }
 
