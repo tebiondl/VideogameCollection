@@ -86,3 +86,40 @@ test('statistics top five follow saved ranking order instead of rating order', (
   ];
   assert.deepEqual(Array.from(stats.topRankedGames(games, [2, 3, 1]).map(game => game.id)), [2, 1]);
 });
+
+test('extended statistics cover playtime, taste, the current year and spending', () => {
+  const games = [
+    { id: 1, name: 'Long RPG', status: 'Finished', mark: 9, hype: 6, tags: 'RPG', publication_year: 2017, playtime_hours: 120, completion_date: '2026-03-10',
+      copies: JSON.stringify([{ id: 'a', platform: 'Nintendo Switch', format: 'Physical', region: 'Spain', source: 'Retail', price: 50, currency: 'EUR' }, { id: 'b', platform: 'PC', format: 'Digital', steam_appid: 5, price: 10, currency: 'EUR' }]) },
+    { id: 2, name: 'Short RPG', status: 'Finished', mark: 7, hype: 9, tags: 'RPG, Indie', publication_year: 2021, playtime_hours: 8, completion_date: '2026-03',
+      copies: JSON.stringify([{ id: 'c', platform: 'PC', format: 'Digital', source: 'Steam', price: 20, currency: 'USD' }]) },
+    { id: 3, name: 'Third RPG', status: 'Stopped', mark: 5, tags: 'RPG', publication_year: 2022, playtime_hours: 3 },
+    { id: 4, name: 'Backlog hit', status: 'Not Started', hype: 10 },
+    { id: 5, name: 'Backlog maybe', status: 'Not Started', hype: 4 },
+    { id: 6, name: 'Unrated', status: 'Finished', completion_date: '2025-12', playtime_hours: 30 },
+  ];
+  const result = stats.calculateVideogameStats(games, new Date('2026-09-28'));
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(result.playtimeByStatus), [{ name: 'Finished', value: 158 }, { name: 'Stopped', value: 3 }]);
+  assert.deepEqual(plain(result.playtimeBuckets.map(row => row.value)), [1, 1, 1, 0, 1]);
+  assert.equal(result.medianHoursFinished, 30);
+  assert.deepEqual(plain(result.hoursByTag), [{ name: 'RPG', value: 131 }, { name: 'Indie', value: 8 }]);
+  // Indie has a single rated game, too few for an average.
+  assert.deepEqual(plain(result.ratingByTag), [{ name: 'RPG', value: 7, count: 3 }]);
+  assert.deepEqual(plain(result.ratingByDecade.map(row => [row.name, row.value])), [['2010', 9], ['2020', 6]]);
+  assert.equal(result.averageHypeDelta, 0.5);
+  assert.equal(result.surprises[0].game.name, 'Long RPG');
+  assert.equal(result.letdowns[0].game.name, 'Short RPG');
+  assert.deepEqual(plain(result.backlogByHype.map(game => game.name)), ['Backlog hit', 'Backlog maybe']);
+  assert.equal(result.finishesByMonth[2].value, 2);
+  assert.equal(result.finishesByMonth.reduce((sum, row) => sum + row.value, 0), 2);
+  assert.equal(result.unratedFinished, 1);
+  assert.deepEqual(plain(result.spendingByCurrency), [{ name: 'EUR', value: 60 }, { name: 'USD', value: 20 }]);
+  assert.equal(result.mainCurrency, 'EUR');
+  assert.equal(result.averagePrice, 30);
+  assert.deepEqual(plain(result.spendingByPlatform), [{ name: 'Nintendo Switch', value: 50 }, { name: 'PC', value: 10 }]);
+  assert.equal(result.mostExpensive[0].name, 'Long RPG');
+  assert.deepEqual(plain(result.sourceCounts), [{ name: 'Steam', value: 2 }, { name: 'Retail', value: 1 }]);
+  assert.deepEqual(plain(result.physicalRegionCounts), [{ name: 'Spain', value: 1 }]);
+  assert.equal(result.multiCopyGames, 1);
+});

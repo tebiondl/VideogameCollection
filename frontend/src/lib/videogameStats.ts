@@ -69,7 +69,79 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
   const platformCounts = countBy(copies.map(copy => copy.platform).filter(Boolean));
   const tagCounts = countBy(baseGames.flatMap(game => tagNames(game.tags)));
 
+  // --- Playtime -----------------------------------------------------------
+  const played = playtimes.filter(row => row.hours > 0);
+  const playtimeByStatus = statusOrder.map(name => ({ name, value: Math.round(played.filter(row => row.game.status === name).reduce((sum, row) => sum + row.hours, 0) * 10) / 10 })).filter(row => row.value > 0);
+  const bucketEdges: Array<[string, number, number]> = [['Under 5 h', 0, 5], ['5–20 h', 5, 20], ['20–50 h', 20, 50], ['50–100 h', 50, 100], ['100 h +', 100, Infinity]];
+  const playtimeBuckets = bucketEdges.map(([name, from, to]) => ({ name, value: played.filter(row => row.hours >= from && row.hours < to).length }));
+  const finishedHours = played.filter(row => row.game.status === 'Finished').map(row => row.hours).sort((a, b) => a - b);
+  const sumBy = (rows: Array<{ name: string; value: number }>) => {
+    const totals = new Map<string, number>();
+    rows.forEach(row => totals.set(row.name, (totals.get(row.name) || 0) + row.value));
+    return [...totals].map(([name, value]) => ({ name, value: Math.round(value * 10) / 10 })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  };
+  const hoursByTag = sumBy(played.flatMap(row => tagNames(row.game.tags).map(name => ({ name, value: row.hours }))));
+
+  // --- Taste --------------------------------------------------------------
+  const averageBy = (rows: Array<{ name: string; value: number }>, minimum: number) => {
+    const groups = new Map<string, number[]>();
+    rows.forEach(row => groups.set(row.name, [...(groups.get(row.name) || []), row.value]));
+    return [...groups].filter(([, values]) => values.length >= minimum)
+      .map(([name, values]) => ({ name, value: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 100) / 100, count: values.length }));
+  };
+  // A tag needs a few rated games before its average says anything.
+  const ratingByTag = averageBy(rated.flatMap(game => tagNames(game.tags).map(name => ({ name, value: game.mark! }))), 3)
+    .sort((a, b) => b.value - a.value || b.count - a.count || a.name.localeCompare(b.name));
+  const ratingByDecade = averageBy(rated.filter(game => game.publication_year).map(game => ({ name: String(Math.floor(game.publication_year! / 10) * 10), value: game.mark! })), 1)
+    .sort((a, b) => Number(a.name) - Number(b.name));
+  const hyped = rated.filter(game => game.hype != null).map(game => ({ game, delta: game.mark! - game.hype! }));
+  const backlogByHype = baseGames.filter(game => game.status === 'Not Started' && game.hype != null)
+    .sort((a, b) => b.hype! - a.hype! || a.name.localeCompare(b.name)).slice(0, 5);
+
+  // --- This year ----------------------------------------------------------
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const finishesByMonth = MONTHS.map((name, month) => ({
+    name,
+    value: completed.filter(game => game.completion_date?.startsWith(currentYear + '-' + String(month + 1).padStart(2, '0'))).length,
+  }));
+
+  // --- Shelf & spending ---------------------------------------------------
+  const priced = baseGames.flatMap(game => parseCopies(game.copies).filter(copy => typeof copy.price === 'number' && copy.price > 0)
+    .map(copy => ({ game, copy, price: copy.price as number, currency: copy.currency || 'EUR' })));
+  const spendingByCurrency = sumBy(priced.map(row => ({ name: row.currency, value: row.price })));
+  const mainCurrency = spendingByCurrency[0]?.name || 'EUR';
+  const mainPriced = priced.filter(row => row.currency === mainCurrency);
+  const spendingByPlatform = sumBy(mainPriced.map(row => ({ name: row.copy.platform || 'Unspecified', value: row.price })));
+  const sourceCounts = countBy(copies.map(copy => copy.source || (copy.steam_appid ? 'Steam' : '')).filter(Boolean));
+  const physicalRegionCounts = countBy(copies.filter(copy => copy.format?.toLowerCase() === 'physical').map(copy => copy.region?.trim() || 'Not set'));
+  const multiCopyGames = baseGames.filter(game => parseCopies(game.copies).length > 1).length;
+
   return {
+    playtimeByStatus,
+    playtimeBuckets,
+    playedWithTime: played.length,
+    averageHoursFinished: finishedHours.length ? finishedHours.reduce((sum, hours) => sum + hours, 0) / finishedHours.length : null,
+    medianHoursFinished: finishedHours.length ? (finishedHours[Math.floor((finishedHours.length - 1) / 2)] + finishedHours[Math.floor(finishedHours.length / 2)]) / 2 : null,
+    longestFinished: played.filter(row => row.game.status === 'Finished').sort((a, b) => b.hours - a.hours).slice(0, 5),
+    hoursByTag,
+    ratingByTag,
+    ratingByDecade,
+    hypeComparedCount: hyped.length,
+    averageHypeDelta: hyped.length ? hyped.reduce((sum, row) => sum + row.delta, 0) / hyped.length : null,
+    surprises: [...hyped].filter(row => row.delta > 0).sort((a, b) => b.delta - a.delta || b.game.mark! - a.game.mark!).slice(0, 5),
+    letdowns: [...hyped].filter(row => row.delta < 0).sort((a, b) => a.delta - b.delta || a.game.mark! - b.game.mark!).slice(0, 5),
+    backlogByHype,
+    finishesByMonth,
+    unratedFinished: completed.filter(game => game.mark == null).length,
+    pricedCopies: priced.length,
+    spendingByCurrency,
+    mainCurrency,
+    averagePrice: mainPriced.length ? mainPriced.reduce((sum, row) => sum + row.price, 0) / mainPriced.length : null,
+    spendingByPlatform,
+    mostExpensive: [...mainPriced].sort((a, b) => b.price - a.price).slice(0, 5).map(row => ({ id: row.game.id + ':' + (row.copy.id || row.copy.platform), name: row.game.name, platform: row.copy.platform, price: row.price })),
+    sourceCounts,
+    physicalRegionCounts,
+    multiCopyGames,
     totalGames: baseGames.length,
     dlcGames: games.length - baseGames.length,
     hiddenGames: allGames.filter(game => game.hidden && !game.merged_into_game_id).length,

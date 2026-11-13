@@ -34,8 +34,8 @@
 
 .active-card:hover {
   transform: translateY(-8px);
-  box-shadow: 0 15px 40px rgba(99, 102, 241, 0.2);
-  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: none;
+  border-color: hsl(var(--accent-h) 84% 67% / 0.5);
 }
 
 .disabled-card {
@@ -70,3 +70,13 @@
   .hub-grid { grid-template-columns: 1fr; gap: 1rem; }
   .hub-card { padding: 2rem 1.25rem; }
 }
+
+.hub-icon-wrapper { background: var(--accent-surface); color: var(--accent-soft); border: 1px solid hsl(var(--accent-h) 80% 60% / .22); }
+.disabled-card .hub-icon-wrapper { background: var(--bg-tertiary); color: var(--text-muted); border-color: var(--border-color); }
+.hub-header h1 { font-size: 2.6rem; }
+.hub-header h1 { font-size: 1.7rem; }
+.hub-card { padding: 2rem 1.5rem; }
+.hub-card h2 { font-size: 1.1rem; }
+.active-card:hover { transform: none; border-color: var(--accent-primary); box-shadow: none; }
+.hub-icon-wrapper { width: 56px; height: 56px; background: transparent; border: 1px solid var(--border-strong); color: var(--accent-primary); }
+.hub-icon-wrapper svg { width: 26px; height: 26px; }

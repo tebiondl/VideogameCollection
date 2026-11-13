@@ -27,6 +27,13 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
+    // Settings saves the release region from its own card; keep this form's copy current
+    // so saving the Steam connection never puts an older region back.
+    const refresh = () => { discoveryApi<DiscoverySettings>('/settings').then(data => { setSettings(data); setForm(current => ({ ...current, region: data.region })); }).catch(() => {}); };
+    window.addEventListener('discovery-settings-changed', refresh);
+    return () => window.removeEventListener('discovery-settings-changed', refresh);
+  }, []);
+  useEffect(() => {
     if (!syncing) return;
     const timer = window.setInterval(() => { Promise.all([discoveryApi<DiscoverySettings>('/settings'), discoveryApi<SteamMatchReview[]>('/steam/reviews')]).then(([data, pending]) => { setSettings(data); setReviews(pending); }).catch(e => setError(errorMessage(e))); }, 3000);
     return () => window.clearInterval(timer);
@@ -106,7 +113,7 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
             <label className="disc-check"><input type="checkbox" checked={form.sync_wishlist} onChange={e => setForm({ ...form, sync_wishlist: e.target.checked })} /> Sync my Steam wishlist</label>
             <label className="disc-check"><input type="checkbox" checked={form.sync_collection} onChange={e => setForm({ ...form, sync_collection: e.target.checked })} /> Sync my owned Steam collection</label>
           </div>
-          <div className="disc-form-grid"><label>Sync frequency<select value={form.sync_hours} onChange={e => setForm({ ...form, sync_hours: Number(e.target.value) })}><option value={6}>Every 6 hours · 4 times a day</option><option value={8}>Every 8 hours · 3 times a day</option></select></label><label>Default release region<select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })}>{['Europe', 'North America', 'Japan'].map(region => <option key={region}>{region}</option>)}</select></label></div>
+          <div className="disc-form-grid"><label>Sync frequency<select value={form.sync_hours} onChange={e => setForm({ ...form, sync_hours: Number(e.target.value) })}><option value={6}>Every 6 hours · 4 times a day</option><option value={8}>Every 8 hours · 3 times a day</option></select></label>{!embedded && <label>Default release region<select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })}>{['Europe', 'North America', 'Japan'].map(region => <option key={region}>{region}</option>)}</select></label>}</div>
           {form.sync_enabled && !form.sync_wishlist && !form.sync_collection && <p className="disc-field-error" role="alert">Select at least one Steam list to use automatic sync.</p>}
           <button className="btn btn-primary" disabled={busy || syncing || (form.sync_enabled && !form.sync_wishlist && !form.sync_collection)}>Save connection & preferences</button>
         </form>
@@ -122,7 +129,7 @@ export function DiscoveryAdmin({ embedded = false }: { embedded?: boolean }) {
         </div>
         <p className="disc-source-note">Each enabled Steam list syncs independently while preserving your edits. Exact identities and strong, unambiguous title matches link automatically; doubtful matches wait in the review popup. Choosing a collection game links the copy and uses Steam’s title. Existing console copies remain attached. If wishlist sync is enabled without collection sync, games that disappear from Steam’s wishlist stay in Games I want and are marked for review.</p>
       </section>
-      <div><section className="disc-panel"><h2>Your data</h2><p className="disc-muted">Download an editable backup of Games I want. Restore it through Smart Add as JSON.</p><button className="btn btn-secondary" disabled={busy} onClick={exportGames}><Download size={17} /> Export wanted games</button></section><section className="disc-panel"><h2>Release sources</h2><p className="disc-muted">Europe combines Nintendo’s public catalog with Nintendo Life’s monthly retail guide, cached for 24 hours. IGDB remains the fallback when both sources are unavailable.</p><p className="disc-muted">Switch and Switch 2 releases are identified separately, including Game-Key Card and code-in-box listings. Regional and limited-print releases can still differ.</p></section></div>
+      {!embedded && <div><section className="disc-panel"><h2>Your data</h2><p className="disc-muted">Download an editable backup of Games I want. Restore it through Smart Add as JSON.</p><button className="btn btn-secondary" disabled={busy} onClick={exportGames}><Download size={17} /> Export wanted games</button></section><section className="disc-panel"><h2>Release sources</h2><p className="disc-muted">Europe combines Nintendo’s public catalog with Nintendo Life’s monthly retail guide, cached for 24 hours. IGDB remains the fallback when both sources are unavailable.</p><p className="disc-muted">Switch and Switch 2 releases are identified separately, including Game-Key Card and code-in-box listings. Regional and limited-print releases can still differ.</p></section></div>}
     </div>}
     {showUnsync && <div className="disc-confirm-backdrop" onMouseDown={() => !busy && setShowUnsync(false)}>
       <section className="disc-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="unsync-title" onMouseDown={event => event.stopPropagation()}>

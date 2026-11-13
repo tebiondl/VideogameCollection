@@ -6,7 +6,7 @@
 .steam-link-search .btn { flex:0 0 auto; padding:.55rem .75rem; white-space:nowrap; }
 .steam-link-list { display:flex; flex-direction:column; gap:.65rem; max-height:52vh; overflow:auto; padding-right:.25rem; }
 .steam-link-row { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem; border:1px solid var(--border-color); border-radius:var(--radius-md); background:rgba(255,255,255,.025); }
-.steam-link-row.current { border-color:var(--accent-primary); background:rgba(139,92,246,.1); }
+.steam-link-row.current { border-color:var(--accent-primary); background:hsl(var(--accent-h) 90% 66% / 0.1); }
 .steam-link-row > div:first-child { min-width:0; display:flex; flex-direction:column; gap:.3rem; }
 .steam-link-row strong { overflow:hidden; text-overflow:ellipsis; }
 .steam-link-row small { color:var(--text-muted); }

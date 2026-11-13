@@ -29,7 +29,7 @@ interface YearlyRewindProps {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const REWIND_COLORS = ['#8b5cf6', '#22d3ee', '#f97316', '#ec4899', '#84cc16', '#facc15'];
+const REWIND_COLORS = ['hsl(var(--accent-h) 90% 66%)', '#22d3ee', '#f97316', '#ec4899', '#84cc16', '#facc15'];
 
 function parseTags(raw?: string | null): string[] {
   if (!raw) return [];
@@ -255,8 +255,8 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.08)" vertical={false} />
                     <XAxis dataKey="month" stroke="#94a3b8" tickLine={false} axisLine={false} />
                     <YAxis allowDecimals={false} stroke="#94a3b8" tickLine={false} axisLine={false} />
-                    <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,.04)' }} contentStyle={{ background: '#17132b', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
-                    <Bar dataKey="games" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                    <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,.04)' }} contentStyle={{ background: 'hsl(225 9% 12.2%)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
+                    <Bar dataKey="games" fill="hsl(var(--accent-h) 90% 66%)" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </article>
@@ -267,7 +267,7 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
                     <Pie data={rewind.statusData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
                       {rewind.statusData.map((entry, index) => <Cell key={entry.name} fill={REWIND_COLORS[index % REWIND_COLORS.length]} />)}
                     </Pie>
-                    <RechartsTooltip contentStyle={{ background: '#17132b', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
+                    <RechartsTooltip contentStyle={{ background: 'hsl(225 9% 12.2%)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="rewind-legend">{rewind.statusData.map((entry, index) => <span key={entry.name}><i style={{ background: REWIND_COLORS[index % REWIND_COLORS.length] }} />{entry.name} · {entry.value}</span>)}</div>

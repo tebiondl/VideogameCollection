@@ -1,0 +1,51 @@
+.settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 2.5rem; align-items: start; margin-top: .5rem; }
+.settings-nav { position: sticky; top: 88px; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav a { display: flex; align-items: center; gap: .65rem; padding: .6rem .8rem; border-radius: 8px; color: var(--text-secondary); font-size: .9rem; font-weight: 500; transition: var(--transition); }
+.settings-nav a:hover { color: var(--text-primary); background: var(--bg-secondary); }
+.settings-nav a[aria-current] { color: var(--accent-soft); background: var(--accent-surface); }
+.settings-nav hr { border: 0; border-top: 1px solid var(--border-color); margin: .6rem .4rem; }
+.settings-content { display: flex; flex-direction: column; gap: 3rem; min-width: 0; }
+.settings-section { scroll-margin-top: 88px; }
+.settings-section > header { margin-bottom: 1rem; }
+.settings-section > header span { color: var(--accent-soft); font-size: .7rem; font-weight: 700; letter-spacing: .14em; }
+.settings-section > header h2 { margin: .25rem 0; font-size: 1.4rem; }
+.settings-section > header p { color: var(--text-secondary); font-size: .92rem; }
+.settings-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: .4rem 1.5rem; box-shadow: var(--shadow-card); }
+.settings-card > .disc-alert { margin: 1rem 0 .4rem; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding: 1.15rem 0; }
+.settings-row + .settings-row { border-top: 1px solid var(--border-color); }
+.settings-row > div:first-child { min-width: 0; }
+.settings-row strong { display: block; font-size: .95rem; font-weight: 600; }
+.settings-row p { margin-top: .2rem; color: var(--text-secondary); font-size: .84rem; line-height: 1.5; max-width: 56ch; }
+.settings-control { flex: 0 0 auto; display: flex; align-items: center; gap: .6rem; }
+.settings-control select.form-input { width: 220px; padding: .6rem 2.4rem .6rem .9rem; }
+.settings-note { color: var(--text-muted); font-size: .85rem; }
+.settings-swatches { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: flex-end; }
+.settings-swatches button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 2px solid transparent; border-radius: 50%; color: #14100c; cursor: pointer; transition: transform .15s ease; }
+.settings-swatches button:hover { transform: scale(1.08); }
+.settings-swatches button[aria-checked=true] { box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px var(--text-primary); }
+.settings-swatches button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* The embedded Steam panel fills the section instead of sharing it with side cards. */
+.settings-section .admin-steam-panel { padding: 0; }
+.settings-section .admin-steam-panel .disc-admin-grid { display: block; }
+.settings-section .admin-steam-panel .disc-panel { margin-bottom: 0; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); }
+.settings-section .admin-pagination-card { box-shadow: var(--shadow-card); }
+@media (max-width: 860px) {
+  .settings-layout { grid-template-columns: 1fr; gap: 1.5rem; }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+  .settings-nav hr { display: none; }
+  .settings-row { flex-direction: column; align-items: stretch; gap: .8rem; }
+  .settings-control select.form-input { width: 100%; }
+  .settings-swatches { justify-content: flex-start; }
+}
+.settings-section .admin-pagination-heading h2 { font-size: 1.1rem; }
+/* Técnico turquesa */
+.settings-nav { top: 68px; }
+.settings-nav a { padding: .4rem .6rem; border-radius: 5px; font-size: .8125rem; }
+.settings-nav a[aria-current] { color: var(--text-primary); background: var(--bg-raised); }
+.settings-section > header span { color: var(--accent-primary); font-weight: 500; letter-spacing: .08em; }
+.settings-section > header h2 { font-size: 1.1rem; }
+.settings-section > header p, .settings-row p { font-size: .8125rem; }
+.settings-row strong { font-size: .875rem; }
+.settings-swatches button { width: 26px; height: 26px; }
+.settings-swatches button svg { width: 13px; height: 13px; }

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { Compass, Heart, Library, Sparkles, BarChart3, Settings2, Shield, Trash2, Trophy } from 'lucide-react';
+import { Compass, Heart, Library, Sparkles, BarChart3, Trash2, Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './CollectionNavigation.css';
 
@@ -44,8 +44,6 @@ export function CollectionNavigation() {
       {!wanted && <Link to={`${base}/trash`} aria-current={pathname.endsWith('/trash') ? 'page' : undefined}><Trash2 size={16} /> Trash</Link>}
       <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Statistics</Link>
       {!wanted && <Link to={`${base}/ranking`} aria-current={context === 'ranking' ? 'page' : undefined}><Trophy size={16} /> Ranking</Link>}
-      <Link to={`${base}/settings`}><Settings2 size={16} /> User Settings</Link>
-      {user.is_admin && <Link to="/dashboard/admin"><Shield size={16} /> Admin</Link>}
     </nav>}
   </div>;
 }

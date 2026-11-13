@@ -22,15 +22,15 @@ const STATE_COLORS: Record<DlcState, string> = {
   not_started: 'var(--accent-primary)',
   playing: '#38bdf8',
   finished: '#4ade80',
-  viewed: '#a78bfa',
+  viewed: 'hsl(var(--accent-h) 92% 76%)',
   stopped: '#fb923c',
 };
 const STATE_BG: Record<DlcState, string> = {
   not_owned: 'rgba(255,255,255,0.05)',
-  not_started: 'rgba(139,92,246,0.15)',
+  not_started: 'hsl(var(--accent-h) 90% 66% / 0.15)',
   playing: 'rgba(56,189,248,0.14)',
   finished: 'rgba(74,222,128,0.12)',
-  viewed: 'rgba(167,139,250,0.14)',
+  viewed: 'hsl(var(--accent-h) 92% 76% / 0.14)',
   stopped: 'rgba(251,146,60,0.14)',
 };
 

@@ -1,11 +1,10 @@
 .navbar {
-  background-color: rgba(26, 29, 36, 0.8);
-  backdrop-filter: blur(12px);
+  background-color: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
   position: sticky;
   top: 0;
   z-index: 100;
-  height: 70px;
+  height: 48px;
   display: flex;
   align-items: center;
 }
@@ -19,11 +18,23 @@
 .nav-logo {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  gap: 0.55rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
+
+.logo-mark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--accent-primary);
+  box-shadow: 0 6px 18px -6px var(--accent-glow);
+}
+.logo-mark .logo-icon { width: 13px; height: 13px; color: var(--on-accent); }
+.user-menu-caret { color: var(--text-muted); }
 
 .logo-icon {
   color: var(--accent-primary);
@@ -35,12 +46,13 @@
 
 .user-menu-btn {
   background: transparent;
-  border: 1px solid var(--border-color);
-  padding: 0.4rem 1rem 0.4rem 0.4rem;
+  border: 0;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
   border-radius: var(--radius-round);
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.55rem;
   cursor: pointer;
   color: var(--text-primary);
   transition: var(--transition);
@@ -48,18 +60,18 @@
 
 .user-menu-btn:hover {
   background-color: var(--bg-tertiary);
-  border-color: #4b5563;
+  border-color: var(--border-strong);
 }
 
 .avatar-icon {
-  width: 32px;
-  height: 32px;
+  width: 20px;
+  height: 20px;
   color: var(--text-secondary);
 }
 
 .avatar-img {
-  width: 32px;
-  height: 32px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -72,11 +84,12 @@
   position: absolute;
   top: calc(100% + 0.5rem);
   right: 0;
-  width: 220px;
-  background-color: var(--bg-secondary);
+  width: 240px;
+  padding-bottom: 6px;
+  background-color: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  border-radius: 8px;
+  box-shadow: none;
   overflow: hidden;
   animation: slideDown 0.2s ease-out forwards;
 }
@@ -111,18 +124,22 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  padding: 0.6rem 1rem;
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 0.95rem;
+  font-family: inherit;
+  font-size: 0.9rem;
   cursor: pointer;
   transition: background-color 0.2s;
   text-align: left;
 }
 
+.dropdown-divider { margin-bottom: 6px; }
+.dropdown-header + .dropdown-divider { margin-bottom: 6px; }
+
 .dropdown-item:hover {
-  background-color: var(--bg-tertiary);
+  background-color: var(--bg-raised);
   color: var(--text-primary);
 }
 
@@ -130,3 +147,6 @@
   background-color: rgba(239, 68, 68, 0.1);
   color: var(--error-color);
 }
+
+.username { color: var(--text-secondary); font-weight: 500; }
+.dropdown-menu { background-color: var(--bg-secondary); border-color: var(--border-strong); }

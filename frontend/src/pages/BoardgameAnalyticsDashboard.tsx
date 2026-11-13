@@ -47,9 +47,9 @@ function matchPlayerNames(match: BoardgameMatch): string[] {
 const MODE_COLORS: Record<MatchMode, string> = {
   competitive: '#fb7185',
   cooperative: '#38bdf8',
-  solo: '#a78bfa',
+  solo: 'hsl(var(--accent-h) 92% 76%)',
 };
-const CHART_COLORS = ['#f59e0b', '#38bdf8', '#a78bfa', '#fb7185', '#34d399'];
+const CHART_COLORS = ['#f59e0b', '#38bdf8', 'hsl(var(--accent-h) 92% 76%)', '#fb7185', '#34d399'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 

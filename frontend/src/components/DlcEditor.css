@@ -23,7 +23,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 0.25rem;
-  scrollbar-color: #4c456e transparent;
+  scrollbar-color: hsl(var(--accent-h) 23% 35%) transparent;
   scrollbar-width: thin;
 }
 
@@ -40,7 +40,7 @@
 }
 
 .dlc-row:hover {
-  border-color: rgba(99, 102, 241, 0.3);
+  border-color: hsl(var(--accent-h) 84% 67% / 0.3);
 }
 
 .dlc-name {
