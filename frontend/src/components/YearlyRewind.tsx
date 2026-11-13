@@ -1,57 +1,43 @@
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
-  ArrowLeft, Award, CalendarDays, Clock3, Crown, Flame, Gamepad2,
-  Gem, Layers3, Medal, Sparkles, Star, Tags, Target, Trophy, Zap
+  ArrowLeft, Award, BadgeCheck, CalendarDays, CircleSlash, Clock3, Coins, Crown, Eye, Flame, Gamepad2,
+  Gem, Hourglass, Layers3, Medal, MonitorPlay, Puzzle, Rocket, Sparkles, Star, Tags, Target, ThumbsDown,
+  Timer, TrendingDown, TrendingUp, Trophy, Zap
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer,
   Tooltip as RechartsTooltip, XAxis, YAxis
 } from 'recharts';
+import { buildYearlyRewind, rewindYears, type RewindBreakdownRow, type RewindEntry, type RewindGame } from '../lib/yearlyRewind';
+import { tagNames } from '../lib/videogameStats';
 import './YearlyRewind.css';
-
-export interface RewindGame {
-  id: number;
-  name: string;
-  image_url?: string | null;
-  status?: string | null;
-  playtime_hours?: number | null;
-  mark?: number | null;
-  hype?: number | null;
-  completion_date?: string | null;
-  publication_year?: number | null;
-  completion_percentage?: number | null;
-  tags?: string | null;
-}
 
 interface YearlyRewindProps {
   games: RewindGame[];
+  rankingIds?: number[];
   onClose: () => void;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const REWIND_COLORS = ['hsl(var(--accent-h) 90% 66%)', '#22d3ee', '#f97316', '#ec4899', '#84cc16', '#facc15'];
-
-function parseTags(raw?: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const decoded = JSON.parse(raw);
-    if (Array.isArray(decoded)) return decoded.map(String).map(tag => tag.trim()).filter(Boolean);
-  } catch {
-    // Legacy values are stored as comma-separated strings.
-  }
-  return raw.split(',').map(tag => tag.trim()).filter(Boolean);
-}
-
-function yearFromDate(value?: string | null): number | null {
-  const match = value?.match(/^(\d{4})/);
-  return match ? Number(match[1]) : null;
-}
+const TOOLTIP_STYLE = { background: 'hsl(225 9% 12.2%)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 };
+const MONTH_NAMES: Record<string, string> = {
+  Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June',
+  Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December',
+};
 
 function formatHours(value: number): string {
   return value >= 1000
     ? `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)}h`
     : `${value.toFixed(value >= 100 ? 0 : 1)}h`;
 }
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+const formatMark = (mark?: number | null) => (mark == null ? '' : `${Number.isInteger(mark) ? mark : mark.toFixed(1)}/10`);
+
+interface Moment { id: string; icon: ReactNode; label: string; entry: RewindEntry; detail: string }
+interface Curiosity { id: string; icon: ReactNode; value: string | number; title: string; note: string }
+interface TimelineItem { id: string; icon: ReactNode; label: string; value: string; note: string }
 
 function GameCover({ game, rank }: { game: RewindGame; rank?: number }) {
   return (
@@ -64,101 +50,93 @@ function GameCover({ game, rank }: { game: RewindGame; rank?: number }) {
   );
 }
 
-export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
-  const currentYear = new Date().getFullYear();
-  const availableYears = useMemo(() => {
-    const years = new Set<number>([currentYear]);
-    games.forEach(game => {
-      const year = yearFromDate(game.completion_date);
-      if (year && game.status !== 'Viewed') years.add(year);
-    });
-    return [...years].sort((a, b) => b - a);
-  }, [games, currentYear]);
+function RewindBars({ rows, byHours }: { rows: RewindBreakdownRow[]; byHours: boolean }) {
+  const value = (row: RewindBreakdownRow) => (byHours ? row.hours : row.games);
+  const top = Math.max(...rows.map(value), 1);
+  return (
+    <div className="rewind-tag-bars">
+      {rows.map((row, index) => (
+        <div key={row.name}>
+          <span>{row.name}</span><span>{byHours ? formatHours(row.hours) : plural(row.games, 'game')}</span>
+          <i style={{ width: `${Math.max(8, (value(row) / top) * 100)}%`, background: REWIND_COLORS[index % REWIND_COLORS.length] }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function YearlyRewind({ games, rankingIds, onClose }: YearlyRewindProps) {
+  const availableYears = useMemo(() => rewindYears(games), [games]);
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
+  const rewind = useMemo(() => buildYearlyRewind(games, selectedYear, { rankingIds }), [games, selectedYear, rankingIds]);
+  const money = (value: number) => new Intl.NumberFormat(undefined, {
+    style: 'currency', currency: rewind.spending?.currency || 'EUR', maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
 
-  const rewind = useMemo(() => {
-    const playedGames = games.filter(game => {
-      if (game.status === 'Viewed') return false;
-      const completedInYear = yearFromDate(game.completion_date) === selectedYear;
-      const activeNow = selectedYear === currentYear && (game.status === 'Playing' || game.status === 'Infinite');
-      return completedInYear || activeNow;
-    });
-    const completedGames = playedGames.filter(game => yearFromDate(game.completion_date) === selectedYear && game.status === 'Finished');
-    const recordedHours = playedGames.reduce((sum, game) => sum + Math.max(0, Number(game.playtime_hours) || 0), 0);
-    const ratedGames = playedGames.filter(game => typeof game.mark === 'number' && game.mark > 0);
-    const averageRating = ratedGames.length
-      ? ratedGames.reduce((sum, game) => sum + (game.mark || 0), 0) / ratedGames.length
-      : 0;
-    const mostPlayed = [...playedGames]
-      .filter(game => Number(game.playtime_hours) > 0)
-      .sort((a, b) => (b.playtime_hours || 0) - (a.playtime_hours || 0));
-    const topRated = [...ratedGames].sort((a, b) => (b.mark || 0) - (a.mark || 0) || (b.playtime_hours || 0) - (a.playtime_hours || 0));
+  const goty = rewind.gameOfTheYear;
+  const fan = (rewind.mostPlayed.length ? rewind.mostPlayed : rewind.topRated).slice(0, 5);
+  const tagsByHours = (rewind.tags[0]?.hours || 0) > 0;
+  const platformsByHours = (rewind.platforms[0]?.hours || 0) > 0;
+  const showMonths = rewind.monthly.length > 0;
+  const showStatuses = rewind.statuses.length > 1;
+  const showPlatforms = rewind.platforms.length > 0;
+  const showDecades = rewind.decades.length > 1;
+  const hypeDetail = (entry: RewindEntry) => `Hype ${entry.game.hype} → rated ${formatMark(entry.game.mark)}`;
 
-    const tagMap = new Map<string, { name: string; hours: number; games: number }>();
-    playedGames.forEach(game => {
-      parseTags(game.tags).forEach(tag => {
-        const key = tag.toLocaleLowerCase();
-        const entry = tagMap.get(key) || { name: tag, hours: 0, games: 0 };
-        entry.hours += Math.max(0, Number(game.playtime_hours) || 0);
-        entry.games += 1;
-        tagMap.set(key, entry);
-      });
-    });
-    const tags = [...tagMap.values()].sort((a, b) => b.hours - a.hours || b.games - a.games || a.name.localeCompare(b.name));
+  // Every card below is built only when its data exists, so nothing is ever shown empty.
+  const moments: Moment[] = [];
+  if (rewind.biggestSurprise) moments.push({ id: 'surprise', icon: <TrendingUp size={15} />, label: 'Biggest surprise', entry: rewind.biggestSurprise, detail: hypeDetail(rewind.biggestSurprise) });
+  if (rewind.biggestLetdown) moments.push({ id: 'letdown', icon: <TrendingDown size={15} />, label: 'Biggest letdown', entry: rewind.biggestLetdown, detail: hypeDetail(rewind.biggestLetdown) });
+  if (rewind.lowestRated) moments.push({ id: 'lowest', icon: <ThumbsDown size={15} />, label: 'Lowest rated', entry: rewind.lowestRated, detail: `You gave it ${formatMark(rewind.lowestRated.game.mark)}` });
+  if (rewind.longestFinish) moments.push({ id: 'longest', icon: <Hourglass size={15} />, label: 'Longest finish', entry: rewind.longestFinish, detail: `${formatHours(rewind.longestFinish.hours)} to the credits` });
+  if (rewind.shortestFinish) moments.push({ id: 'shortest', icon: <Timer size={15} />, label: 'Shortest finish', entry: rewind.shortestFinish, detail: `Done in ${formatHours(rewind.shortestFinish.hours)}` });
+  if (rewind.oldestGame && rewind.newestGame) {
+    moments.push({ id: 'oldest', icon: <Gem size={15} />, label: 'Oldest game', entry: rewind.oldestGame, detail: `Released in ${rewind.oldestGame.game.publication_year}` });
+    moments.push({ id: 'newest', icon: <Rocket size={15} />, label: 'Newest game', entry: rewind.newestGame, detail: `Released in ${rewind.newestGame.game.publication_year}` });
+  }
+  if (rewind.spending?.bestValue) moments.push({ id: 'value', icon: <Coins size={15} />, label: 'Best value', entry: rewind.spending.bestValue.entry, detail: `${money(rewind.spending.bestValue.perHour)} per hour` });
 
-    const monthlyCompletions = MONTHS.map(month => ({ month, games: 0 }));
-    completedGames.forEach(game => {
-      const match = game.completion_date?.match(/^\d{4}-(\d{1,2})/);
-      if (match) {
-        const monthIndex = Number(match[1]) - 1;
-        if (monthlyCompletions[monthIndex]) monthlyCompletions[monthIndex].games += 1;
-      }
-    });
+  const curiosities: Curiosity[] = [];
+  if (rewind.marathons) curiosities.push({ id: 'marathons', icon: <Flame />, value: rewind.marathons, title: 'Marathon games', note: 'Games with 50+ recorded hours' });
+  if (rewind.quickWins) curiosities.push({ id: 'quick', icon: <Zap />, value: rewind.quickWins, title: 'Quick wins', note: 'Finished in under 12 hours' });
+  if (rewind.perfectScores) curiosities.push({ id: 'perfect', icon: <Medal />, value: rewind.perfectScores, title: 'Perfect 10s', note: 'Your highest honors' });
+  if (rewind.completionists.length) curiosities.push({ id: 'complete', icon: <BadgeCheck />, value: rewind.completionists.length, title: '100% completed', note: 'Nothing left to find' });
+  if (rewind.abandoned.length) curiosities.push({ id: 'abandoned', icon: <CircleSlash />, value: rewind.abandoned.length, title: 'Left unfinished', note: 'Games you stopped playing' });
+  if (rewind.sameYearReleases) curiosities.push({ id: 'fresh', icon: <Rocket />, value: rewind.sameYearReleases, title: `${rewind.year} releases`, note: 'Played the year they came out' });
+  if (rewind.deepCuts) curiosities.push({ id: 'deep', icon: <Gem />, value: rewind.deepCuts, title: 'Deep cuts', note: 'Ten or more years old when played' });
+  if (rewind.averageAge != null) curiosities.push({ id: 'age', icon: <CalendarDays />, value: `${rewind.averageAge.toFixed(1)}y`, title: 'Average game age', note: 'Years between release and play' });
+  if (rewind.averageHours != null) curiosities.push({ id: 'journey', icon: <Target />, value: formatHours(rewind.averageHours), title: 'Average journey', note: `Across ${plural(rewind.timedGames, 'game')} with recorded time` });
+  if (rewind.tags.length) curiosities.push({ id: 'tags', icon: <Layers3 />, value: rewind.tags.length, title: 'Tags explored', note: 'The variety in your year' });
+  if (rewind.dlcPlayed.length) curiosities.push({ id: 'dlc', icon: <Puzzle />, value: rewind.dlcPlayed.length, title: 'Expansions played', note: 'DLC tracked as its own entry' });
+  if (rewind.watched.length) curiosities.push({ id: 'watched', icon: <Eye />, value: rewind.watched.length, title: 'Games watched', note: 'Viewed, not played, so not counted above' });
 
-    const statusMap = new Map<string, number>();
-    playedGames.forEach(game => statusMap.set(game.status || 'Unknown', (statusMap.get(game.status || 'Unknown') || 0) + 1));
-    const statusData = [...statusMap].map(([name, value]) => ({ name, value }));
-    const datedCompletions = completedGames
-      .filter(game => /^\d{4}-\d{1,2}/.test(game.completion_date || ''))
-      .sort((a, b) => (a.completion_date || '').localeCompare(b.completion_date || ''));
-    const releaseYears = playedGames.map(game => game.publication_year).filter((year): year is number => typeof year === 'number');
-    const oldestRelease = releaseYears.length ? Math.min(...releaseYears) : null;
-    const newestRelease = releaseYears.length ? Math.max(...releaseYears) : null;
-    const perfectScores = ratedGames.filter(game => game.mark === 10).length;
-    const marathons = playedGames.filter(game => (game.playtime_hours || 0) >= 50).length;
-    const quickWins = completedGames.filter(game => (game.playtime_hours || 0) > 0 && (game.playtime_hours || 0) < 12).length;
-    const deepCuts = playedGames.filter(game => game.publication_year && game.publication_year < selectedYear - 10).length;
-    const averageGameLength = playedGames.length ? recordedHours / playedGames.length : 0;
+  const timeline: TimelineItem[] = [];
+  if (rewind.firstFinish) timeline.push({ id: 'first', icon: <Award />, label: 'First finish', value: rewind.firstFinish.game.name, note: rewind.firstFinish.game.completion_date || '' });
+  if (rewind.lastFinish) timeline.push({ id: 'last', icon: <Sparkles />, label: 'Final finish', value: rewind.lastFinish.game.name, note: rewind.lastFinish.game.completion_date || '' });
+  if (rewind.busiestMonth) timeline.push({ id: 'month', icon: <Trophy />, label: 'Busiest month', value: MONTH_NAMES[rewind.busiestMonth.month], note: `${plural(rewind.busiestMonth.games, 'game')} finished` });
+  if (rewind.oldestGame && rewind.newestGame) timeline.push({ id: 'range', icon: <CalendarDays />, label: 'Release range', value: `${rewind.oldestGame.game.publication_year} — ${rewind.newestGame.game.publication_year}`, note: 'The eras you visited' });
+  if (rewind.formats.length) timeline.push({ id: 'format', icon: <MonitorPlay />, label: 'Format', value: rewind.formats.map(row => `${row.games} ${row.name.toLocaleLowerCase()}`).join(' · '), note: 'Games you own a copy of' });
 
-    let persona = 'The Explorer';
-    let personaCopy = 'You kept your year varied and made room for different kinds of adventures.';
-    if (tags[0]) {
-      persona = `The ${tags[0].name} Specialist`;
-      personaCopy = `${tags[0].name} led your year with ${formatHours(tags[0].hours)} across ${tags[0].games} ${tags[0].games === 1 ? 'game' : 'games'}.`;
-    }
-    if (marathons >= Math.max(2, playedGames.length / 2)) {
-      persona = 'The Deep Diver';
-      personaCopy = `You went long: ${marathons} games crossed the 50-hour mark.`;
-    } else if (completedGames.length >= 12) {
-      persona = 'The Finisher';
-      personaCopy = `${completedGames.length} finishes made this a year of rolling credits.`;
-    }
-
-    return {
-      playedGames, completedGames, recordedHours, averageRating, mostPlayed, topRated,
-      tags, monthlyCompletions, statusData, datedCompletions, oldestRelease, newestRelease,
-      perfectScores, marathons, quickWins, deepCuts, averageGameLength, persona, personaCopy
-    };
-  }, [games, selectedYear, currentYear]);
-
-  const gameOfTheYear = rewind.topRated[0] || rewind.mostPlayed[0] || rewind.playedGames[0];
+  // Sections come and go with the data, so they are numbered in the order they end up on screen.
+  const sectionIds = [
+    rewind.mostPlayed.length > 0 && 'played',
+    rewind.topRated.length > 1 && 'rated',
+    moments.length > 0 && 'moments',
+    (showMonths || showStatuses) && 'rhythm',
+    (showPlatforms || showDecades) && 'where',
+    curiosities.length > 0 && 'curiosities',
+    !!rewind.spending && 'spending',
+    'library',
+  ].filter((id): id is string => !!id);
+  const sectionNumber = (id: string) => String(sectionIds.indexOf(id) + 1).padStart(2, '0');
+  const library = [...rewind.played].sort((a, b) => b.hours - a.hours || (b.game.mark || 0) - (a.game.mark || 0) || a.game.name.localeCompare(b.game.name));
 
   return (
     <div className="rewind-shell">
       <div className="rewind-aurora rewind-aurora-one" />
       <div className="rewind-aurora rewind-aurora-two" />
       <nav className="rewind-nav">
-        <button className="rewind-back" onClick={onClose}><ArrowLeft size={18} /> Analytics</button>
+        <button className="rewind-back" onClick={onClose}><ArrowLeft size={18} /> Statistics</button>
         <div className="rewind-year-picker">
           <CalendarDays size={17} />
           <select value={selectedYear} onChange={event => setSelectedYear(Number(event.target.value))} aria-label="Rewind year">
@@ -170,73 +148,84 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
       <header className="rewind-hero">
         <div className="rewind-kicker"><Sparkles size={16} /> Your year in games</div>
         <h1><span>{selectedYear}</span> Rewind</h1>
-        <p>{rewind.playedGames.length
-          ? `${rewind.playedGames.length} worlds, one unforgettable year.`
+        <p>{rewind.played.length
+          ? `${plural(rewind.played.length, 'world')}, one unforgettable year.`
           : 'Your next great gaming year is waiting to be tracked.'}</p>
         <div className="rewind-cover-fan" aria-hidden="true">
-          {rewind.mostPlayed.slice(0, 5).map((game, index) => (
-            <div key={game.id} style={{ '--cover-index': index } as React.CSSProperties}><GameCover game={game} /></div>
+          {fan.map(({ game }, index) => (
+            <div key={game.id} style={{ '--cover-index': index + (5 - fan.length) / 2 } as React.CSSProperties}><GameCover game={game} /></div>
           ))}
         </div>
       </header>
 
-      {rewind.playedGames.length === 0 ? (
+      {rewind.played.length === 0 ? (
         <section className="rewind-empty">
           <Gamepad2 size={44} />
           <h2>No tracked activity for {selectedYear}</h2>
-          <p>Add a completion date to finished games to place them in a past rewind. Currently Playing and Infinite games automatically appear in the current year.</p>
+          <p>A game joins the rewind of the year in its completion date. Games you are playing that have no date yet appear in the current year. Not Started and Viewed games are never included.</p>
         </section>
       ) : (
         <main className="rewind-content">
           <section className="rewind-stat-strip">
-            <div><Gamepad2 /><span>{rewind.playedGames.length}</span><small>games in your year</small></div>
-            <div><Clock3 /><span>{formatHours(rewind.recordedHours)}</span><small>recorded playtime</small></div>
-            <div><Trophy /><span>{rewind.completedGames.length}</span><small>credits rolled</small></div>
-            <div><Star /><span>{rewind.averageRating ? rewind.averageRating.toFixed(1) : '—'}</span><small>average rating</small></div>
+            <div><Gamepad2 /><span>{rewind.played.length}</span><small>{rewind.played.length === 1 ? 'game' : 'games'} in your year</small></div>
+            <div><Clock3 /><span>{rewind.timedGames ? formatHours(rewind.totalHours) : '—'}</span><small>recorded playtime</small></div>
+            <div><Trophy /><span>{rewind.finished.length}</span><small>credits rolled</small></div>
+            <div><Star /><span>{rewind.averageRating != null ? rewind.averageRating.toFixed(1) : '—'}</span><small>{rewind.ratedGames ? `average of ${plural(rewind.ratedGames, 'rating')}` : 'average rating'}</small></div>
           </section>
 
-          {gameOfTheYear && (
+          {goty && (
             <section className="rewind-feature-card">
               <div className="rewind-feature-art">
-                {gameOfTheYear.image_url ? <img src={gameOfTheYear.image_url} alt="" /> : <div className="rewind-cover-placeholder"><Crown size={54} /></div>}
+                {goty.game.image_url ? <img src={goty.game.image_url} alt="" /> : <div className="rewind-cover-placeholder"><Crown size={54} /></div>}
                 <div className="rewind-feature-shade" />
               </div>
               <div className="rewind-feature-copy">
                 <div className="rewind-kicker"><Crown size={16} /> Game of the year</div>
-                <h2>{gameOfTheYear.name}</h2>
-                <p>{gameOfTheYear.mark ? `Your ${gameOfTheYear.mark}/10 champion` : 'The title that defined your year'}{gameOfTheYear.playtime_hours ? ` · ${formatHours(gameOfTheYear.playtime_hours)} recorded` : ''}</p>
-                <div className="rewind-feature-tags">{parseTags(gameOfTheYear.tags).slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}</div>
+                <h2>{goty.game.name}</h2>
+                <p>{goty.game.mark ? `Your ${formatMark(goty.game.mark)} champion` : 'The title that defined your year'}{goty.hours ? ` · ${formatHours(goty.hours)} recorded` : ''}</p>
+                <div className="rewind-feature-tags">{tagNames(goty.game.tags).slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}</div>
               </div>
             </section>
           )}
 
-          <section className="rewind-section">
-            <div className="rewind-section-heading"><div><span>01</span><h2>Your most played</h2></div><p>Lifetime playtime recorded for games in this rewind.</p></div>
-            <div className="rewind-podium">
-              {rewind.mostPlayed.slice(0, 5).map((game, index) => (
-                <article key={game.id} className={index === 0 ? 'rewind-top-game' : ''}>
-                  <GameCover game={game} rank={index + 1} />
-                  <div><h3>{game.name}</h3><p><Clock3 size={14} /> {formatHours(game.playtime_hours || 0)}</p></div>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="rewind-two-column">
-            <article className="rewind-panel rewind-tag-panel">
-              <div className="rewind-panel-icon"><Tags /></div>
-              <p className="rewind-kicker">Your favorite lane</p>
-              <h2>{rewind.tags[0]?.name || 'Genre hopper'}</h2>
-              <p>{rewind.tags[0] ? `${formatHours(rewind.tags[0].hours)} recorded across ${rewind.tags[0].games} games` : 'No tags were attached to this year’s games.'}</p>
-              <div className="rewind-tag-bars">
-                {rewind.tags.slice(0, 5).map((tag, index) => (
-                  <div key={tag.name}>
-                    <span>{tag.name}</span><span>{formatHours(tag.hours)}</span>
-                    <i style={{ width: `${Math.max(8, (tag.hours / Math.max(rewind.tags[0]?.hours || 1, 1)) * 100)}%`, background: REWIND_COLORS[index % REWIND_COLORS.length] }} />
-                  </div>
+          {rewind.mostPlayed.length > 0 && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('played')}</span><h2>Your most played</h2></div><p>Lifetime playtime recorded for games in this rewind.</p></div>
+              <div className="rewind-podium">
+                {rewind.mostPlayed.slice(0, 5).map(({ game, hours }, index) => (
+                  <article key={game.id} className={index === 0 ? 'rewind-top-game' : ''}>
+                    <GameCover game={game} rank={index + 1} />
+                    <div><h3>{game.name}</h3><p><Clock3 size={14} /> {formatHours(hours)}</p></div>
+                  </article>
                 ))}
               </div>
-            </article>
+            </section>
+          )}
+
+          {rewind.topRated.length > 1 && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('rated')}</span><h2>Your highest rated</h2></div><p>Ties follow the order of your personal ranking.</p></div>
+              <div className="rewind-podium">
+                {rewind.topRated.slice(0, 5).map(({ game }, index) => (
+                  <article key={game.id} className={index === 0 ? 'rewind-top-game' : ''}>
+                    <GameCover game={game} rank={index + 1} />
+                    <div><h3>{game.name}</h3><p><Star size={14} /> {formatMark(game.mark)}</p></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className={`rewind-two-column${rewind.tags.length ? '' : ' rewind-single'}`}>
+            {rewind.tags.length > 0 && (
+              <article className="rewind-panel rewind-tag-panel">
+                <div className="rewind-panel-icon"><Tags /></div>
+                <p className="rewind-kicker">Your favorite lane</p>
+                <h2>{rewind.tags[0].name}</h2>
+                <p>{tagsByHours ? `${formatHours(rewind.tags[0].hours)} recorded across ${plural(rewind.tags[0].games, 'game')}` : `${plural(rewind.tags[0].games, 'game')} this year`}</p>
+                <RewindBars rows={rewind.tags.slice(0, 5)} byHours={tagsByHours} />
+              </article>
+            )}
             <article className="rewind-panel rewind-persona-panel">
               <div className="rewind-persona-orbit"><Zap /><i /><i /><i /></div>
               <p className="rewind-kicker">Your player type</p>
@@ -245,64 +234,116 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
             </article>
           </section>
 
-          <section className="rewind-section">
-            <div className="rewind-section-heading"><div><span>02</span><h2>The rhythm of your year</h2></div><p>Finishes with a month in their completion date.</p></div>
-            <div className="rewind-chart-grid">
-              <article className="rewind-panel rewind-chart-card">
-                <h3>Credits rolled by month</h3>
-                <ResponsiveContainer width="100%" height={250} minWidth={0}>
-                  <BarChart data={rewind.monthlyCompletions}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.08)" vertical={false} />
-                    <XAxis dataKey="month" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                    <YAxis allowDecimals={false} stroke="#94a3b8" tickLine={false} axisLine={false} />
-                    <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,.04)' }} contentStyle={{ background: 'hsl(225 9% 12.2%)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
-                    <Bar dataKey="games" fill="hsl(var(--accent-h) 90% 66%)" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </article>
-              <article className="rewind-panel rewind-chart-card">
-                <h3>Your year by status</h3>
-                <ResponsiveContainer width="100%" height={250} minWidth={0}>
-                  <PieChart>
-                    <Pie data={rewind.statusData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
-                      {rewind.statusData.map((entry, index) => <Cell key={entry.name} fill={REWIND_COLORS[index % REWIND_COLORS.length]} />)}
-                    </Pie>
-                    <RechartsTooltip contentStyle={{ background: 'hsl(225 9% 12.2%)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="rewind-legend">{rewind.statusData.map((entry, index) => <span key={entry.name}><i style={{ background: REWIND_COLORS[index % REWIND_COLORS.length] }} />{entry.name} · {entry.value}</span>)}</div>
-              </article>
-            </div>
-          </section>
+          {moments.length > 0 && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('moments')}</span><h2>Standout moments</h2></div><p>The extremes of your year, one game each.</p></div>
+              <div className="rewind-moment-grid">
+                {moments.map(moment => (
+                  <article key={moment.id}>
+                    <GameCover game={moment.entry.game} />
+                    <div>
+                      <p className="rewind-moment-label">{moment.icon}{moment.label}</p>
+                      <h3>{moment.entry.game.name}</h3>
+                      <p>{moment.detail}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
 
-          <section className="rewind-awards">
-            <div className="rewind-section-heading"><div><span>03</span><h2>Your cabinet of curiosities</h2></div><p>Small stories hiding inside the numbers.</p></div>
-            <div className="rewind-award-grid">
-              <article><Flame /><strong>{rewind.marathons}</strong><h3>Marathon games</h3><p>Games with 50+ recorded hours</p></article>
-              <article><Zap /><strong>{rewind.quickWins}</strong><h3>Quick wins</h3><p>Finished in under 12 hours</p></article>
-              <article><Medal /><strong>{rewind.perfectScores}</strong><h3>Perfect 10s</h3><p>Your highest honors</p></article>
-              <article><Gem /><strong>{rewind.deepCuts}</strong><h3>Deep cuts</h3><p>Games over a decade old</p></article>
-              <article><Layers3 /><strong>{rewind.tags.length}</strong><h3>Tags explored</h3><p>The variety in your year</p></article>
-              <article><Target /><strong>{formatHours(rewind.averageGameLength)}</strong><h3>Average journey</h3><p>Recorded hours per game</p></article>
-            </div>
-          </section>
+          {(showMonths || showStatuses) && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('rhythm')}</span><h2>The rhythm of your year</h2></div><p>{showMonths ? 'Finishes with a month in their completion date.' : 'How the games of your year ended up.'}</p></div>
+              <div className={`rewind-chart-grid${showMonths && showStatuses ? '' : ' rewind-single'}`}>
+                {showMonths && (
+                  <article className="rewind-panel rewind-chart-card">
+                    <h3>Credits rolled by month</h3>
+                    <ResponsiveContainer width="100%" height={250} minWidth={0}>
+                      <BarChart data={rewind.monthly}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.08)" vertical={false} />
+                        <XAxis dataKey="month" stroke="#94a3b8" tickLine={false} axisLine={false} />
+                        <YAxis allowDecimals={false} stroke="#94a3b8" tickLine={false} axisLine={false} />
+                        <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,.04)' }} contentStyle={TOOLTIP_STYLE} />
+                        <Bar dataKey="games" fill="hsl(var(--accent-h) 90% 66%)" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </article>
+                )}
+                {showStatuses && (
+                  <article className="rewind-panel rewind-chart-card">
+                    <h3>Your year by status</h3>
+                    <ResponsiveContainer width="100%" height={250} minWidth={0}>
+                      <PieChart>
+                        <Pie data={rewind.statuses} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
+                          {rewind.statuses.map((entry, index) => <Cell key={entry.name} fill={REWIND_COLORS[index % REWIND_COLORS.length]} />)}
+                        </Pie>
+                        <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="rewind-legend">{rewind.statuses.map((entry, index) => <span key={entry.name}><i style={{ background: REWIND_COLORS[index % REWIND_COLORS.length] }} />{entry.name} · {entry.value}</span>)}</div>
+                  </article>
+                )}
+              </div>
+            </section>
+          )}
 
-          {(rewind.datedCompletions.length > 0 || rewind.oldestRelease) && (
-            <section className="rewind-timeline-panel">
-              <div><Award /><span>First finish</span><strong>{rewind.datedCompletions[0]?.name || '—'}</strong><small>{rewind.datedCompletions[0]?.completion_date || 'No exact date'}</small></div>
-              <div><Sparkles /><span>Final finish</span><strong>{rewind.datedCompletions.at(-1)?.name || '—'}</strong><small>{rewind.datedCompletions.at(-1)?.completion_date || 'No exact date'}</small></div>
-              <div><CalendarDays /><span>Release range</span><strong>{rewind.oldestRelease || '—'} — {rewind.newestRelease || '—'}</strong><small>The eras you visited</small></div>
+          {(showPlatforms || showDecades) && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('where')}</span><h2>Where and when</h2></div><p>The platforms you played on and the eras your games came from.</p></div>
+              <div className={`rewind-chart-grid${showPlatforms && showDecades ? '' : ' rewind-single'}`}>
+                {showPlatforms && (
+                  <article className="rewind-panel">
+                    <p className="rewind-kicker">Platform of the year</p>
+                    <h3 className="rewind-panel-title">{rewind.platforms[0].name}</h3>
+                    <RewindBars rows={rewind.platforms.slice(0, 5)} byHours={platformsByHours} />
+                  </article>
+                )}
+                {showDecades && (
+                  <article className="rewind-panel">
+                    <p className="rewind-kicker">Favorite release decade</p>
+                    <h3 className="rewind-panel-title">{[...rewind.decades].sort((a, b) => b.games - a.games)[0].name}</h3>
+                    <RewindBars rows={rewind.decades.map(row => ({ ...row, hours: 0 }))} byHours={false} />
+                  </article>
+                )}
+              </div>
+            </section>
+          )}
+
+          {curiosities.length > 0 && (
+            <section className="rewind-awards">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('curiosities')}</span><h2>Your cabinet of curiosities</h2></div><p>Small stories hiding inside the numbers.</p></div>
+              <div className="rewind-award-grid">
+                {curiosities.map(item => <article key={item.id}>{item.icon}<strong>{item.value}</strong><h3>{item.title}</h3><p>{item.note}</p></article>)}
+              </div>
+            </section>
+          )}
+
+          {rewind.spending && (
+            <section className="rewind-section">
+              <div className="rewind-section-heading"><div><span>{sectionNumber('spending')}</span><h2>What your year cost</h2></div><p>Prices of the copies you own of these games, whenever you bought them.</p></div>
+              <div className="rewind-timeline-panel rewind-flush" style={{ gridTemplateColumns: `repeat(${rewind.spending.costPerHour != null ? 3 : 2}, 1fr)` }}>
+                <div><Coins /><span>Spent on these games</span><strong>{money(rewind.spending.total)}</strong><small>{plural(rewind.spending.pricedGames, 'game')} with a price</small></div>
+                {rewind.spending.costPerHour != null && <div><Clock3 /><span>Cost per hour</span><strong>{money(rewind.spending.costPerHour)}</strong><small>Priced games with recorded time</small></div>}
+                <div><Crown /><span>Most expensive</span><strong>{rewind.spending.mostExpensive.entry.game.name}</strong><small>{money(rewind.spending.mostExpensive.cost)}</small></div>
+              </div>
+            </section>
+          )}
+
+          {timeline.length > 0 && (
+            <section className="rewind-timeline-panel" style={{ gridTemplateColumns: `repeat(${Math.min(timeline.length, 3)}, 1fr)` }}>
+              {timeline.map(item => <div key={item.id}>{item.icon}<span>{item.label}</span><strong>{item.value}</strong><small>{item.note}</small></div>)}
             </section>
           )}
 
           <section className="rewind-section rewind-library-section">
-            <div className="rewind-section-heading"><div><span>04</span><h2>Every game in your rewind</h2></div><p>{rewind.playedGames.length} memories, collected in one place.</p></div>
+            <div className="rewind-section-heading"><div><span>{sectionNumber('library')}</span><h2>Every game in your rewind</h2></div><p>{rewind.played.length === 1 ? '1 memory' : `${rewind.played.length} memories`}, collected in one place.</p></div>
             <div className="rewind-library-grid">
-              {[...rewind.playedGames].sort((a, b) => (b.playtime_hours || 0) - (a.playtime_hours || 0)).map(game => (
+              {library.map(({ game, hours }) => (
                 <article key={game.id}>
                   <GameCover game={game} />
                   <h3>{game.name}</h3>
-                  <p>{game.playtime_hours ? formatHours(game.playtime_hours) : game.status || 'Tracked'}{game.mark ? ` · ${game.mark}/10` : ''}</p>
+                  <p>{hours ? formatHours(hours) : game.status}{game.mark ? ` · ${formatMark(game.mark)}` : ''}</p>
                 </article>
               ))}
             </div>
@@ -311,8 +352,8 @@ export function YearlyRewind({ games, onClose }: YearlyRewindProps) {
           <footer className="rewind-footer">
             <Sparkles />
             <h2>That was your {selectedYear}.</h2>
-            <p>Playtime shown is cumulative recorded playtime for games included in the rewind.</p>
-            <button onClick={onClose}><ArrowLeft size={18} /> Back to analytics</button>
+            <p>Playtime is the lifetime total recorded for each game, not only the hours played in {selectedYear}.</p>
+            <button onClick={onClose}><ArrowLeft size={18} /> Back to statistics</button>
           </footer>
         </main>
       )}

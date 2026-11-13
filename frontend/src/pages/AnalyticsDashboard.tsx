@@ -85,7 +85,7 @@ export function AnalyticsDashboard() {
   }, []);
   const stats = useMemo(() => calculateVideogameStats(games), [games]);
   const topFive = useMemo(() => topRankedGames(games, rankingIds), [games, rankingIds]);
-  if (showRewind && !loading) return <YearlyRewind games={games.filter(game => !game.hidden && !game.merged_into_game_id)} onClose={() => setShowRewind(false)} />;
+  if (showRewind && !loading) return <YearlyRewind games={games} rankingIds={rankingIds} onClose={() => setShowRewind(false)} />;
 
   const year = new Date().getFullYear();
   const statuses = stats.statusCounts.filter(row => row.value);
