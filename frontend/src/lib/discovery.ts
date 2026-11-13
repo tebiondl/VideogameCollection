@@ -60,7 +60,21 @@ export interface Release {
   id: string; name: string; release_date: string; image_url: string | null; source_url: string;
   region: string; source: string; platform?: string; notes?: string | null; description?: string; owned: boolean; saved: boolean;
 }
-export interface Timeline { games: Release[]; months: string[]; region: string; coverage: string; warning: string | null; updated_at: string | null }
+export interface Timeline { games: Release[]; months: string[]; month?: string; available_months?: string[]; region: string; coverage: string; warning: string | null; updated_at: string | null }
+
+/** How far the release calendar reaches either side of this month (matches the API). */
+export const RELEASE_MONTH_RANGE = 5;
+
+/** `YYYY-MM` for this month shifted by `offset` months. */
+export function monthKey(offset = 0, from = new Date()): string {
+  const shifted = new Date(from.getFullYear(), from.getMonth() + offset, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function monthLabel(month: string): string {
+  const label = new Date(`${month}-02T12:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return label.charAt(0).toLocaleUpperCase() + label.slice(1);
+}
 export interface IgdbGame { igdb_id: number; name: string; summary: string; cover_url: string; genres: string[]; release_year: number | null; release_date: string | null; is_dlc: boolean; parent_game_name: string | null; platforms: string[] }
 
 export async function discoveryApi<T>(path: string, options: RequestInit = {}): Promise<T> {

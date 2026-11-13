@@ -1157,19 +1157,26 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
 
 
 @router.get("/timeline")
-def timeline(region: str = Query("Europe", pattern="^(Europe|North America|Japan)$"), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    result = service.nintendo_releases(db, region)
+def timeline(region: str = Query("Europe", pattern="^(Europe|North America|Japan)$"),
+             month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
+             db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    chosen = service.parse_release_month(month)
+    if chosen is None:
+        raise HTTPException(422, f"Choose a month at most {service.RELEASE_MONTH_RANGE} months before or after this one.")
+    result = service.nintendo_releases(db, region, chosen)
     manual = db.query(PhysicalRelease).filter(PhysicalRelease.region == region, PhysicalRelease.release_date >= result["start"], PhysicalRelease.release_date < result["end"]).all()
     # An admin correction takes precedence over the source catalog for a title.
     overrides = {service.normalized(row.name) for row in manual}
     games = [game for game in result["games"] if service.normalized(game["name"]) not in overrides]
     games += [{"id": f"manual:{row.id}", "name": row.name, "release_date": row.release_date, "image_url": row.image_url,
                "source_url": row.source_url, "notes": row.notes, "region": row.region, "source": "Admin verified"} for row in manual]
-    owned = {service.normalized(row.name) for row in db.query(Videogame).filter_by(user_id=user.id).all()}
-    wanted = {service.normalized(row.name) for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()}
+    # Like the physical catalog, only a Switch / Switch 2 copy makes a release "owned".
+    owned = {key for key, copies in _owned_title_copies(db, user.id).items() if any(_is_switch_copy(copy) for copy in copies)}
+    wanted = {service._release_title_key(row.name) for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()}
     for game in games:
-        game["owned"] = service.normalized(game["name"]) in owned
-        game["saved"] = service.normalized(game["name"]) in wanted
+        key = service._release_title_key(game["name"])
+        game["owned"] = key in owned
+        game["saved"] = key in wanted
     result["games"] = sorted(games, key=lambda game: (game["release_date"], game["name"]))
     return result
 
@@ -1230,8 +1237,16 @@ def analytics(db: Session = Depends(get_db), user: User = Depends(get_current_us
             "by_month": dict(sorted(Counter(game.created_at.strftime("%Y-%m") for game in games).items()))}
 
 
-def _owned_title_platforms(db, user_id):
-    """Title key -> platforms the user owns it on, from visible collection games."""
+def _is_switch_copy(copy):
+    return "switch" in str(copy.get("platform") or "").lower()
+
+
+def _is_steam_copy(copy):
+    return bool(copy.get("steam_appid")) or str(copy.get("source") or "").strip().lower() == "steam"
+
+
+def _owned_title_copies(db, user_id):
+    """Title key -> current copies the user has of it, from visible collection games."""
     owned = {}
     for game in db.query(Videogame).filter_by(user_id=user_id, hidden=False).all():
         if game.merged_into_game_id:
@@ -1241,11 +1256,10 @@ def _owned_title_platforms(db, user_id):
         except (TypeError, ValueError):
             copies = []
         copies = [item for item in copies if isinstance(item, dict)]
-        platforms = {item["platform"] for item in copies if item.get("platform")}
         for name in {game.name, *(item.get("name") for item in copies)}:
             key = service._release_title_key(name)
             if key:
-                owned.setdefault(key, set()).update(platforms)
+                owned.setdefault(key, []).extend(copies)
     return owned
 
 
@@ -1255,7 +1269,7 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
 
     The client searches, filters and sorts locally, so the whole list is sent.
     """
-    owned = _owned_title_platforms(db, user.id)
+    owned = _owned_title_copies(db, user.id)
     wanted = {
         service._release_title_key(row.name)
         for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()
@@ -1265,15 +1279,24 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
     rows = db.query(SwitchCatalogGame).filter(
         SwitchCatalogGame.physical_format.in_(switch_catalog.PHYSICAL_FORMATS)
     ).all()
-    games = [{
-        "id": row.id, "name": row.name, "platform": row.platform, "format": row.physical_format,
-        "release_date": row.release_date, "release_label": row.release_label or None,
-        "publisher": row.publisher,
-        "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
-        "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,
-        "owned": row.title_key in owned, "owned_platforms": sorted(owned.get(row.title_key, ())),
-        "saved": row.title_key in wanted, "hidden": row.id in hidden,
-    } for row in rows]
+    games = []
+    for row in rows:
+        copies = owned.get(row.title_key, ())
+        switch_copies = [copy for copy in copies if _is_switch_copy(copy)]
+        games.append({
+            "id": row.id, "name": row.name, "platform": row.platform, "format": row.physical_format,
+            "release_date": row.release_date, "release_label": row.release_label or None,
+            "publisher": row.publisher,
+            "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
+            "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,
+            # Only a Switch / Switch 2 copy counts as owning a physical-catalog game;
+            # a Steam or other platform copy leaves it in the catalog.
+            "owned": bool(switch_copies),
+            "owned_physical": any(str(copy.get("format") or "").lower() == "physical" for copy in switch_copies),
+            "on_steam": any(_is_steam_copy(copy) for copy in copies),
+            "owned_platforms": sorted({copy["platform"] for copy in copies if copy.get("platform")}),
+            "saved": row.title_key in wanted, "hidden": row.id in hidden,
+        })
     return {"games": games, "status": switch_catalog.status(db)}
 
 

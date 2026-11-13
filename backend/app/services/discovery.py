@@ -32,6 +32,7 @@ IGDB_PHYSICAL_FORMAT_ID = 2
 IGDB_STEAM_SOURCE_ID = 1
 IGDB_DLC_TYPES = {1, 2, 4}
 NINTENDO_LIFE_GUIDES_FEED = "https://www.nintendolife.com/feeds/guides"
+NINTENDO_EU_SEARCH = "https://searching.nintendo-europe.com/en/select"
 
 
 class UpstreamRateLimit(ValueError):
@@ -1801,6 +1802,38 @@ def month_window(today=None):
     return previous, current, following
 
 
+RELEASE_MONTH_RANGE = 5
+
+
+def shift_month(month, offset):
+    index = month.year * 12 + month.month - 1 + offset
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def release_months(today=None):
+    """The months the release calendar can show: this one and five either side."""
+    current = (today or date.today()).replace(day=1)
+    return [shift_month(current, offset) for offset in range(-RELEASE_MONTH_RANGE, RELEASE_MONTH_RANGE + 1)]
+
+
+def parse_release_month(value, today=None):
+    """``YYYY-MM`` (or nothing for this month) -> first day, if it is a month the calendar offers."""
+    months = release_months(today)
+    if not value:
+        return months[RELEASE_MONTH_RANGE]
+    try:
+        month = datetime.strptime(value, "%Y-%m").date()
+    except ValueError:
+        return None
+    return month if month in months else None
+
+
+def _guide_slug(first, second):
+    if first.year == second.year:
+        return f"{first:%B}-and-{second:%B}-{second.year}".casefold()
+    return f"{first:%B}-{first.year}-and-{second:%B}-{second.year}".casefold()
+
+
 def _release_platform(value):
     value = value or ""
     if re.search(r"Switch\s*1\s*(?:&|and)\s*2", value, re.I):
@@ -1812,6 +1845,9 @@ def _release_platform(value):
 
 def _clean_retail_title(value):
     value = html.unescape(" ".join((value or "").split()))
+    # Retail product names carry packaging details: "Game (Nintendo Switch 2) (Cartridge)".
+    for _ in range(3):
+        value = re.sub(r"\s*\((?:Nintendo\s+)?Switch(?:\s*[12])?(?:\s*Edition)?\)\s*$|\s*\((?:Cartridge|Game[- ]?Key[- ]?Card|Physical(?:\s+Edition)?)\)\s*$", "", value, flags=re.I)
     value = re.sub(r"\s+for\s+Nintendo\s+Switch(?:\s*[12])?$", "", value, flags=re.I)
     value = re.sub(r"\s*[-–—]\s*(?:Nintendo\s+)?Switch(?:\s*[12])?(?:\s*[,–—-].*)?$", "", value, flags=re.I)
     value = re.sub(r"\s+Nintendo\s+Switch(?:\s*[12])?(?:\s*,\s*Game-Key Card)?$", "", value, flags=re.I)
@@ -1921,50 +1957,66 @@ def _parse_nintendo_life_guide(page_html, source_url, previous, following, catal
     return sorted(unique.values(), key=lambda game: (game["release_date"], game["name"]))
 
 
-def _nintendo_life_retail_releases(db, previous, current, following):
-    key = f"nintendolife-retail:{current:%Y-%m}"
+def _nintendo_life_retail_releases(db, previous, following):
+    """Releases dated in [previous, following) — one month — from Nintendo Life's guides.
+
+    Each guide covers two months, so a month can appear in the one that ends with
+    it and the one that starts with it. Old guides leave the feed, so both are
+    also requested by their predictable address.
+    """
+    key = f"nintendolife-retail-month:{previous:%Y-%m}"
     cached = db.get(DiscoveryCache, key)
     if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
         return json.loads(cached.payload), cached.updated_at
 
     with httpx.Client(timeout=25, follow_redirects=True, headers={"User-Agent": "EpicTracker/1.0"}) as client:
-        feed = client.get(NINTENDO_LIFE_GUIDES_FEED)
-        feed.raise_for_status()
-        guide_urls = re.findall(r"<link>(https://www\.nintendolife\.com/guides/upcoming-nintendo-switch[^<]+)</link>", feed.text, re.I)
-        current_name = current.strftime("%B").casefold()
-        current_guides = [url for url in guide_urls if current_name in url.casefold() and str(current.year) in url]
-        previous_slug = f"{previous:%B}-and-{current:%B}-{current.year}".casefold()
-        if previous.year != current.year:
-            previous_slug = f"{previous:%B}-{previous.year}-and-{current:%B}-{current.year}".casefold()
-        previous_url = f"https://www.nintendolife.com/guides/upcoming-nintendo-switch-2-games-and-accessories-for-{previous_slug}"
-        candidates = list(dict.fromkeys(current_guides + [previous_url]))
+        try:
+            feed = client.get(NINTENDO_LIFE_GUIDES_FEED)
+            feed.raise_for_status()
+            guide_urls = re.findall(r"<link>(https://www\.nintendolife\.com/guides/upcoming-nintendo-switch[^<]+)</link>", feed.text, re.I)
+        except httpx.HTTPError:
+            guide_urls = []
+        month_name = previous.strftime("%B").casefold()
+        feed_guides = [url for url in guide_urls if month_name in url.casefold() and str(previous.year) in url]
+        base = "https://www.nintendolife.com/guides/upcoming-nintendo-switch-2-games-and-accessories-for-"
+        guessed = [base + _guide_slug(shift_month(previous, -1), previous), base + _guide_slug(previous, shift_month(previous, 1))]
+        candidates = list(dict.fromkeys(feed_guides + guessed))
         catalog_lookup = {}
         try:
-            catalog_response = client.get("https://searching.nintendo-europe.com/en/select", params={
-                "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
-                "rows": 500, "wt": "json", "sort": "date_from asc, fs_id asc",
+            catalog_response = client.get(NINTENDO_EU_SEARCH, params={
+                "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch* AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
+                "rows": 1000, "wt": "json", "sort": "date_from asc, fs_id asc", "fl": "title,date_from,system_type",
             })
             catalog_response.raise_for_status()
             for row in catalog_response.json()["response"]["docs"]:
                 if not row.get("title") or not row.get("date_from"):
                     continue
-                system_names = " ".join(row.get("system_names_txt") or [])
-                platform = "Nintendo Switch 2" if "Switch 2" in system_names else "Nintendo Switch"
+                platform = _nintendo_eu_platform(row.get("system_type"))
                 catalog_lookup.setdefault(_release_title_key(row["title"]), []).append({
                     "release_date": row["date_from"][:10], "platform": platform,
                 })
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             pass
-        games = []
+        games, reached, parsed = [], False, set()
         for source_url in candidates:
             try:
                 page = client.get(source_url)
+                if page.status_code == 404:
+                    # Far-off months have no guide yet; that is an answer, not an outage.
+                    reached = True
+                    continue
                 page.raise_for_status()
-                games.extend(_parse_nintendo_life_guide(page.text, source_url, previous, following, catalog_lookup))
+                reached = True
+                # Retired guides redirect to the current one; read each page once.
+                final_url = str(page.url)
+                if final_url in parsed:
+                    continue
+                parsed.add(final_url)
+                games.extend(_parse_nintendo_life_guide(page.text, final_url, previous, following, catalog_lookup))
             except httpx.HTTPError:
                 continue
-    if not games:
-        raise ValueError("Nintendo Life monthly retail guide contained no dated releases")
+    if not reached:
+        raise ValueError("Nintendo Life could not be reached")
     unique = {}
     for game in games:
         unique.setdefault((normalized(game["name"]), game["release_date"], game["platform"]), game)
@@ -1977,14 +2029,14 @@ def _nintendo_life_retail_releases(db, previous, current, following):
     return games, cached.updated_at
 
 
-def _igdb_physical_releases(db, region, previous, current, following):
+def _igdb_physical_releases(db, region, previous, following):
     """Fallback source using IGDB's documented physical-product links.
 
     IGDB connects release dates to separately curated physical external products.
     Coverage is less complete than Nintendo's catalog, so this is intentionally a
     fallback and its limitation is returned to the UI.
     """
-    key = f"igdb-physical:{region}:{current:%Y-%m}"
+    key = f"igdb-physical-month:{region}:{previous:%Y-%m}"
     cached = db.get(DiscoveryCache, key)
     if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
         return json.loads(cached.payload), cached.updated_at
@@ -2082,70 +2134,240 @@ def _igdb_physical_releases(db, region, previous, current, following):
     return games, cached.updated_at
 
 
-def nintendo_releases(db, region="Europe"):
-    previous, current, following = month_window()
-    base = {"start": previous.isoformat(), "end": following.isoformat(), "months": [previous.strftime("%Y-%m"), current.strftime("%Y-%m")],
+def _nintendo_eu_platform(system_types):
+    systems = " ".join(system_types or [])
+    return "Nintendo Switch 2" if "nintendoswitch2" in systems and "nintendoswitch_gamecard" not in systems else "Nintendo Switch"
+
+
+def _nintendo_europe_window(db, previous, following):
+    """Every Switch-family game Nintendo Europe dates inside the window, physical or not.
+
+    Nintendo rarely flags upcoming games as physical, so the rows mainly supply
+    cover art for releases the other sources found; flagged rows are releases too.
+    """
+    key = f"nintendo-eu-month:{previous:%Y-%m}"
+    cached = db.get(DiscoveryCache, key)
+    if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
+        return json.loads(cached.payload), cached.updated_at
+    try:
+        rows, offset = [], 0
+        with httpx.Client(timeout=20) as client:
+            while True:
+                raw = request_json(client, NINTENDO_EU_SEARCH, params={
+                    "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch* AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
+                    "rows": 500, "start": offset, "wt": "json", "sort": "date_from asc, fs_id asc",
+                    "fl": "fs_id,title,url,date_from,excerpt,system_type,physical_version_b,image_url,image_url_sq_s,image_url_h2x1_s",
+                })
+                response = raw["response"]
+                docs = response["docs"]
+                for item in docs:
+                    if not item.get("title") or not item.get("date_from") or not item.get("fs_id"):
+                        continue
+                    rows.append({
+                        "fs_id": str(item["fs_id"]), "title": item["title"], "release_date": item["date_from"][:10],
+                        "platform": _nintendo_eu_platform(item.get("system_type")),
+                        "physical": bool(item.get("physical_version_b")),
+                        "image_url": item.get("image_url") or item.get("image_url_sq_s") or item.get("image_url_h2x1_s"),
+                        "url": item.get("url"), "excerpt": item.get("excerpt"),
+                    })
+                offset += len(docs)
+                if offset >= response["numFound"]:
+                    break
+                if not docs:
+                    raise ValueError("Nintendo pagination stopped before the full catalog was read")
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        if cached:
+            return json.loads(cached.payload), cached.updated_at
+        raise
+    if cached is None:
+        cached = DiscoveryCache(key=key)
+        db.add(cached)
+    cached.payload, cached.updated_at = json.dumps(rows), datetime.utcnow()
+    db.commit()
+    return rows, cached.updated_at
+
+
+def _nintendo_europe_physical(rows):
+    return [{
+        "id": f"nintendo:{row['fs_id']}", "name": row["title"], "release_date": row["release_date"],
+        "image_url": row.get("image_url"), "source_url": urljoin("https://www.nintendo.com", row.get("url") or ""),
+        "region": "Europe", "description": row.get("excerpt"), "source": "Nintendo", "platform": row["platform"],
+        "notes": f"{row['platform']} | Nintendo catalog physical edition",
+    } for row in rows if row.get("physical")]
+
+
+def _catalog_window_releases(db, previous, following):
+    """Physical releases dated in the window by the persistent Switch catalog."""
+    from ..discovery_models import SwitchCatalogGame
+    from .switch_catalog import GAME_KEY_CARD, PHYSICAL_FORMATS
+
+    rows = db.query(SwitchCatalogGame).filter(
+        SwitchCatalogGame.physical_format.in_(PHYSICAL_FORMATS),
+        SwitchCatalogGame.release_date >= previous.isoformat(),
+        SwitchCatalogGame.release_date < following.isoformat(),
+    ).all()
+    return [{
+        "id": f"catalog:{row.id}", "name": row.name, "release_date": row.release_date, "image_url": row.image_url,
+        "source_url": row.source_url, "region": "Europe", "description": None, "source": row.source,
+        "platform": row.platform,
+        "notes": f"{row.platform} | {'Game-Key Card' if row.physical_format == GAME_KEY_CARD else 'Retail physical edition'}",
+    } for row in rows]
+
+
+def _catalog_images(db, title_keys):
+    """Cover art the catalog knows for these titles, whatever their date, keyed like ``_release_key``."""
+    from ..discovery_models import SwitchCatalogGame
+
+    images = {}
+    keys = [key for key in title_keys if key]
+    for start in range(0, len(keys), 500):
+        for title_key, platform, image_url in db.query(
+            SwitchCatalogGame.title_key, SwitchCatalogGame.platform, SwitchCatalogGame.image_url,
+        ).filter(SwitchCatalogGame.title_key.in_(keys[start:start + 500]), SwitchCatalogGame.image_url.is_not(None)).all():
+            merge_key = _merge_title_from_key(title_key)
+            images.setdefault((merge_key, platform), image_url)
+            images.setdefault((merge_key, None), image_url)
+    return images
+
+
+_EDITION_WORDS = {"complete", "definitive", "deluxe", "ultimate", "standard", "special", "launch", "day", "one", "edition",
+                  "remastered", "remaster", "hd", "goty", "game", "of", "the", "year"}
+_ROMAN_NUMERALS = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10"}
+
+
+def _merge_title_from_key(title_key):
+    return " ".join(_ROMAN_NUMERALS.get(word, word) for word in (title_key or "").split())
+
+
+def _release_merge_title(value):
+    """Title key that also treats "Gothic III" and "Gothic 3" as the same release."""
+    return _merge_title_from_key(_release_title_key(_clean_retail_title(value)))
+
+
+def _release_key(game):
+    return _release_merge_title(game.get("name")), game.get("platform") or "Nintendo Switch"
+
+
+def merge_release_sources(catalog_games, retail_games, nintendo_games, image_rows=(), catalog_images=None):
+    """Combine the calendar sources into one entry per title and platform.
+
+    The monthly retail guide has the most reliable retail dates, the catalog the
+    cleanest names, links and box art; Nintendo's own listings fill what is
+    left. A title only the guide lists as code-in-box is not a physical game.
+    """
+    catalog_images = catalog_images or {}
+    single_platforms = ("Nintendo Switch", "Nintendo Switch 2")
+    catalog_keys = {_release_key(game) for game in catalog_games}
+    grouped = {}
+    for source, games in (("catalog", catalog_games), ("retail", retail_games), ("nintendo", nintendo_games)):
+        for game in games:
+            if not game.get("name") or not game.get("release_date"):
+                continue
+            title_key, platform = _release_key(game)
+            targets = [(title_key, platform)]
+            if platform not in single_platforms:
+                # "Switch 1 & 2" in the guide is two retail products the catalog lists separately.
+                targets = [(title_key, single) for single in single_platforms if (title_key, single) in catalog_keys] or targets
+            for key in targets:
+                grouped.setdefault(key, {}).setdefault(source, game)
+
+    def release_date(sources):
+        return next(sources[name]["release_date"] for name in ("retail", "catalog", "nintendo") if name in sources)
+
+    # "Stellar Blade" in the guide is "Stellar Blade: Complete Edition" in the catalog.
+    for title_key, platform in sorted(grouped, key=lambda key: len(key[0])):
+        sources = grouped.get((title_key, platform))
+        if sources is None or "catalog" in sources:
+            continue
+        for (other_key, other_platform), other in list(grouped.items()):
+            suffix = other_key[len(title_key):].split() if other_key.startswith(f"{title_key} ") else None
+            if (other_platform == platform and suffix and set(suffix) <= _EDITION_WORDS
+                    and release_date(other) == release_date(sources)):
+                for name, game in sources.items():
+                    other.setdefault(name, game)
+                del grouped[(title_key, platform)]
+                break
+
+    eu_images = {}
+    for row in image_rows:
+        if row.get("image_url"):
+            key = _release_merge_title(row.get("title"))
+            eu_images.setdefault((key, row.get("platform")), row["image_url"])
+            eu_images.setdefault((key, None), row["image_url"])
+
+    def fallback_image(title_key, platform):
+        for images in (catalog_images, eu_images):
+            image = images.get((title_key, platform)) or images.get((title_key, None))
+            if image:
+                return image
+        # Store listings often add an edition suffix: "Stellar Blade Complete Edition".
+        if len(title_key) >= 6:
+            for (other_key, other_platform), image in eu_images.items():
+                if other_platform in (platform, None) and other_key.startswith(f"{title_key} "):
+                    return image
+        return None
+
+    merged = []
+    for (title_key, platform), sources in grouped.items():
+        catalog, retail, nintendo = sources.get("catalog"), sources.get("retail"), sources.get("nintendo")
+        # The catalog read the product page itself; the others only describe the release.
+        notes = catalog.get("notes") or "" if catalog else " ".join(game.get("notes") or "" for game in sources.values())
+        if not catalog and retail and "Code in box" in (retail.get("notes") or "") and not nintendo:
+            continue
+        base = dict(catalog or nintendo or retail)
+        base["name"] = (catalog or {}).get("name") or _clean_retail_title((retail or nintendo)["name"]) or base["name"]
+        base["release_date"] = (retail or catalog or nintendo)["release_date"]
+        base["image_url"] = next((game["image_url"] for game in (catalog, retail, nintendo) if game and game.get("image_url")), None) \
+            or fallback_image(title_key, platform)
+        base["description"] = next((game["description"] for game in (nintendo, catalog, retail) if game and game.get("description")), None)
+        base["platform"] = platform
+        base["notes"] = f"{platform} | {'Game-Key Card' if 'Game-Key Card' in notes else 'Retail physical edition'}"
+        merged.append(base)
+    return sorted(merged, key=lambda game: (game["release_date"], game["name"].casefold()))
+
+
+def nintendo_releases(db, region="Europe", month=None):
+    """Physical Switch-family releases for one month (this month by default)."""
+    previous = month or date.today().replace(day=1)
+    following = shift_month(previous, 1)
+    base = {"start": previous.isoformat(), "end": following.isoformat(), "months": [previous.strftime("%Y-%m")],
+            "month": previous.strftime("%Y-%m"), "available_months": [value.strftime("%Y-%m") for value in release_months()],
             "source": "Nintendo Europe catalog", "region": region,
             "coverage": "Nintendo-listed Switch titles with a physical edition. Catalog release dates can differ from retail dates; limited-print and unlisted releases may be missing."}
     if region != "Europe":
         try:
-            games, updated_at = _igdb_physical_releases(db, region, previous, current, following)
+            games, updated_at = _igdb_physical_releases(db, region, previous, following)
             return {**base, "source": "IGDB physical products", "games": games, "updated_at": updated_at,
                     "coverage": "IGDB Switch releases linked to a physical external product. Coverage may be incomplete.",
                     "warning": None if games else "IGDB has no physically verified releases for this region and period."}
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return {**base, "games": [], "updated_at": None,
                     "warning": "The physical-release sources are temporarily unavailable."}
-    key = f"nintendo:Europe:{current:%Y-%m}"
-    cached = db.get(DiscoveryCache, key)
-    nintendo_games, source_updates, warnings = [], [], []
-    if cached and cached.updated_at > datetime.utcnow() - timedelta(hours=24):
-        nintendo_games = json.loads(cached.payload)
-        source_updates.append(cached.updated_at)
-    else:
+    source_updates, warnings, nintendo_rows, reached = [], [], [], False
+    try:
+        nintendo_rows, nintendo_updated = _nintendo_europe_window(db, previous, following)
+        source_updates.append(nintendo_updated)
+        reached = True
+        if nintendo_updated < datetime.utcnow() - timedelta(hours=24):
+            warnings.append("Nintendo could not be refreshed; its last successful data is included.")
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        pass
+    nintendo_games = _nintendo_europe_physical(nintendo_rows)
+    catalog_games = _catalog_window_releases(db, previous, following)
+    if catalog_games:
+        from .switch_catalog import read_state as catalog_state
         try:
-            nintendo_games, offset = [], 0
-            with httpx.Client(timeout=20) as client:
-                while True:
-                    raw = request_json(client, "https://searching.nintendo-europe.com/en/select", params={
-                        "q": "*", "fq": f"type:GAME AND system_type:nintendoswitch AND physical_version_b:true AND date_from:[{previous}T00:00:00Z TO {following}T00:00:00Z}}",
-                        "rows": 200, "start": offset, "wt": "json", "sort": "date_from asc, fs_id asc",
-                    })
-                    response = raw["response"]
-                    docs = response["docs"]
-                    for item in docs:
-                        if not item.get("physical_version_b") or not item.get("date_from"):
-                            continue
-                        system_names = " ".join(item.get("system_names_txt") or [])
-                        platform = "Nintendo Switch 2" if "Switch 2" in system_names else "Nintendo Switch"
-                        nintendo_games.append({"id": f"nintendo:{item['fs_id']}", "name": item["title"], "release_date": item["date_from"][:10],
-                                               "image_url": item.get("image_url_h2x1_s") or item.get("image_url_sq_s"),
-                                               "source_url": urljoin("https://www.nintendo.com", item["url"]), "region": "Europe",
-                                               "description": item.get("excerpt"), "source": "Nintendo", "platform": platform,
-                                               "notes": f"{platform} · Nintendo catalog physical edition"})
-                    offset += len(docs)
-                    if offset >= response["numFound"]:
-                        break
-                    if not docs:
-                        raise ValueError("Nintendo pagination stopped before the full catalog was read")
-            if cached is None:
-                cached = DiscoveryCache(key=key)
-                db.add(cached)
-            cached.payload, cached.updated_at = json.dumps(nintendo_games), datetime.utcnow()
-            db.commit()
-            source_updates.append(cached.updated_at)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            if cached:
-                nintendo_games = json.loads(cached.payload)
-                source_updates.append(cached.updated_at)
-                warnings.append("Nintendo could not be refreshed; its last successful data is included.")
+            source_updates.append(datetime.fromisoformat(catalog_state(db)["listing_at"]))
+        except (KeyError, TypeError, ValueError):
+            pass
 
     retail_games = []
     try:
-        retail_games, retail_updated = _nintendo_life_retail_releases(db, previous, current, following)
+        retail_games, retail_updated = _nintendo_life_retail_releases(db, previous, following)
         source_updates.append(retail_updated)
+        reached = True
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        retail_cache = db.get(DiscoveryCache, f"nintendolife-retail:{current:%Y-%m}")
+        retail_cache = db.get(DiscoveryCache, f"nintendolife-retail-month:{previous:%Y-%m}")
         if retail_cache:
             retail_games = json.loads(retail_cache.payload)
             source_updates.append(retail_cache.updated_at)
@@ -2153,23 +2375,24 @@ def nintendo_releases(db, region="Europe"):
         else:
             warnings.append("The supplemental retail guide is temporarily unavailable, so coverage may be incomplete.")
 
-    combined = {}
-    for game in nintendo_games:
-        game.setdefault("platform", "Nintendo Switch")
-        if not game.get("notes"):
-            game["notes"] = "Nintendo Switch | Nintendo catalog physical edition"
-    for game in nintendo_games + retail_games:
-        dedupe_key = (normalized(game["name"]), game["release_date"], game.get("platform") or "Nintendo Switch")
-        combined.setdefault(dedupe_key, game)
+    title_keys = {_release_title_key(_clean_retail_title(game.get("name"))) for game in catalog_games + retail_games + nintendo_games}
+    combined = merge_release_sources(catalog_games, retail_games, nintendo_games, nintendo_rows, _catalog_images(db, title_keys))
     if combined:
-        sources = "Nintendo + Nintendo Life retail guide" if nintendo_games and retail_games else ("Nintendo Europe catalog" if nintendo_games else "Nintendo Life retail guide")
-        return {**base, "source": sources, "games": list(combined.values()),
+        names = [name for name, games in (("the physical catalog", catalog_games), ("Nintendo Life's monthly guide", retail_games),
+                                          ("Nintendo Europe", nintendo_games or nintendo_rows)) if games]
+        return {**base, "source": " + ".join(names), "games": combined,
                 "updated_at": max(source_updates) if source_updates else None,
-                "coverage": "Nintendo Switch and Switch 2 retail releases combined from Nintendo's catalog and Nintendo Life's monthly physical-game guide. Game-Key Cards and code-in-box releases are labelled.",
+                "coverage": f"Nintendo Switch and Switch 2 retail releases combined from {' and '.join([', '.join(names[:-1]), names[-1]] if len(names) > 1 else names)}. Game-Key Cards are labelled; code-in-box products are left out.",
+                "warning": " ".join(warnings) or None}
+    if reached:
+        # The sources answered; the month simply has no known physical releases yet.
+        return {**base, "source": "Nintendo + Nintendo Life", "games": [],
+                "updated_at": max(source_updates) if source_updates else None,
+                "coverage": "Nintendo Switch and Switch 2 retail releases from the physical catalog, Nintendo Life's monthly guide and Nintendo Europe.",
                 "warning": " ".join(warnings) or None}
 
     try:
-        games, updated_at = _igdb_physical_releases(db, region, previous, current, following)
+        games, updated_at = _igdb_physical_releases(db, region, previous, following)
         return {**base, "source": "IGDB physical products", "games": games, "updated_at": updated_at,
                 "coverage": "IGDB Switch releases linked to a physical external product. Coverage may be incomplete.",
                 "warning": "Nintendo and the retail guide could not be reached, so this is the IGDB physical-product fallback."}

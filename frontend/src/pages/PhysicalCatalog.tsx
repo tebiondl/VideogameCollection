@@ -4,7 +4,7 @@ import { WantedGameEditor } from '../components/WantedGameEditor';
 import { discoveryApi, emptyWanted, errorMessage, timestamp } from '../lib/discovery';
 import type { WantedDraft } from '../lib/discovery';
 import {
-  CATALOG_SORTS, DEFAULT_CATALOG_FILTERS, activeFilterCount, filterCatalog, releaseYear, searchKey,
+  CATALOG_SORTS, DEFAULT_CATALOG_FILTERS, activeFilterCount, filterCatalog, isSteamWithoutPhysical, releaseYear, searchKey,
 } from '../lib/physicalCatalog';
 import type { CatalogFilters, CatalogGame, CatalogResponse, CatalogStatus } from '../lib/physicalCatalog';
 import './PhysicalCatalog.css';
@@ -69,6 +69,8 @@ export function PhysicalCatalog() {
   const hiddenGames = useMemo(() => games.filter(game => game.hidden).sort((a, b) => a.name.localeCompare(b.name)), [games]);
   const years = useMemo(() => [...new Set(games.map(releaseYear).filter(Boolean))].sort().reverse(), [games]);
   const ownedCount = useMemo(() => games.filter(game => game.owned && !game.hidden).length, [games]);
+  const steamCount = useMemo(() => games.filter(game => isSteamWithoutPhysical(game) && !game.hidden).length, [games]);
+  const ownedHidden = !filters.steamOnly && !filters.showOwned && ownedCount > 0;
   const filterCount = activeFilterCount(filters);
   const shown = results.slice(0, visible);
 
@@ -149,7 +151,8 @@ export function PhysicalCatalog() {
     <div className="cat-quick" role="group" aria-label="Quick filters">
       {(['all', 'Nintendo Switch', 'Nintendo Switch 2'] as const).map(value => <button type="button" key={value} className="cat-chip" aria-pressed={filters.platform === value} onClick={() => update('platform', value)}>{value === 'all' ? 'Both consoles' : value}</button>)}
       <span className="cat-divider" aria-hidden />
-      <label className="cat-toggle"><input type="checkbox" checked={filters.showOwned} onChange={event => update('showOwned', event.target.checked)} /> Also show games I own{ownedCount > 0 && <small>{ownedCount}</small>}</label>
+      <label className="cat-toggle" title="Games you own on Switch or Switch 2. Copies on Steam or other platforms don’t count."><input type="checkbox" checked={filters.showOwned} disabled={filters.steamOnly} onChange={event => update('showOwned', event.target.checked)} /> Also show games I own on Switch{ownedCount > 0 && <small>{ownedCount}</small>}</label>
+      <label className="cat-toggle" title="Games in your Steam library that you don’t have as a physical Switch copy yet"><input type="checkbox" checked={filters.steamOnly} onChange={event => update('steamOnly', event.target.checked)} /> Only games I have on Steam, not physical{steamCount > 0 && <small>{steamCount}</small>}</label>
     </div>
 
     {filtersOpen && <div className="cat-filters">
@@ -173,18 +176,19 @@ export function PhysicalCatalog() {
       <small>{building ? 'The first build reads every physical release and takes a while. You can leave this page; it continues on the server.' : 'Start a refresh to read every physical Switch and Switch 2 release.'}</small>
       {!building && <button className="btn btn-primary" onClick={() => void refresh()}><RefreshCw size={16} /> Build the catalog</button>}
     </div> : <>
-      <p className="cat-count" aria-live="polite"><strong>{results.length.toLocaleString()}</strong> {results.length === 1 ? 'game' : 'games'}{filters.query.trim() ? <> matching “{filters.query.trim()}”</> : null}{!filters.showOwned && ownedCount > 0 ? <> · {ownedCount} owned not shown</> : null}</p>
+      <p className="cat-count" aria-live="polite"><strong>{results.length.toLocaleString()}</strong> {results.length === 1 ? 'game' : 'games'}{filters.query.trim() ? <> matching “{filters.query.trim()}”</> : null}{filters.steamOnly ? <> on Steam without a physical copy</> : null}{ownedHidden ? <> · {ownedCount} owned on Switch not shown</> : null}</p>
       {results.length === 0 ? <div className="disc-empty">
         <Search size={32} />
         <h3>No games match</h3>
-        <small>{!filters.showOwned && ownedCount > 0 ? 'Games you already own are not shown. Turn on “Also show games I own”, or loosen the filters.' : 'Try fewer words or reset the filters.'}</small>
+        <small>{filters.steamOnly ? 'No Steam game without a physical copy matches. Try fewer words or loosen the filters.' : ownedHidden ? 'Games you already own on Switch are not shown. Turn on “Also show games I own on Switch”, or loosen the filters.' : 'Try fewer words or reset the filters.'}</small>
       </div> : <div className="cat-grid">{shown.map(game => <article className={`cat-card ${game.owned ? 'owned' : ''}`} key={game.id}>
         <Cover game={game} />
         <div className="cat-body">
           <div className="cat-badges">
             <span className={`cat-badge ${game.platform === 'Nintendo Switch 2' ? 'switch2' : 'switch'}`}>{platformLabel(game.platform)}</span>
             {game.format === 'Game-Key Card' && <span className="cat-badge keycard">Game-Key Card</span>}
-            {game.owned && <span className="cat-badge owned" title={game.owned_platforms.length ? `In your collection on ${game.owned_platforms.join(', ')}` : 'In your collection'}><Check size={11} /> Owned</span>}
+            {game.owned && <span className="cat-badge owned" title={game.owned_platforms.length ? `In your collection on ${game.owned_platforms.join(', ')}` : 'In your collection'}><Check size={11} /> {game.owned_physical ? 'Owned' : 'Owned digital'}</span>}
+            {game.on_steam && <span className="cat-badge steam" title="In your Steam library">Steam</span>}
           </div>
           <h3 title={game.name}>{game.name}</h3>
           <p className="cat-meta">{releaseText(game)}{game.publisher ? ` · ${game.publisher}` : ''}</p>

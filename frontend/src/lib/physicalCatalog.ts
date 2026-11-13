@@ -2,8 +2,17 @@ export interface CatalogGame {
   id: number; name: string; platform: string; format: string;
   release_date: string | null; release_label: string | null; publisher: string | null;
   image_url: string | null; source: string; source_url: string; added_at: string;
-  owned: boolean; owned_platforms: string[]; saved: boolean; hidden: boolean;
+  /** Owned on Switch or Switch 2 (any format); copies on other platforms do not count. */
+  owned: boolean;
+  /** Owned as a physical Switch or Switch 2 copy. */
+  owned_physical: boolean;
+  /** Owned on Steam. */
+  on_steam: boolean;
+  owned_platforms: string[]; saved: boolean; hidden: boolean;
 }
+
+/** On Steam without a physical Switch copy yet: a candidate to buy physically. */
+export const isSteamWithoutPhysical = (game: CatalogGame) => game.on_steam && !game.owned_physical;
 export interface CatalogStatus {
   running: boolean; phase: string | null; listing_at: string | null; finished_at: string | null;
   error: string | null; pending_details: number;
@@ -18,11 +27,13 @@ export interface CatalogFilters {
   release: 'all' | 'released' | 'upcoming';
   year: string;
   showOwned: boolean;
+  /** Only games on Steam that are not yet owned physically on Switch. */
+  steamOnly: boolean;
   hideSaved: boolean;
   sort: CatalogSort;
 }
 export const DEFAULT_CATALOG_FILTERS: CatalogFilters = {
-  query: '', platform: 'all', format: 'all', release: 'all', year: '', showOwned: false, hideSaved: false, sort: 'newest',
+  query: '', platform: 'all', format: 'all', release: 'all', year: '', showOwned: false, steamOnly: false, hideSaved: false, sort: 'newest',
 };
 export const CATALOG_SORTS: Array<{ value: CatalogSort; label: string }> = [
   { value: 'newest', label: 'Release date (newest)' },
@@ -74,7 +85,10 @@ export function filterCatalog(games: CatalogGame[], filters: CatalogFilters, tod
   const tokens = searchKey(filters.query).split(' ').filter(Boolean);
   const result = games.filter(game => {
     if (game.hidden) return false;
-    if (!filters.showOwned && game.owned) return false;
+    if (filters.steamOnly) {
+      // A digital Switch copy still leaves a Steam game worth buying physically.
+      if (!isSteamWithoutPhysical(game)) return false;
+    } else if (!filters.showOwned && game.owned) return false;
     if (filters.hideSaved && game.saved) return false;
     if (filters.platform !== 'all' && game.platform !== filters.platform) return false;
     if (filters.format !== 'all' && game.format !== filters.format) return false;
@@ -90,6 +104,6 @@ export function filterCatalog(games: CatalogGame[], filters: CatalogFilters, tod
 }
 
 export function activeFilterCount(filters: CatalogFilters): number {
-  return (['platform', 'format', 'release', 'year', 'showOwned', 'hideSaved'] as const)
+  return (['platform', 'format', 'release', 'year', 'showOwned', 'steamOnly', 'hideSaved'] as const)
     .filter(key => filters[key] !== DEFAULT_CATALOG_FILTERS[key]).length;
 }

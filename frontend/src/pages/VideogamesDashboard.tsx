@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink, RefreshCw } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink, RefreshCw, Play } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -770,12 +770,6 @@ export function VideogamesDashboard() {
               </div>
               <div className="vg-info">
                 <h3>{game.name} {game.is_dlc && <span className="vg-dlc-badge" title="Standalone DLC / expansion"><Puzzle size={14} /> DLC</span>}</h3>
-                <label className="vg-play-next" onClick={event => event.stopPropagation()}>
-                  <input type="checkbox" checked={!!game.play_next} disabled={savingPlayNext.has(game.id)}
-                    aria-label={`Play ${game.name} next`}
-                    onChange={event => { void togglePlayNext(game, event.target.checked); }} />
-                  Play next
-                </label>
                 <div className="vg-player-data">
                   <span className="badge">{game.status}</span>
                   {displayPlaytimeHours(game) != null && <span><strong>{displayPlaytimeHours(game)}</strong> hrs</span>}
@@ -789,7 +783,12 @@ export function VideogamesDashboard() {
                 }}><ExternalLink size={14} /> Expansion of {game.parent_game_name || 'linked game'}</button>}
               </div>
               <div className="card-actions">
-                <button type="button" className="icon-btn steam-sync-btn" onClick={event => { event.stopPropagation(); setSteamSyncGame({ ...game }); }} title="Sync with Steam" aria-label={`Sync ${game.name} with Steam`}><RefreshCw size={16} /></button>
+                <button type="button" className={`icon-btn play-next-btn${game.play_next ? ' active' : ''}`} disabled={savingPlayNext.has(game.id)}
+                  aria-pressed={!!game.play_next} aria-label={`Play ${game.name} next`}
+                  title={game.play_next ? 'Planned to play next (click to remove)' : 'Play next'}
+                  onClick={event => { event.stopPropagation(); void togglePlayNext(game, !game.play_next); }}>
+                  <Play size={16} fill={game.play_next ? 'currentColor' : 'none'} />
+                </button>
                 <button className="icon-btn edit-btn" disabled={savingPlayNext.has(game.id)} onClick={event => { event.stopPropagation(); setEditingGame({ ...game }); }} title="Edit"><Edit2 size={16} /></button>
                 <button className="icon-btn delete-btn" onClick={event => { event.stopPropagation(); handleDelete(game.id); }} title="Delete"><Trash2 size={16} /></button>
               </div>

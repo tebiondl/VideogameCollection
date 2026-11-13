@@ -2409,15 +2409,50 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(service.month_window(date(2027, 1, 4)), (date(2026, 12, 1), date(2027, 1, 1), date(2027, 2, 1)))
         self.assertEqual(service.month_window(date(2028, 3, 31))[0], date(2028, 2, 1))
 
+    def test_release_calendar_offers_five_months_either_side(self):
+        today = date(2026, 11, 13)
+        months = service.release_months(today)
+        self.assertEqual((len(months), months[0], months[5], months[-1]), (11, date(2026, 6, 1), date(2026, 11, 1), date(2027, 4, 1)))
+        self.assertEqual(service.parse_release_month(None, today), date(2026, 11, 1))
+        self.assertEqual(service.parse_release_month('2027-04', today), date(2027, 4, 1))
+        self.assertIsNone(service.parse_release_month('2027-05', today))
+        self.assertIsNone(service.parse_release_month('2026-13', today))
+        self.assertEqual(service._guide_slug(date(2026, 12, 1), date(2027, 1, 1)), 'december-2026-and-january-2027')
+
+    def test_timeline_shows_one_chosen_month(self):
+        calls = []
+        def releases(db, region, month):
+            calls.append(month)
+            return {"games": [], "start": month.isoformat(), "end": service.shift_month(month, 1).isoformat(), "months": [month.strftime('%Y-%m')]}
+        current = date.today().replace(day=1)
+        later = service.shift_month(current, 5)
+        with patch.object(service, 'nintendo_releases', side_effect=releases):
+            self.assertEqual(self.client.get(f'/api/discovery/timeline?month={later:%Y-%m}').json()['months'], [f'{later:%Y-%m}'])
+            self.assertEqual(self.client.get('/api/discovery/timeline').status_code, 200)
+            too_far = service.shift_month(current, -6)
+            self.assertEqual(self.client.get(f'/api/discovery/timeline?month={too_far:%Y-%m}').status_code, 422)
+        self.assertEqual(calls, [later, current])
+
     def test_catalog_paginates_requires_physical_and_caches(self):
         request = httpx.Request('GET', 'https://example.com')
-        pages = [httpx.Response(200, request=request, json={"response": {"numFound": 2, "docs": [{"fs_id": str(i), "title": f"Physical {i}", "physical_version_b": True, "date_from": f"2026-09-0{i}T00:00:00Z", "url": "/en-gb/Games/example"}]}}) for i in (1, 2)]
+        previous, current, _ = service.month_window()
+        day = current.isoformat()
+        docs = [
+            {"fs_id": "1", "title": "Physical 1", "physical_version_b": True, "date_from": f"{day}T00:00:00Z", "url": "/en-gb/Games/example", "system_type": ["nintendoswitch_gamecard"]},
+            {"fs_id": "2", "title": "Physical 2", "physical_version_b": True, "date_from": f"{day}T00:00:00Z", "url": "/en-gb/Games/example", "system_type": ["nintendoswitch2"], "image_url_sq_s": "https://example.com/2.jpg"},
+            {"fs_id": "3", "title": "Digital 3", "physical_version_b": False, "date_from": f"{day}T00:00:00Z", "url": "/en-gb/Games/example"},
+        ]
+        pages = [httpx.Response(200, request=request, json={"response": {"numFound": 3, "docs": docs[:2]}}),
+                 httpx.Response(200, request=request, json={"response": {"numFound": 3, "docs": docs[2:]}})]
         with patch.object(service, '_nintendo_life_retail_releases', return_value=([], datetime.utcnow())), patch.object(service.httpx.Client, 'get', side_effect=pages) as get:
             result = service.nintendo_releases(self.db)
-            self.assertEqual(len(result['games']), 2)
+            self.assertEqual([game['name'] for game in result['games']], ['Physical 1', 'Physical 2'])
+            self.assertEqual([game['platform'] for game in result['games']], ['Nintendo Switch', 'Nintendo Switch 2'])
+            self.assertEqual(result['games'][1]['image_url'], 'https://example.com/2.jpg')
             self.assertEqual(get.call_count, 2)
-            self.assertIn('physical_version_b:true', get.call_args.kwargs['params']['fq'])
-            self.assertEqual(get.call_args.kwargs['params']['start'], 1)
+            # Switch 2 games are indexed under their own system type, so the query must match both.
+            self.assertIn('system_type:nintendoswitch*', get.call_args.kwargs['params']['fq'])
+            self.assertEqual(get.call_args.kwargs['params']['start'], 2)
             service.nintendo_releases(self.db)
             self.assertEqual(get.call_count, 2)
         cache = self.db.query(DiscoveryCache).one()
@@ -2463,7 +2498,7 @@ class DiscoveryTests(unittest.TestCase):
         with patch.dict('os.environ', {"TWITCH_SECRET_CLIENT_ID": "client"}), \
              patch('backend.app.routers.igdb_router._get_twitch_token', return_value='token'), \
              patch.object(service.httpx, 'Client', return_value=client):
-            games, updated_at = service._igdb_physical_releases(self.db, 'Europe', previous, current, following)
+            games, updated_at = service._igdb_physical_releases(self.db, 'Europe', current, following)
         self.assertEqual(games[0]['name'], 'Physical game')
         self.assertEqual(games[0]['release_date'], release_day.isoformat())
         self.assertEqual(games[0]['source'], 'IGDB')
@@ -2478,14 +2513,72 @@ class DiscoveryTests(unittest.TestCase):
         self.user = self.users[0]
         response = self.client.post('/api/discovery/releases', json=body)
         self.assertEqual(response.status_code, 201)
-        self.db.add(Videogame(user_id=self.user.id, name='A'))
+        self.db.add(Videogame(user_id=self.user.id, name='A', copies='[{"platform": "PC", "source": "Steam", "steam_appid": 5}]'))
         self.db.commit()
         previous, current, following = service.month_window()
         source = {"games": [], "start": previous.isoformat(), "end": following.isoformat(), "months": [str(previous)[:7], str(current)[:7]]}
         with patch.object(service, 'nintendo_releases', side_effect=lambda *args: {**source, 'games': []}):
+            # A Steam copy does not mean the Switch release is owned.
+            self.assertFalse(self.client.get('/api/discovery/timeline').json()['games'][0]['owned'])
+            game = self.db.query(Videogame).filter_by(name='A').one()
+            game.copies = '[{"platform": "Nintendo Switch", "format": "Digital"}]'
+            self.db.commit()
             self.assertTrue(self.client.get('/api/discovery/timeline').json()['games'][0]['owned'])
             self.user = self.users[1]
             self.assertFalse(self.client.get('/api/discovery/timeline').json()['games'][0]['owned'])
+
+    def test_release_sources_merge_by_title_and_fill_missing_covers(self):
+        catalog = [{"id": "catalog:1", "name": "Moonlighter 2: The Endless Vault", "release_date": "2026-11-14", "image_url": "https://nl/moon.jpg",
+                    "source_url": "https://nl/moon", "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Retail physical edition"},
+                   {"id": "catalog:2", "name": "Gothic 3 Classic", "release_date": "2026-11-24", "image_url": "https://nl/gothic.jpg",
+                    "source_url": "https://nl/gothic", "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"}]
+        retail = [
+            {"id": "nl:1", "name": "Moonlighter 2: The Endless Vault (Nintendo Switch 2)", "release_date": "2026-11-13", "image_url": None,
+             "source_url": "https://nl/guide", "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Retail physical edition"},
+            {"id": "nl:2", "name": "Stellar Blade", "release_date": "2026-11-05", "image_url": None, "source_url": "https://nl/guide",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"},
+            {"id": "nl:3", "name": "Cozy Bundle", "release_date": "2026-11-13", "image_url": None, "source_url": "https://nl/guide",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Code in box"},
+            {"id": "nl:4", "name": "Ravenswatch - Nintendo Switch 2 (Cartridge)", "release_date": "2026-11-15", "image_url": None,
+             "source_url": "https://nl/guide", "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Retail physical edition"},
+            {"id": "nl:5", "name": "Gothic III Classic", "release_date": "2026-11-24", "image_url": None, "source_url": "https://nl/guide",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"},
+        ]
+        catalog += [
+            {"id": "catalog:3", "name": "Resonance", "release_date": "2026-10-22", "image_url": "https://nl/r1.jpg", "source_url": "https://nl/r1",
+             "source": "Nintendo Life", "platform": "Nintendo Switch", "notes": "Nintendo Switch | Retail physical edition"},
+            {"id": "catalog:4", "name": "Resonance", "release_date": "2026-10-22", "image_url": "https://nl/r2.jpg", "source_url": "https://nl/r2",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"},
+            {"id": "catalog:5", "name": "Saga", "release_date": "2026-10-01", "image_url": "https://nl/s1.jpg", "source_url": "https://nl/s1",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"},
+        ]
+        retail += [
+            {"id": "nl:6", "name": "Resonance", "release_date": "2026-10-22", "image_url": None, "source_url": "https://nl/guide",
+             "source": "Nintendo Life", "platform": "Nintendo Switch / Nintendo Switch 2", "notes": "Nintendo Switch / Nintendo Switch 2 | Game-Key Card"},
+            {"id": "nl:7", "name": "Saga II", "release_date": "2026-10-01", "image_url": None, "source_url": "https://nl/guide",
+             "source": "Nintendo Life", "platform": "Nintendo Switch 2", "notes": "Nintendo Switch 2 | Game-Key Card"},
+        ]
+        image_rows = [{"title": "Stellar Blade™ Complete Edition", "platform": "Nintendo Switch 2", "image_url": "https://eu/stellar.jpg"}]
+        games = service.merge_release_sources(catalog, retail, [], image_rows, {("ravenswatch", None): "https://nl/raven.jpg"})
+        by_name = {game["name"]: game for game in games}
+        # "Gothic III" and "Gothic 3" are one release; code-in-box products are dropped.
+        self.assertEqual(set(by_name), {"Moonlighter 2: The Endless Vault", "Stellar Blade", "Ravenswatch", "Gothic 3 Classic",
+                                        "Resonance", "Saga", "Saga II"})
+        # A "Switch 1 & 2" guide entry joins both catalog products instead of adding a third.
+        resonance = sorted((game for game in games if game["name"] == "Resonance"), key=lambda game: game["platform"])
+        self.assertEqual([game["platform"] for game in resonance], ["Nintendo Switch", "Nintendo Switch 2"])
+        # The catalog's format per product wins over the guide's shared note.
+        self.assertEqual([game["notes"].split(" | ")[-1] for game in resonance], ["Retail physical edition", "Game-Key Card"])
+        merged = service.merge_release_sources(
+            [{**catalog[0], "id": "catalog:9", "name": "Stellar Blade: Complete Edition", "release_date": "2026-11-05", "image_url": "https://nl/sb.jpg"}],
+            [retail[1]], [])
+        self.assertEqual([(game["name"], game["image_url"]) for game in merged], [("Stellar Blade: Complete Edition", "https://nl/sb.jpg")])
+        moon = by_name["Moonlighter 2: The Endless Vault"]
+        # The guide's retail date wins; the catalog keeps its cover and link.
+        self.assertEqual((moon["release_date"], moon["image_url"], moon["source_url"]), ("2026-11-13", "https://nl/moon.jpg", "https://nl/moon"))
+        self.assertEqual(by_name["Stellar Blade"]["image_url"], "https://eu/stellar.jpg")
+        self.assertIn("Game-Key Card", by_name["Stellar Blade"]["notes"])
+        self.assertEqual(by_name["Ravenswatch"]["image_url"], "https://nl/raven.jpg")
 
     def test_analytics_excludes_other_users_and_keeps_currencies_separate(self):
         self.create('One', target_price=25, currency='EUR', hype=8, dlcs='[{"name":"Extra","state":"not_owned"}]')

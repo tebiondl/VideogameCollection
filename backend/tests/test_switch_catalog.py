@@ -1,4 +1,5 @@
 """Physical Switch catalog. Isolated SQLite and mocked upstreams; no network."""
+import json
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -109,30 +110,43 @@ class SwitchCatalogTests(unittest.TestCase):
 
     def test_catalog_lists_only_physical_games_and_flags_owned_and_saved(self):
         self.add("Owned Game")
+        self.add("Steam Game")
         self.add(EDITION, "Nintendo Switch 2", catalog.GAME_KEY_CARD)
         self.add("Wanted Game")
         self.add("Digital Only", "Nintendo Switch 2", "")
         self.add("Unchecked", "Nintendo Switch 2", None)
         self.add("Code Game", "Nintendo Switch 2", catalog.CODE_IN_BOX)
         self.db.add_all([
-            Videogame(user_id=self.user.id, name="Owned Game", copies='[{"id": "a", "platform": "PC"}]'),
+            Videogame(user_id=self.user.id, name="Owned Game", copies=json.dumps([
+                {"id": "a", "platform": "PC", "format": "Digital", "source": "Steam", "steam_appid": 10},
+                {"id": "b", "platform": "Nintendo Switch", "format": "Physical"},
+            ])),
+            Videogame(user_id=self.user.id, name="Steam Game", copies=json.dumps([
+                {"id": "c", "platform": "PC", "format": "Digital", "steam_appid": 20},
+            ])),
             Videogame(user_id=self.user.id, name="Zelda Quest", hidden=True),
             Videogame(user_id=self.other.id, name="Wanted Game"),
             WantedGame(user_id=self.user.id, name="Wanted Game"),
         ])
         self.db.commit()
         games = self.games()
-        self.assertEqual(set(games), {"Owned Game", EDITION, "Wanted Game"})
-        self.assertEqual((games["Owned Game"]["owned"], games["Owned Game"]["owned_platforms"]), (True, ["PC"]))
+        self.assertEqual(set(games), {"Owned Game", "Steam Game", EDITION, "Wanted Game"})
+        owned = games["Owned Game"]
+        self.assertEqual((owned["owned"], owned["owned_physical"], owned["on_steam"], owned["owned_platforms"]),
+                         (True, True, True, ["Nintendo Switch", "PC"]))
+        # A Steam copy alone does not count as owning the physical Switch game.
+        steam = games["Steam Game"]
+        self.assertEqual((steam["owned"], steam["owned_physical"], steam["on_steam"]), (False, False, True))
         self.assertFalse(games[EDITION]["owned"])
         self.assertEqual(games[EDITION]["format"], catalog.GAME_KEY_CARD)
         self.assertEqual((games["Wanted Game"]["owned"], games["Wanted Game"]["saved"]), (False, True))
 
     def test_switch_2_edition_matches_the_owned_base_game(self):
         self.add(EDITION, "Nintendo Switch 2")
-        self.db.add(Videogame(user_id=self.user.id, name="Zelda Quest"))
+        self.db.add(Videogame(user_id=self.user.id, name="Zelda Quest", copies='[{"platform": "Nintendo Switch", "format": "Digital"}]'))
         self.db.commit()
-        self.assertTrue(self.games()[EDITION]["owned"])
+        game = self.games()[EDITION]
+        self.assertEqual((game["owned"], game["owned_physical"]), (True, False))
 
     def test_hidden_games_are_per_user_and_restorable(self):
         first, second = self.add("First"), self.add("Second")
