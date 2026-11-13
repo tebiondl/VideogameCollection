@@ -11,6 +11,7 @@ from ..models import AppSetting, User, Videogame
 from ..discovery_models import (
     WantedGame, PhysicalRelease, CopyOption, CopyCompatibility, SteamCollectionLink, SteamCopyTrash,
     SteamMatchReview, SteamOwnedGame, SteamContentLink, GameMergeRedirect, SteamAuditLog,
+    SwitchCatalogGame, SwitchCatalogHidden,
 )
 from ..discovery_schemas import (
     WantedInput, WantedResponse, AcquireInput, BatchInput, SettingsInput, SettingsResponse,
@@ -19,6 +20,7 @@ from ..discovery_schemas import (
 )
 from ..services import discovery as service
 from ..services import copy_store
+from ..services import switch_catalog
 from ..services.dlc_links import GAME_TO_NESTED_STATUS
 from ..services.title_matching import compare_titles, is_reviewable_title_match
 from ..services.secrets import protect_secret, resolve_steam_api_key
@@ -1226,3 +1228,88 @@ def analytics(db: Session = Depends(get_db), user: User = Depends(get_current_us
             "by_platform": dict(Counter(game.platform or "Unspecified" for game in active)),
             "by_status": dict(Counter(game.status for game in games)), "by_source": dict(Counter(game.source for game in active)),
             "by_month": dict(sorted(Counter(game.created_at.strftime("%Y-%m") for game in games).items()))}
+
+
+def _owned_title_platforms(db, user_id):
+    """Title key -> platforms the user owns it on, from visible collection games."""
+    owned = {}
+    for game in db.query(Videogame).filter_by(user_id=user_id, hidden=False).all():
+        if game.merged_into_game_id:
+            continue
+        try:
+            copies = json.loads(game.copies or "[]")
+        except (TypeError, ValueError):
+            copies = []
+        copies = [item for item in copies if isinstance(item, dict)]
+        platforms = {item["platform"] for item in copies if item.get("platform")}
+        for name in {game.name, *(item.get("name") for item in copies)}:
+            key = service._release_title_key(name)
+            if key:
+                owned.setdefault(key, set()).update(platforms)
+    return owned
+
+
+@router.get("/catalog")
+def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Every known physical Switch / Switch 2 game, flagged for this user.
+
+    The client searches, filters and sorts locally, so the whole list is sent.
+    """
+    owned = _owned_title_platforms(db, user.id)
+    wanted = {
+        service._release_title_key(row.name)
+        for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()
+        if row.status != "Acquired"
+    }
+    hidden = {row.catalog_game_id for row in db.query(SwitchCatalogHidden).filter_by(user_id=user.id).all()}
+    rows = db.query(SwitchCatalogGame).filter(
+        SwitchCatalogGame.physical_format.in_(switch_catalog.PHYSICAL_FORMATS)
+    ).all()
+    games = [{
+        "id": row.id, "name": row.name, "platform": row.platform, "format": row.physical_format,
+        "release_date": row.release_date, "release_label": row.release_label or None,
+        "publisher": row.publisher,
+        "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
+        "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,
+        "owned": row.title_key in owned, "owned_platforms": sorted(owned.get(row.title_key, ())),
+        "saved": row.title_key in wanted, "hidden": row.id in hidden,
+    } for row in rows]
+    return {"games": games, "status": switch_catalog.status(db)}
+
+
+@router.post("/catalog/refresh", status_code=202)
+def refresh_physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if switch_catalog.is_running():
+        return {"started": False, "message": "The catalog is already being refreshed."}
+    state = switch_catalog.read_state(db)
+    try:
+        listing_at = datetime.fromisoformat(state["listing_at"]) if state.get("listing_at") else None
+    except (TypeError, ValueError):
+        listing_at = None
+    if listing_at and listing_at > datetime.utcnow() - switch_catalog.MANUAL_REFRESH_COOLDOWN:
+        raise HTTPException(429, "The catalog was refreshed a few minutes ago. Try again later.")
+    switch_catalog.start_background_sync(force_listing=True)
+    return {"started": True, "message": "Catalog refresh started. It runs on the server and fills in as it goes."}
+
+
+@router.put("/catalog/{catalog_id}/hidden")
+def set_catalog_game_hidden(
+    catalog_id: int, hidden: bool = Query(...),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    if db.get(SwitchCatalogGame, catalog_id) is None:
+        raise HTTPException(404, "Catalog game not found.")
+    row = db.query(SwitchCatalogHidden).filter_by(user_id=user.id, catalog_game_id=catalog_id).first()
+    if hidden and row is None:
+        db.add(SwitchCatalogHidden(user_id=user.id, catalog_game_id=catalog_id))
+    elif not hidden and row is not None:
+        db.delete(row)
+    db.commit()
+    return {"id": catalog_id, "hidden": hidden}
+
+
+@router.delete("/catalog/hidden")
+def restore_all_catalog_games(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    restored = db.query(SwitchCatalogHidden).filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.commit()
+    return {"restored": restored}

@@ -253,3 +253,35 @@ class PhysicalRelease(Base):
     image_url = Column(String)
     source_url = Column(String, nullable=False)
     notes = Column(String)
+
+
+class SwitchCatalogGame(Base):
+    """One physical-catalog candidate for Nintendo Switch or Switch 2 (shared by all users)."""
+    __tablename__ = "switch_catalog_games"
+    id = Column(Integer, primary_key=True)
+    source_key = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
+    title_key = Column(String, nullable=False, default="", index=True)
+    platform = Column(String, nullable=False, default="Nintendo Switch")
+    # None: not checked yet. "": the source lists no physical release.
+    physical_format = Column(String)
+    release_date = Column(String)
+    release_label = Column(String)
+    publisher = Column(String)
+    image_url = Column(String)
+    source = Column(String, nullable=False, default="Nintendo Life")
+    source_url = Column(String, nullable=False, default="")
+    detail_checked_at = Column(DateTime)
+    first_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SwitchCatalogHidden(Base):
+    """A catalog game the user chose not to see until they restore it."""
+    __tablename__ = "switch_catalog_hidden"
+    __table_args__ = (UniqueConstraint("user_id", "catalog_game_id", name="uq_switch_catalog_hidden"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    catalog_game_id = Column(Integer, ForeignKey("switch_catalog_games.id", ondelete="CASCADE"), nullable=False, index=True)
+    hidden_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -11,6 +11,7 @@ from .discovery_models import (
 from .routers import auth_router, videogames_router, smart_import_router, filters_router, igdb_router, boardgames_router, settings_router, discovery_router, backups_router, ranking_router
 from .services.discovery import scheduler
 from .services.backups import scheduler as backup_scheduler
+from .services.switch_catalog import scheduler as switch_catalog_scheduler
 from contextlib import asynccontextmanager, suppress
 import asyncio
 from .services.boardgame_player_migration import migrate_legacy_match_players
@@ -593,7 +594,8 @@ _migrate_boardgame_players()
 
 @asynccontextmanager
 async def lifespan(app):
-    tasks = [asyncio.create_task(scheduler()), asyncio.create_task(backup_scheduler())]
+    tasks = [asyncio.create_task(scheduler()), asyncio.create_task(backup_scheduler()),
+             asyncio.create_task(switch_catalog_scheduler())]
     yield
     for task in tasks:
         task.cancel()

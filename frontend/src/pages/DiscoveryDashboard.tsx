@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, CalendarDays, Compass, Gamepad2, PackageCheck, Plus } from 'lucide-react';
+import { ArrowUpRight, CalendarDays, Compass, Gamepad2, LibraryBig, PackageCheck, Plus } from 'lucide-react';
+import { PhysicalCatalog } from './PhysicalCatalog';
 import { WantedGameEditor } from '../components/WantedGameEditor';
 import { discoveryApi, emptyWanted, errorMessage, timestamp } from '../lib/discovery';
 import type { DiscoverySettings, Release, Timeline, WantedDraft, WantedGame } from '../lib/discovery';
@@ -26,6 +27,8 @@ export function DiscoveryDashboard() {
   const [editing, setEditing] = useState<{ draft: WantedDraft } | null>(null);
   const [hideOwned, setHideOwned] = useState(true);
   const [reload, setReload] = useState(0);
+  const [view, setView] = useState<'calendar' | 'catalog'>(() => { try { return localStorage.getItem('discovery-view') === 'catalog' ? 'catalog' : 'calendar'; } catch { return 'calendar'; } });
+  const choose = (value: 'calendar' | 'catalog') => { setView(value); try { localStorage.setItem('discovery-view', value); } catch { /* private storage */ } };
   const today = new Date().toLocaleDateString('en-CA');
 
   useEffect(() => {
@@ -49,7 +52,12 @@ export function DiscoveryDashboard() {
 
   return <div className="container discovery discovery-only">
     <VideogamePageHeader eyebrow="Release radar" icon={<Compass />} title="Discovery" description="See what is new and what is arriving next. More discovery sources will join this calendar over time." />
-    <section className="disc-timeline-section">
+    <div className="disc-subtabs" role="tablist" aria-label="Discovery views">
+      <button role="tab" aria-selected={view === 'calendar'} onClick={() => choose('calendar')}><CalendarDays size={17} /> Release calendar</button>
+      <button role="tab" aria-selected={view === 'catalog'} onClick={() => choose('catalog')}><LibraryBig size={17} /> Physical catalog</button>
+    </div>
+    {view === 'catalog' && <PhysicalCatalog />}
+    {view === 'calendar' && <section className="disc-timeline-section">
       <div className="disc-section-heading"><div><p className="disc-eyebrow">ON THE HORIZON</p><h2><CalendarDays size={23} /> Switch physical release calendar</h2></div><div className="disc-inline"><label className="disc-check"><input type="checkbox" checked={hideOwned} onChange={event => setHideOwned(event.target.checked)} /> Hide owned</label><select aria-label="Release region" value={region} onChange={event => { setTimeline(null); setLoading(true); setRegion(event.target.value); }}>{['Europe', 'North America', 'Japan'].map(value => <option key={value}>{value}</option>)}</select></div></div>
       <p className="disc-muted">Last month and this month · Nintendo Switch family · Retail physical editions</p>
       {error && <div className="disc-alert error" role="alert">{error} <button className="disc-text-button" onClick={() => setReload(value => value + 1)}>Retry</button></div>}
@@ -78,7 +86,7 @@ export function DiscoveryDashboard() {
         })}</div>
         <p className="disc-source-note">{timeline.coverage} Refreshed: {timestamp(timeline.updated_at)}. Refreshes daily.</p>
       </>}
-    </section>
+    </section>}
     {editing && <WantedGameEditor initial={editing.draft} title="Save to Games I want" onClose={() => setEditing(null)} onSave={async draft => { await discoveryApi('/games', { method: 'POST', body: JSON.stringify(draft) }); setMessage(`${draft.name} saved to Games I want.`); setReload(value => value + 1); }} />}
   </div>;
 }
