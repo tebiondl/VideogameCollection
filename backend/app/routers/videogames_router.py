@@ -746,6 +746,38 @@ def update_videogame(
     db.refresh(db_game)
     return db_game
 
+
+@router.post("/copy-prices")
+def set_copy_prices(
+    payload: schemas.CopyPricesUpdate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    """Set the price paid on existing copies without touching anything else on the card."""
+    by_game: dict[int, list[schemas.CopyPrice]] = {}
+    for item in payload.prices:
+        by_game.setdefault(item.game_id, []).append(item)
+    games = db.query(models.Videogame).filter(
+        models.Videogame.user_id == current_user.id, models.Videogame.id.in_(by_game),
+    ).all()
+    if len(games) != len(by_game):
+        raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+    for game in games:
+        rows = copy_store.ensure_copies(db, game)
+        by_copy = {row.copy_id: row for row in rows}
+        for item in by_game[game.id]:
+            row = by_copy.get(item.copy_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"{game.name} no longer has that copy. Reload and try again.")
+            row.price, row.currency = item.price, item.currency
+            row.user_modified, row.updated_at = True, datetime.utcnow()
+        db.flush()
+        copy_store.project_game(db, game, rows)
+        game.version = (game.version or 1) + 1
+    db.commit()
+    return {"updated": len(payload.prices)}
+
+
 @router.delete("/{game_id}")
 def delete_videogame(
     game_id: int,

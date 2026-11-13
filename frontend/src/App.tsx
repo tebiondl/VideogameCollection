@@ -23,6 +23,7 @@ const DiscoveryAnalytics = lazy(() => import('./pages/DiscoveryAnalytics').then(
 const DiscoverySmartAdd = lazy(() => import('./pages/DiscoverySmartAdd').then(({ DiscoverySmartAdd }) => ({ default: DiscoverySmartAdd })));
 const WantedGames = lazy(() => import('./pages/WantedGames').then(({ WantedGames }) => ({ default: WantedGames })));
 const SteamTrash = lazy(() => import('./pages/SteamTrash').then(({ SteamTrash }) => ({ default: SteamTrash })));
+const SteamPurchases = lazy(() => import('./pages/SteamPurchases').then(({ SteamPurchases }) => ({ default: SteamPurchases })));
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -51,7 +52,8 @@ function AppRoutes() {
           <Route path="/dashboard/videogames/collection" element={<ProtectedRoute><VideogamesDashboard /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/ranking" element={<ProtectedRoute><RankingPage /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/trash" element={<ProtectedRoute><SteamTrash /></ProtectedRoute>} />
-          <Route path="/dashboard/videogames/smart" element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/steam-purchases" element={<ProtectedRoute><SteamPurchases /></ProtectedRoute>} />
+          <Route path="/dashboard/videogames/smart"element={<ProtectedRoute><AddGamePage key="smart" initialTab="smart" /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/discovery" element={<ProtectedRoute><DiscoveryDashboard /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/wanted" element={<ProtectedRoute><WantedGames /></ProtectedRoute>} />
           <Route path="/dashboard/videogames/wanted/admin" element={<Navigate to="/dashboard/videogames/settings#steam" replace />} />

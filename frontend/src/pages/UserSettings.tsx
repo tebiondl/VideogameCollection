@@ -178,6 +178,7 @@ export function UserSettings() {
             <AppearanceSettings />
           </Section>
           <Section id="steam" eyebrow="CONNECTIONS" title="Steam sync" description="Your wishlist and owned-library schedule, match reviews and sync history.">
+            <p><Link className="btn btn-secondary" to="/dashboard/videogames/steam-purchases">Import purchase prices</Link></p>
             <DiscoveryAdmin embedded />
           </Section>
           <Section id="discovery" eyebrow="RELEASES" title="Discovery" description="The release calendar and the physical Switch catalog.">

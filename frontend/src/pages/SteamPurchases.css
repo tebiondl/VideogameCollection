@@ -1,0 +1,29 @@
+.steam-purchases-page { padding-bottom:3rem; }
+.steam-purchases-page .glass-card { padding:1.25rem; margin-bottom:1rem; }
+.purchases-step ol { margin:0 0 1rem; padding-left:1.2rem; display:grid; gap:.45rem; color:var(--text-secondary); }
+.purchases-step a { color:hsl(var(--accent-h) 100% 83%); }
+.purchases-paste { display:block; width:100%; height:5.5rem; resize:none; margin-bottom:.75rem; border-style:dashed; text-align:center; padding-top:2rem; }
+.purchases-file { display:inline-flex; align-items:center; gap:.45rem; cursor:pointer; }
+.purchases-alert { padding:13px 17px; border:1px solid #836e4055; background:#423c2538; border-radius:8px; margin:0 0 1rem; font-size:.89rem; color:#e6d7b1; }
+.purchases-alert.error { background:#5b292838; border-color:#98555555; color:#ffb9b9; }
+.purchases-alert.success { background:#244d3e38; border-color:#57977c55; color:#a6e1c9; }
+.purchases-loading { display:grid; place-items:center; padding:2rem; }
+.purchases-summary { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin:0 0 1rem; color:var(--text-secondary); font-size:.9rem; }
+.purchases-table-wrap { overflow-x:auto; }
+.purchases-table { width:100%; border-collapse:collapse; font-size:.9rem; }
+.purchases-table th { text-align:left; padding:.5rem .6rem; color:var(--text-muted); font-weight:500; font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border-color); white-space:nowrap; }
+.purchases-table td { padding:.5rem .6rem; border-bottom:1px solid var(--border-color); vertical-align:middle; }
+.purchases-table tr.off td:not(:first-child) { opacity:.55; }
+.purchases-table td small { display:block; color:var(--text-muted); }
+.purchases-table td:nth-child(3), .purchases-table td:nth-child(5) { white-space:nowrap; color:var(--text-secondary); }
+.purchases-price { display:inline-flex; align-items:center; gap:.4rem; white-space:nowrap; color:var(--text-secondary); }
+.purchases-price input { width:6.5rem; padding:.35rem .5rem; }
+.purchases-notes span { display:block; font-size:.8rem; color:var(--text-muted); }
+.purchases-notes .warn { color:#fbbf24; }
+.purchases-actions { display:flex; align-items:center; justify-content:flex-end; gap:1rem; flex-wrap:wrap; margin-top:1rem; color:var(--text-secondary); }
+.purchases-unmatched { margin-top:1.25rem; }
+.purchases-unmatched summary { cursor:pointer; color:var(--text-secondary); }
+.purchases-unmatched p { margin:.6rem 0; font-size:.85rem; }
+.purchases-unmatched ul { list-style:none; margin:0; padding:0; max-height:22rem; overflow:auto; }
+.purchases-unmatched li { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:1rem; padding:.35rem 0; border-bottom:1px solid var(--border-color); font-size:.88rem; }
+.purchases-unmatched li small { color:var(--text-muted); }

@@ -422,3 +422,14 @@ class BggGameMetadata(BaseModel):
     rank: int | None = None
     bgg_link: str
     is_expansion: bool = False
+
+
+class CopyPrice(BaseModel):
+    game_id: int
+    copy_id: str = Field(min_length=1, max_length=200)
+    price: float = Field(ge=0, le=100000)
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
+
+
+class CopyPricesUpdate(BaseModel):
+    prices: list[CopyPrice] = Field(min_length=1, max_length=5000)

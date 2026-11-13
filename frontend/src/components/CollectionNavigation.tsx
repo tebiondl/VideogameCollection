@@ -40,7 +40,7 @@ export function CollectionNavigation() {
       <Link className={discovery ? 'selected' : ''} aria-current={discovery ? 'page' : undefined} to={destination('discovery')}><Compass size={18} /> Discovery</Link>
     </nav>
     {!discovery && <nav className="collection-tools" aria-label={`${tab} tools`}>
-      <Link to={`${toolsBase}/smart`} aria-current={context === 'smart' ? 'page' : undefined}><Sparkles size={16} /> Smart Add</Link>
+      {wanted && <Link to={`${toolsBase}/smart`} aria-current={context === 'smart' ? 'page' : undefined}><Sparkles size={16} /> Smart Add</Link>}
       {!wanted && <Link to={`${base}/trash`} aria-current={pathname.endsWith('/trash') ? 'page' : undefined}><Trash2 size={16} /> Trash</Link>}
       <Link to={`${toolsBase}/analytics`} aria-current={context === 'analytics' ? 'page' : undefined}><BarChart3 size={16} /> Statistics</Link>
       {!wanted && <Link to={`${base}/ranking`} aria-current={context === 'ranking' ? 'page' : undefined}><Trophy size={16} /> Ranking</Link>}
