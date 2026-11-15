@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Check, EyeOff, Gamepad2, Heart, Loader2, RefreshCw, RotateCcw, Search, SlidersHorizontal, Undo2, X } from 'lucide-react';
+import { Check, EyeOff, Gamepad2, Heart, Loader2, RefreshCw, RotateCcw, Search, SlidersHorizontal, Undo2, X } from 'lucide-react';
 import { WantedGameEditor } from '../components/WantedGameEditor';
 import { discoveryApi, emptyWanted, errorMessage, timestamp } from '../lib/discovery';
 import type { WantedDraft } from '../lib/discovery';
@@ -218,7 +218,6 @@ export function PhysicalCatalog() {
               </button>
               : <button type="button" className="cat-action primary" onClick={() => save(game)}><Heart size={14} /> Want</button>}
             <button type="button" className="cat-action" onClick={() => void setHidden(game, true)} title="Hide this game until you restore it from Hidden games"><EyeOff size={14} /> Don’t show</button>
-            <a className="cat-action icon" href={game.source_url} target="_blank" rel="noreferrer" aria-label={`${game.name} on ${game.source}`} title={`Open on ${game.source}`}><ArrowUpRight size={15} /></a>
           </div>
         </div>
       </article>)}</div>}
