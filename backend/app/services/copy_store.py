@@ -225,7 +225,7 @@ def project_game(db: Session, game: Videogame, rows: list[OwnedCopy] | None = No
 
 def _snapshot(game: Videogame) -> str:
     fields = (
-        "name", "description", "comments", "image_url", "status", "playtime_hours",
+        "name", "description", "comments", "image_url", "status", "stopped_date", "playtime_hours",
         "playtime_mode", "mark", "hype", "completion_date", "publication_year",
         "release_date", "completion_percentage", "tags", "dlcs", "old_copies", "hidden", "reviewed", "igdb_id",
     )

@@ -40,6 +40,7 @@ class VideogameBase(BaseModel):
     comments: str | None = None
     image_url: str | None = None
     status: str = "Not Started"
+    stopped_date: str | None = None
     time_spent: str | None = None
     playtime_hours: float | None = None
     playtime_mode: Literal["user", "copies", "combined"] = "user"

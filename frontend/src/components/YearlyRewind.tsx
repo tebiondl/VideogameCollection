@@ -101,7 +101,7 @@ export function YearlyRewind({ games, rankingIds, onClose }: YearlyRewindProps) 
   if (rewind.quickWins) curiosities.push({ id: 'quick', icon: <Zap />, value: rewind.quickWins, title: 'Quick wins', note: 'Finished in under 12 hours' });
   if (rewind.perfectScores) curiosities.push({ id: 'perfect', icon: <Medal />, value: rewind.perfectScores, title: 'Perfect 10s', note: 'Your highest honors' });
   if (rewind.completionists.length) curiosities.push({ id: 'complete', icon: <BadgeCheck />, value: rewind.completionists.length, title: '100% completed', note: 'Nothing left to find' });
-  if (rewind.abandoned.length) curiosities.push({ id: 'abandoned', icon: <CircleSlash />, value: rewind.abandoned.length, title: 'Left unfinished', note: 'Games you stopped playing' });
+  if (rewind.abandoned.length) curiosities.push({ id: 'abandoned', icon: <CircleSlash />, value: rewind.abandoned.length, title: `Stopped in ${selectedYear}`, note: 'Put down without finishing' });
   if (rewind.sameYearReleases) curiosities.push({ id: 'fresh', icon: <Rocket />, value: rewind.sameYearReleases, title: `${rewind.year} releases`, note: 'Played the year they came out' });
   if (rewind.deepCuts) curiosities.push({ id: 'deep', icon: <Gem />, value: rewind.deepCuts, title: 'Deep cuts', note: 'Ten or more years old when played' });
   if (rewind.averageAge != null) curiosities.push({ id: 'age', icon: <CalendarDays />, value: `${rewind.averageAge.toFixed(1)}y`, title: 'Average game age', note: 'Years between release and play' });
@@ -162,7 +162,7 @@ export function YearlyRewind({ games, rankingIds, onClose }: YearlyRewindProps) 
         <section className="rewind-empty">
           <Gamepad2 size={44} />
           <h2>No tracked activity for {selectedYear}</h2>
-          <p>A game joins the rewind of the year in its completion date. Games you are playing that have no date yet appear in the current year. Not Started and Viewed games are never included.</p>
+          <p>A finished game joins the rewind of the year in its completion date, and a stopped game the year you last stopped it. Games you are playing appear in the current year. Not Started and Viewed games are never included.</p>
         </section>
       ) : (
         <main className="rewind-content">

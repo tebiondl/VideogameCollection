@@ -5,6 +5,7 @@ export interface StatsGame {
   name: string;
   image_url?: string | null;
   status?: string | null;
+  stopped_date?: string | null;
   mark?: number | null;
   hype?: number | null;
   completion_date?: string | null;

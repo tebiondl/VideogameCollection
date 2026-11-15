@@ -44,6 +44,7 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN merged_into_game_id INTEGER",
         "ALTER TABLE videogames ADD COLUMN user_modified_at DATETIME",
         "ALTER TABLE videogames ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE videogames ADD COLUMN stopped_date VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_owned_import_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN steam_api_key VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_igdb_match_count INTEGER NOT NULL DEFAULT 0",
@@ -94,6 +95,14 @@ def _run_migrations():
                 conn.execute(text(
                     "UPDATE owned_copies SET steam_imported = 1 "
                     "WHERE steam_appid IS NOT NULL AND copy_id = 'steam:' || CAST(steam_appid AS VARCHAR)"
+                ))
+            if table == "videogames" and column == "stopped_date":
+                # Before the stop date existed, stopped games kept that day in the completion
+                # date. Carry it over once; the completion date itself is left untouched.
+                conn.execute(text(
+                    "UPDATE videogames SET stopped_date = TRIM(completion_date) "
+                    "WHERE status = 'Stopped' AND stopped_date IS NULL "
+                    "AND TRIM(completion_date) GLOB '[0-9][0-9][0-9][0-9]*'"
                 ))
             conn.commit()
             columns[table].add(column)

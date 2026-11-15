@@ -1,5 +1,6 @@
 import { analyticsPlaytimeHours, parseCopies, parseOldCopies } from './ownedCopies';
 import { tagNames, type StatsGame } from './videogameStats';
+import { effectiveCompletionDate, effectiveStoppedDate } from './completionDate';
 
 export type RewindGame = StatsGame;
 
@@ -48,12 +49,13 @@ const validMark = (game: RewindGame): number | null =>
 
 /**
  * The year a game belongs to, or null when it has no place in any rewind.
- * A dated game belongs to the year of its date only. An undated game counts for the
- * current year while it is being played; any other undated game is left out.
+ * A finished game belongs to the year of its completion date and a stopped game to the
+ * year it was last stopped. A game still being played counts for the current year; any
+ * other game without a usable date is left out.
  */
 export function rewindYearOf(game: RewindGame, currentYear: number): number | null {
   if (!isVisible(game) || !game.status || !PLAYED_STATUSES.has(game.status)) return null;
-  const dated = rewindDateYear(game.completion_date);
+  const dated = rewindDateYear(effectiveCompletionDate(game) ?? effectiveStoppedDate(game));
   if (dated != null) return dated;
   return ACTIVE_STATUSES.has(game.status) ? currentYear : null;
 }
@@ -105,7 +107,7 @@ export function buildYearlyRewind(allGames: RewindGame[], year: number, options:
   const withHours = (game: RewindGame): RewindEntry => ({ game, hours: analyticsPlaytimeHours(game, seenSteamApps) || 0 });
   const played = inYear.filter(game => !game.is_dlc).map(withHours);
   const dlcPlayed = inYear.filter(game => game.is_dlc).map(withHours);
-  const watched = allGames.filter(game => isVisible(game) && !game.is_dlc && game.status === 'Viewed' && rewindDateYear(game.completion_date) === year);
+  const watched = allGames.filter(game => isVisible(game) && !game.is_dlc && game.status === 'Viewed' && rewindDateYear(effectiveCompletionDate(game)) === year);
 
   const byName = (a: RewindEntry, b: RewindEntry) => a.game.name.localeCompare(b.game.name);
   const timed = played.filter(entry => entry.hours > 0);

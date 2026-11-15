@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Table, UniqueConstraint
-from sqlalchemy.orm import relationship
-from datetime import datetime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Table, UniqueConstraint, event
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session, column_property, relationship
+from datetime import date, datetime
 from .database import Base
 
 class User(Base):
@@ -26,7 +27,11 @@ class Videogame(Base):
     description = Column(String, nullable=True)
     comments = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
-    status = Column(String, nullable=False, default="Not Started") # 'Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'
+    # 'Not Started', 'Playing', 'Finished', 'Viewed', 'Stopped', 'Infinite'.
+    # Active history keeps the previous status at hand, so a switch to Stopped can be logged.
+    status = column_property(Column(String, nullable=False, default="Not Started"), active_history=True)
+    # When the game was last stopped (YYYY-MM-DD). Logged automatically on the switch to Stopped.
+    stopped_date = column_property(Column(String, nullable=True), active_history=True)
     time_spent = Column(String, nullable=True) # DEPRECATED
     playtime_hours = Column(Float, nullable=True)
     playtime_mode = Column(String, nullable=False, default="user") # user | copies | combined
@@ -54,6 +59,41 @@ class Videogame(Base):
     version = Column(Integer, nullable=False, default=1)
 
     owner = relationship("User", back_populates="videogames")
+
+
+STOPPED_STATUS = "Stopped"
+
+
+def _changed_value(history) -> bool:
+    if not history.added:
+        return False
+    previous = history.deleted[0] if history.deleted else None
+    return history.added[0] != previous
+
+
+@event.listens_for(Session, "before_flush")
+def _log_stopped_date(session, _flush_context, _instances):
+    """Record the day a game is stopped, whatever path changed its status.
+
+    A date sent together with the switch to Stopped wins over the automatic one,
+    so the user can still type the real day they stopped playing.
+    """
+    today = date.today().isoformat()
+    for game in [*session.new, *session.dirty]:
+        if not isinstance(game, Videogame) or game.status != STOPPED_STATUS:
+            continue
+        state = sa_inspect(game)
+        if state.pending:
+            if not game.stopped_date:
+                game.stopped_date = today
+            continue
+        status_history = state.attrs.status.history
+        previous_status = status_history.deleted[0] if status_history.deleted else game.status
+        if previous_status == STOPPED_STATUS:
+            continue
+        if not _changed_value(state.attrs.stopped_date.history):
+            game.stopped_date = today
+
 
 class GameRankingEntry(Base):
     __tablename__ = "game_ranking_entries"

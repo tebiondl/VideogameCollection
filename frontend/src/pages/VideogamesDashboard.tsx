@@ -7,6 +7,7 @@ import { TagMultiSelect } from '../components/TagMultiSelect';
 import { AdvancedFilterModal, DEFAULT_FILTER_STATE } from '../components/AdvancedFilterModal';
 import type { FilterState, TagGroup, TagRule } from '../components/AdvancedFilterModal';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
+import { effectiveCompletionDate, isCompletedStatus, STOPPED_STATUS, withStatus } from '../lib/completionDate';
 import { DlcEditor } from '../components/DlcEditor';
 import { PaginationControls } from '../components/PaginationControls';
 import { parseStoredPageSize, type PageSize } from '../lib/pagination';
@@ -561,7 +562,8 @@ export function VideogamesDashboard() {
      if (filterState.playtimeRange.max !== '' && (visiblePlaytime === null || visiblePlaytime > filterState.playtimeRange.max)) return false;
 
      if (filterState.dateRange.min !== '' || filterState.dateRange.max !== '') {
-         const year = g.completion_date ? parseInt(g.completion_date, 10) : null;
+         const completionDate = effectiveCompletionDate(g);
+         const year = completionDate ? parseInt(completionDate, 10) : null;
          if (filterState.dateRange.min !== '' && (year === null || isNaN(year) || year < filterState.dateRange.min)) return false;
          if (filterState.dateRange.max !== '' && (year === null || isNaN(year) || year > filterState.dateRange.max)) return false;
      }
@@ -951,7 +953,7 @@ export function VideogamesDashboard() {
               <div className="form-row">
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Status</label>
-                  <select className="form-input" value={editingGame.status} onChange={e => setEditingGame({...editingGame, status: e.target.value})}>
+                  <select className="form-input" value={editingGame.status} onChange={e => setEditingGame(withStatus(editingGame, e.target.value))}>
                     {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 </div>
@@ -986,10 +988,16 @@ export function VideogamesDashboard() {
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={editingGame.playtime_mode || 'user'} onChange={event => setEditingGame({ ...editingGame, playtime_mode: event.target.value })}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
               </div>
 
-              {(editingGame.status === 'Finished' || editingGame.status === 'Viewed' || editingGame.status === 'Stopped' || editingGame.status === 'Infinite') && (
+              {isCompletedStatus(editingGame.status) && (
                 <div className="form-group">
                   <label className="form-label">Completion Date</label>
                   <CompletionDatePicker value={editingGame.completion_date || ''} onChange={(val) => setEditingGame({...editingGame, completion_date: val})} />
+                </div>
+              )}
+              {editingGame.status === STOPPED_STATUS && (
+                <div className="form-group">
+                  <label className="form-label">Stopped on</label>
+                  <CompletionDatePicker value={editingGame.stopped_date || ''} onChange={(val) => setEditingGame({...editingGame, stopped_date: val})} />
                 </div>
               )}
 

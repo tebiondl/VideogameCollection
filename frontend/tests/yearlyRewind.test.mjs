@@ -15,7 +15,8 @@ function load(source, dependencies = {}) {
 
 const ownedCopies = load('../src/lib/ownedCopies.ts');
 const stats = load('../src/lib/videogameStats.ts', { './ownedCopies': ownedCopies });
-const rewind = load('../src/lib/yearlyRewind.ts', { './ownedCopies': ownedCopies, './videogameStats': stats });
+const completionDate = load('../src/lib/completionDate.ts');
+const rewind = load('../src/lib/yearlyRewind.ts', { './ownedCopies': ownedCopies, './videogameStats': stats, './completionDate': completionDate });
 
 const NOW = new Date('2026-11-13');
 const build = (games, year = 2026, options = {}) => rewind.buildYearlyRewind(games, year, { now: NOW, ...options });
@@ -33,16 +34,40 @@ test('completion dates are read as a year with an optional month', () => {
   assert.equal(rewind.rewindDateMonth('2026-13'), null);
 });
 
+test('only finished and viewed games have a completion date', () => {
+  assert.equal(completionDate.effectiveCompletionDate({ status: 'Finished', completion_date: '2026-03' }), '2026-03');
+  assert.equal(completionDate.effectiveCompletionDate({ status: 'Viewed', completion_date: '2026' }), '2026');
+  for (const status of ['Not Started', 'Playing', 'Stopped', 'Infinite', null]) {
+    assert.equal(completionDate.effectiveCompletionDate({ status, completion_date: '2026' }), null);
+  }
+  assert.equal(completionDate.effectiveCompletionDate({ status: 'Finished', completion_date: '' }), null);
+});
+
+test('stopped games use the day they were last stopped', () => {
+  assert.equal(completionDate.effectiveStoppedDate({ status: 'Stopped', stopped_date: '2026-04-02' }), '2026-04-02');
+  assert.equal(completionDate.effectiveStoppedDate({ status: 'Playing', stopped_date: '2026-04-02' }), null);
+  const now = new Date(2026, 10, 5);
+  assert.equal(completionDate.withStatus({ status: 'Playing', stopped_date: '2020' }, 'Stopped', now).stopped_date, '2026-11-05');
+  // Already stopped, or switching to anything else, leaves the logged day alone.
+  assert.equal(completionDate.withStatus({ status: 'Stopped', stopped_date: '2020' }, 'Stopped', now).stopped_date, '2020');
+  assert.equal(completionDate.withStatus({ status: 'Stopped', stopped_date: '2020' }, 'Playing', now).stopped_date, '2020');
+});
+
 test('only games really played in the year make it into the rewind', () => {
   const games = [
     { id: 1, name: 'Finished this year', status: 'Finished', completion_date: '2026-02' },
     { id: 2, name: 'Playing since this year', status: 'Playing', completion_date: '2026' },
     { id: 3, name: 'Playing without a date', status: 'Playing' },
     { id: 4, name: 'Endless without a date', status: 'Infinite' },
-    { id: 5, name: 'Stopped this year', status: 'Stopped', completion_date: '2026' },
+    // A game that is not complete has no completion date, whatever is stored in the field.
+    { id: 10, name: 'Playing with an old date', status: 'Playing', completion_date: '2008' },
+    { id: 11, name: 'Endless with an old date', status: 'Infinite', completion_date: '2016' },
+    // A stopped game belongs to the year it was last stopped, never to its completion date.
+    { id: 5, name: 'Stopped this year', status: 'Stopped', stopped_date: '2026-04-02', completion_date: '2019' },
+    { id: 6, name: 'Stopped in 2024', status: 'Stopped', stopped_date: '2024-08-15', completion_date: '2026' },
     // Everything below used to leak into the rewind.
-    { id: 10, name: 'Playing since 2008', status: 'Playing', completion_date: '2008' },
-    { id: 11, name: 'Endless since 2016', status: 'Infinite', completion_date: '2016' },
+    { id: 7, name: 'Stopped without a stop date', status: 'Stopped', completion_date: '2026' },
+    { id: 8, name: 'Playing with an old stop date', status: 'Playing', stopped_date: '2022-01-01' },
     { id: 12, name: 'Backlog with a date', status: 'Not Started', completion_date: '2026', mark: 9 },
     { id: 13, name: 'Watched', status: 'Viewed', completion_date: '2026', mark: 9 },
     { id: 14, name: 'Hidden', status: 'Finished', completion_date: '2026', hidden: true },
@@ -54,16 +79,21 @@ test('only games really played in the year make it into the rewind', () => {
     { id: 20, name: 'Expansion', status: 'Finished', completion_date: '2026', is_dlc: true },
   ];
   const result = build(games);
-  assert.deepEqual(names(result.played).sort(), ['Endless without a date', 'Finished this year', 'Playing since this year', 'Playing without a date', 'Stopped this year']);
+  assert.deepEqual(names(result.played).sort(), [
+    'Endless with an old date', 'Endless without a date', 'Finished this year',
+    'Playing since this year', 'Playing with an old date', 'Playing with an old stop date', 'Playing without a date',
+    'Stopped this year',
+  ]);
   assert.deepEqual(names(result.finished), ['Finished this year']);
   assert.deepEqual(names(result.dlcPlayed), ['Expansion']);
   assert.deepEqual(names(result.watched), ['Watched']);
   assert.deepEqual(names(result.abandoned), ['Stopped this year']);
-  assert.deepEqual(plain(result.statuses), [{ name: 'Finished', value: 1 }, { name: 'Playing', value: 2 }, { name: 'Infinite', value: 1 }, { name: 'Stopped', value: 1 }]);
-  // Dated active games stay in their own year, and undated ones never show up in a past year.
-  assert.deepEqual(names(build(games, 2008).played), ['Playing since 2008']);
+  assert.deepEqual(plain(result.statuses), [{ name: 'Finished', value: 1 }, { name: 'Playing', value: 4 }, { name: 'Infinite', value: 2 }, { name: 'Stopped', value: 1 }]);
+  // Finished and stopped games reach a past year; games still being played never show up there.
+  assert.deepEqual(names(build(games, 2008).played), []);
   assert.deepEqual(names(build(games, 2025).played), ['Finished last year']);
-  assert.deepEqual(Array.from(rewind.rewindYears(games, NOW)), [2026, 2025, 2016, 2008]);
+  assert.deepEqual(names(build(games, 2024).abandoned), ['Stopped in 2024']);
+  assert.deepEqual(Array.from(rewind.rewindYears(games, NOW)), [2026, 2025, 2024]);
   assert.deepEqual(Array.from(rewind.rewindYears([{ id: 1, name: 'Future', status: 'Finished', completion_date: '2031' }], NOW)), [2026]);
 });
 
@@ -96,7 +126,7 @@ test('rating categories ignore unrated games and break ties with the personal ra
     { id: 3, name: 'Seven', status: 'Finished', completion_date: '2026', mark: 7, hype: 10 },
     { id: 4, name: 'Unrated', status: 'Finished', completion_date: '2026', hype: 9, playtime_hours: 200 },
     { id: 5, name: 'Zero mark', status: 'Finished', completion_date: '2026', mark: 0 },
-    { id: 6, name: 'Four', status: 'Stopped', completion_date: '2026', mark: 4 },
+    { id: 6, name: 'Four', status: 'Finished', completion_date: '2026', mark: 4 },
   ];
   const result = build(games, 2026, { rankingIds: [2, 1, 3] });
   assert.deepEqual(names(result.topRated), ['Ten B', 'Ten A', 'Seven', 'Four']);

@@ -4,6 +4,7 @@ export interface EditableCollectionGame {
   comments?: string | null;
   image_url?: string | null;
   status?: string;
+  stopped_date?: string | null;
   playtime_hours?: number | null;
   playtime_mode?: string | null;
   mark?: number | null;
@@ -33,6 +34,8 @@ export function collectionGameUpdatePayload(game: EditableCollectionGame) {
     comments: game.comments || null,
     image_url: game.image_url || null,
     status: game.status || 'Not Started',
+    // Left out when unknown so the server keeps the logged date.
+    ...(game.stopped_date !== undefined ? { stopped_date: game.stopped_date || null } : {}),
     playtime_hours: game.playtime_hours !== undefined ? game.playtime_hours : null,
     playtime_mode: game.playtime_mode || 'user',
     mark: game.mark || null,

@@ -740,13 +740,15 @@ def merge_collection_duplicate(
         duplicate_game, retained_game = other_game, current_game
 
     merge_fields = (
-        "description", "comments", "image_url", "status", "playtime_hours", "playtime_mode",
+        "description", "comments", "image_url", "status", "stopped_date", "playtime_hours", "playtime_mode",
         "mark", "hype", "completion_date", "publication_year", "release_date",
         "completion_percentage", "tags", "dlcs", "old_copies", "reviewed", "igdb_id",
     )
     for field in merge_fields:
         default_source = "current" if retained_game.id == current_game.id else "other"
-        source_name = payload.field_sources.get(field, default_source)
+        # The stop date belongs to the status it was logged for.
+        source_field = "status" if field == "stopped_date" else field
+        source_name = payload.field_sources.get(source_field, default_source)
         source_game = current_game if source_name == "current" else other_game
         setattr(retained_game, field, getattr(source_game, field))
 
@@ -1079,7 +1081,7 @@ def restore_steam_copy(trash_id: int, db: Session = Depends(get_db), user: User 
         except (TypeError, ValueError):
             snapshot = {}
         allowed = {
-            "name", "description", "comments", "image_url", "status", "playtime_hours",
+            "name", "description", "comments", "image_url", "status", "stopped_date", "playtime_hours",
             "playtime_mode", "mark", "hype", "completion_date", "publication_year",
             "release_date", "completion_percentage", "tags", "dlcs", "old_copies", "hidden", "reviewed", "igdb_id",
         }

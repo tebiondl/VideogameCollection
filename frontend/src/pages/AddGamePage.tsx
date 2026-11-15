@@ -6,6 +6,7 @@ import { saveCollectionGame } from '../lib/saveCollectionGame';
 import { SimilarGameModal } from '../components/SimilarGameModal';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import { CompletionDatePicker } from '../components/CompletionDatePicker';
+import { isCompletedStatus } from '../lib/completionDate';
 import { DlcEditor } from '../components/DlcEditor';
 import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
 import { OldCopiesEditor } from '../components/OldCopiesEditor';
@@ -689,7 +690,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="form-group" style={{ flex: 1 }}><label className="form-label">Time shown in collection</label><select className="form-input" value={playtimeMode} onChange={event => setPlaytimeMode(event.target.value as PlaytimeMode)}><option value="user">My added time</option><option value="copies">Sum of copy times</option><option value="combined">Copies + my added time</option></select></div>
             </div>
 
-            {(status === 'Finished' || status === 'Viewed' || status === 'Stopped' || status === 'Infinite') && (
+            {isCompletedStatus(status) && (
               <div className="form-group">
                 <label className="form-label">Completion Date</label>
                 <CompletionDatePicker value={completionDate} onChange={setCompletionDate} />
@@ -1145,10 +1146,12 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               </div>
 
               {/* Completion Date */}
-              <div className="form-group">
-                <label className="form-label">Completion Date</label>
-                <CompletionDatePicker value={igdbCompletionDate} onChange={setIgdbCompletionDate} />
-              </div>
+              {isCompletedStatus(igdbStatus) && (
+                <div className="form-group">
+                  <label className="form-label">Completion Date</label>
+                  <CompletionDatePicker value={igdbCompletionDate} onChange={setIgdbCompletionDate} />
+                </div>
+              )}
 
               {/* DLCs */}
               <div className="form-group">
@@ -1258,13 +1261,15 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               />
             </div>
 
-            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-              <label className="form-label">Completion Date</label>
-              <CompletionDatePicker
-                value={editingItem.completion_date || ''}
-                onChange={(val) => setEditingItem({ ...editingItem, completion_date: val })}
-              />
-            </div>
+            {isCompletedStatus(editingItem.status) && (
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="form-label">Completion Date</label>
+                <CompletionDatePicker
+                  value={editingItem.completion_date || ''}
+                  onChange={(val) => setEditingItem({ ...editingItem, completion_date: val })}
+                />
+              </div>
+            )}
 
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
               <label className="form-label">DLCs</label>

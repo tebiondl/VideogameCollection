@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { fetchWithAuth } from '../lib/api';
 import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import { EMPTY_COPY_OPTIONS, errorMessage } from '../lib/discovery';
+import { isCompletedStatus } from '../lib/completionDate';
 import type { AcquireDraft, CopyOptions } from '../lib/discovery';
 import { DlcEditor } from './DlcEditor';
 import { TagMultiSelect } from './TagMultiSelect';
@@ -143,7 +144,7 @@ export function AcquireGameEditor({ initial, nonSteamOnly = false, onClose, onSa
         <label>Rating (1–10)<input type="number" min={1} max={10} value={draft.mark ?? ''} onChange={event => field('mark', event.target.value ? Number(event.target.value) : null)} /></label>
         <label>Anticipation (1–10)<input type="number" min={1} max={10} value={draft.hype ?? ''} onChange={event => field('hype', event.target.value ? Number(event.target.value) : null)} /></label>
         <label>Completion %<input type="number" min={0} max={100} value={draft.completion_percentage ?? ''} onChange={event => field('completion_percentage', event.target.value ? Number(event.target.value) : null)} /></label>
-        <label>Completion date<input value={draft.completion_date || ''} onChange={event => field('completion_date', event.target.value || null)} placeholder="YYYY, YYYY-MM or YYYY-MM-DD" /></label>
+        {isCompletedStatus(draft.status) && <label>Completion date<input value={draft.completion_date || ''} onChange={event => field('completion_date', event.target.value || null)} placeholder="YYYY, YYYY-MM or YYYY-MM-DD" /></label>}
         <div className="wide disc-field">Your tags<TagMultiSelect availableTags={tags} selectedTagsString={draft.tags || ''} onChange={value => field('tags', value || null)} /></div>
         <label className="wide">Comments / review<textarea rows={3} value={draft.comments || ''} onChange={event => field('comments', event.target.value || null)} /></label>
       </div><div><h3>Included DLCs</h3><DlcEditor value={draft.dlcs || ''} onChange={value => field('dlcs', value)} gameName={draft.name} getPortalContainer={() => dialog.current || document.body} /></div></section>
