@@ -2199,15 +2199,15 @@ def _nintendo_europe_physical(rows):
 def _catalog_window_releases(db, previous, following):
     """Physical releases dated in the window by the persistent Switch catalog."""
     from ..discovery_models import SwitchCatalogGame
-    from .switch_catalog import GAME_KEY_CARD, PHYSICAL_FORMATS
+    from .switch_catalog import GAME_KEY_CARD, PHYSICAL_FORMATS, card_release, card_release_date
 
     rows = db.query(SwitchCatalogGame).filter(
         SwitchCatalogGame.physical_format.in_(PHYSICAL_FORMATS),
-        SwitchCatalogGame.release_date >= previous.isoformat(),
-        SwitchCatalogGame.release_date < following.isoformat(),
+        card_release_date >= previous.isoformat(),
+        card_release_date < following.isoformat(),
     ).all()
     return [{
-        "id": f"catalog:{row.id}", "name": row.name, "release_date": row.release_date, "image_url": row.image_url,
+        "id": f"catalog:{row.id}", "name": row.name, "release_date": card_release(row)[0], "image_url": row.image_url,
         "source_url": row.source_url, "region": "Europe", "description": None, "source": row.source,
         "platform": row.platform,
         "notes": f"{row.platform} | {'Game-Key Card' if row.physical_format == GAME_KEY_CARD else 'Retail physical edition'}",

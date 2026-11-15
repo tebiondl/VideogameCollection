@@ -26,6 +26,7 @@ from datetime import date, datetime, timedelta
 import httpx
 from dateutil import parser as date_parser
 from lxml import html as lxml_html
+from sqlalchemy import case
 
 from ..database import SessionLocal
 from ..discovery_models import DiscoveryCache, SwitchCatalogGame
@@ -55,6 +56,15 @@ PHYSICAL_FORMATS = (GAME_CARD, GAME_KEY_CARD)
 _run_lock = threading.Lock()
 _FULL_DATE = re.compile(r"^\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\.?\s+\d{4}$")
 _REGION_PRIORITY = ("UK/EU", "NA", "JPN")
+# Game pages mark each release date with a flag image instead of a region name.
+_FLAG_REGIONS = {"EU": "UK/EU", "UK": "UK/EU", "GB": "UK/EU", "US": "NA", "NA": "NA", "JP": "JPN", "JPN": "JPN"}
+# Nintendo Life writes "None (Digital Only)" for download-only games, which
+# includes most Switch 2 Edition upgrades of physical Switch games.
+_NO_PHYSICAL = re.compile(r"^none\b|\bdigital[ -]only\b")
+# Bumped when classify_physical changes, so rows read under older rules are read again.
+FORMAT_RULES_VERSION = 2
+# Preferred source when several describe the same game on the same platform.
+_SOURCE_PRIORITY = {"Nintendo Life": 0, "Nintendo": 1, "IGDB": 2}
 
 
 def classify_physical(value):
@@ -65,7 +75,7 @@ def classify_physical(value):
     """
     text = " ".join((value or "").split())
     lowered = text.casefold()
-    if not lowered or lowered in ("none", "no", "n/a", "tba", "tbc", "digital only"):
+    if not lowered or lowered in ("no", "n/a", "tba", "tbc") or _NO_PHYSICAL.search(lowered):
         return ""
     if "key" in lowered:
         return GAME_KEY_CARD
@@ -142,6 +152,36 @@ def parse_physical_release(page_html):
             definition = term.getnext()
             if definition is not None and definition.tag == "dd":
                 return " ".join(definition.text_content().split())
+    return ""
+
+
+def parse_retail_release(page_html):
+    """Date label of the cartridge release in a Nintendo Life game page, or "".
+
+    The "Release Date" field has one section per way to buy the game. A Switch 2
+    Edition usually opens with its eShop upgrade, which can come months before
+    the card, so only the "Nintendo Switch ..." sections count.
+    """
+    root = lxml_html.fromstring(page_html)
+    for term in root.xpath("//dt"):
+        if " ".join(term.text_content().split()).casefold() != "release date":
+            continue
+        definition = term.getnext()
+        if definition is None or definition.tag != "dd":
+            return ""
+        dates, heading = {}, ""
+        for node in definition:
+            if node.tag == "p":
+                heading = " ".join(node.text_content().split()).casefold()
+            elif node.tag == "ul" and heading.startswith("nintendo switch"):
+                for item in node.xpath("./li"):
+                    flags = item.xpath(".//img/@alt")
+                    flag = flags[0].strip().upper() if flags else ""
+                    # Each entry reads "<date> — <price>".
+                    label = re.split(r"\s+[—–·|-]\s+", " ".join(item.text_content().split()))[0].strip()
+                    if label:
+                        dates.setdefault(_FLAG_REGIONS.get(flag, flag), label)
+        return next((dates[region] for region in _REGION_PRIORITY if dates.get(region)), next(iter(dates.values()), ""))
     return ""
 
 
@@ -354,6 +394,8 @@ def pending_detail_query(db, today=None):
         SwitchCatalogGame.platform == "Nintendo Switch 2",
     ).filter(
         (SwitchCatalogGame.physical_format.is_(None))
+        # A known format without a check time was queued to be read again.
+        | (SwitchCatalogGame.detail_checked_at.is_(None))
         # Physical editions are often announced after a game is listed, so
         # upcoming and recent digital-only rows are read again periodically.
         | ((SwitchCatalogGame.physical_format == "") & (SwitchCatalogGame.detail_checked_at < stale)
@@ -363,7 +405,7 @@ def pending_detail_query(db, today=None):
 
 def _check_details(db, client, sleep):
     rows = pending_detail_query(db).order_by(
-        SwitchCatalogGame.physical_format.is_(None).desc(),
+        SwitchCatalogGame.detail_checked_at.is_(None).desc(),
         SwitchCatalogGame.release_date.is_(None), SwitchCatalogGame.release_date.desc(),
     ).all()
     for index, row in enumerate(rows):
@@ -371,11 +413,16 @@ def _check_details(db, client, sleep):
             write_state(db, phase=f"Checking Switch 2 physical editions ({index}/{len(rows)})", pending_details=len(rows) - index)
         try:
             response = client.get(row.source_url)
+            retail = ""
             if response.status_code == 404:
                 row.physical_format = ""
             else:
                 response.raise_for_status()
                 row.physical_format = classify_physical(parse_physical_release(response.text))
+                if row.physical_format in PHYSICAL_FORMATS:
+                    retail = parse_retail_release(response.text)
+            # Kept apart from release_date, which each listing crawl refreshes.
+            row.retail_release_date, row.retail_release_label = parse_release(retail) if retail else (None, None)
             row.detail_checked_at = datetime.utcnow()
             db.commit()
         except httpx.HTTPError:
@@ -383,6 +430,47 @@ def _check_details(db, client, sleep):
             logger.warning("Catalog detail check failed for %s", row.source_key)
         sleep(CRAWL_DELAY_SECONDS)
     return len(rows)
+
+
+def requeue_outdated_formats(db):
+    """Queue Switch 2 physical rows read under older rules to be read again; they stay listed meanwhile."""
+    if read_state(db).get("format_rules", 1) >= FORMAT_RULES_VERSION:
+        return 0
+    # Older rules read "None (Digital Only)" as a game card and did not keep the
+    # card's own release date, so every physical Switch 2 row is read once more.
+    count = db.query(SwitchCatalogGame).filter(
+        SwitchCatalogGame.source == "Nintendo Life",
+        SwitchCatalogGame.platform == "Nintendo Switch 2",
+        SwitchCatalogGame.physical_format.in_(PHYSICAL_FORMATS),
+    ).update({SwitchCatalogGame.detail_checked_at: None}, synchronize_session=False)
+    write_state(db, format_rules=FORMAT_RULES_VERSION)
+    return count
+
+
+def card_release(row):
+    """(ISO date or None, label) of the physical release: the game page's card date when known."""
+    if row.retail_release_label:
+        return row.retail_release_date, row.retail_release_label
+    return row.release_date, row.release_label
+
+
+# The same rule as card_release, for filtering in SQL.
+card_release_date = case(
+    (SwitchCatalogGame.retail_release_label.is_not(None), SwitchCatalogGame.retail_release_date),
+    else_=SwitchCatalogGame.release_date,
+)
+
+
+def distinct_games(rows):
+    """One row per game and platform, from the most reliable source."""
+    chosen = {}
+    for row in rows:
+        key = (row.title_key or row.name.casefold(), row.platform)
+        current = chosen.get(key)
+        rank = (_SOURCE_PRIORITY.get(row.source, len(_SOURCE_PRIORITY)), row.id)
+        if current is None or rank < (_SOURCE_PRIORITY.get(current.source, len(_SOURCE_PRIORITY)), current.id):
+            chosen[key] = row
+    return list(chosen.values())
 
 
 def run_sync(force_listing=False, sleep=time.sleep, session_factory=None):
@@ -394,6 +482,7 @@ def run_sync(force_listing=False, sleep=time.sleep, session_factory=None):
         state = read_state(db)
         listing_at = _timestamp(state.get("listing_at"))
         write_state(db, status="running", started_at=datetime.utcnow().isoformat(), error=None, phase="Starting")
+        requeue_outdated_formats(db)
         with httpx.Client(timeout=30, follow_redirects=True, headers={"User-Agent": USER_AGENT}) as client:
             if force_listing or listing_at is None or listing_at < datetime.utcnow() - LISTING_REFRESH:
                 for system, platform in NL_SYSTEMS:
@@ -447,7 +536,7 @@ def sync_is_due(db):
         # After a failure, wait before trying the whole listing again.
         finished = _timestamp(state.get("finished_at"))
         return not (state.get("error") and finished and finished > datetime.utcnow() - timedelta(hours=1))
-    if pending_detail_query(db).first() is not None:
+    if state.get("format_rules", 1) < FORMAT_RULES_VERSION or pending_detail_query(db).first() is not None:
         return True
     igdb_at = _timestamp(state.get("igdb_at"))
     if igdb_at is None:

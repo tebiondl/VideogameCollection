@@ -267,6 +267,10 @@ class SwitchCatalogGame(Base):
     physical_format = Column(String)
     release_date = Column(String)
     release_label = Column(String)
+    # The card's own date from the game page, when it differs from the listing's
+    # (a Switch 2 Edition's eShop upgrade can come out months before the card).
+    retail_release_date = Column(String)
+    retail_release_label = Column(String)
     publisher = Column(String)
     image_url = Column(String)
     source = Column(String, nullable=False, default="Nintendo Life")

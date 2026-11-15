@@ -1278,16 +1278,20 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
         if row.status != "Acquired"
     }
     hidden = {row.catalog_game_id for row in db.query(SwitchCatalogHidden).filter_by(user_id=user.id).all()}
-    rows = db.query(SwitchCatalogGame).filter(
+    # IGDB often lists a game Nintendo Life also has, sometimes under the
+    # "Nintendo Switch 2 Edition" name, so each game shows once per platform.
+    rows = switch_catalog.distinct_games(db.query(SwitchCatalogGame).filter(
         SwitchCatalogGame.physical_format.in_(switch_catalog.PHYSICAL_FORMATS)
-    ).all()
+    ).all())
     games = []
     for row in rows:
         copies = owned.get(row.title_key, ())
         switch_copies = [copy for copy in copies if _is_switch_copy(copy)]
+        # The game page's card date beats the listing's, which may be an eShop upgrade's.
+        release_date, release_label = switch_catalog.card_release(row)
         games.append({
             "id": row.id, "name": row.name, "platform": row.platform, "format": row.physical_format,
-            "release_date": row.release_date, "release_label": row.release_label or None,
+            "release_date": release_date, "release_label": release_label or None,
             "publisher": row.publisher,
             "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
             "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,

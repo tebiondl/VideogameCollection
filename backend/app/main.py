@@ -45,6 +45,8 @@ def _run_migrations():
         "ALTER TABLE videogames ADD COLUMN user_modified_at DATETIME",
         "ALTER TABLE videogames ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE videogames ADD COLUMN stopped_date VARCHAR",
+        "ALTER TABLE switch_catalog_games ADD COLUMN retail_release_date VARCHAR",
+        "ALTER TABLE switch_catalog_games ADD COLUMN retail_release_label VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_owned_import_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE discovery_settings ADD COLUMN steam_api_key VARCHAR",
         "ALTER TABLE discovery_settings ADD COLUMN last_igdb_match_count INTEGER NOT NULL DEFAULT 0",

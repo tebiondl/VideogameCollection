@@ -31,6 +31,16 @@ LISTING = """
 """
 DETAIL = "<dl><dt>Genre</dt><dd>Action</dd><dt>Physical Release</dt><dd class=\"first\">{}</dd></dl>"
 EDITION = "Zelda Quest – Nintendo Switch 2 Edition"
+FLAG = '<abbr title="{0}"><img class="flag" src="https://static.example/{0}.gif" alt="{0}" title="{0} Flag"></abbr>'
+# Release Date field as Nintendo Life shows it for a Switch 2 Edition upgrade.
+RELEASES = (
+    "<dt>Release Date</dt><dd class=\"first\"><p><strong>Nintendo eShop</strong></p>"
+    f"<ul class=\"dates\"><li class=\" first\">{FLAG.format('US')} 4th Dec 2025 — $69.99</li>"
+    f"<li class=\" last\">{FLAG.format('EU')} 4th Dec 2025 — £64.99</li></ul>"
+    "<p><strong>Nintendo Switch 2</strong></p>"
+    f"<ul class=\"dates\"><li class=\" first\">{FLAG.format('US')} 26th Mar 2026 — $69.99</li>"
+    f"<li class=\" last\">{FLAG.format('EU')} 27th Mar 2026 — £64.99</li></ul></dd>"
+)
 
 
 class FakeClient:
@@ -80,9 +90,10 @@ class SwitchCatalogTests(unittest.TestCase):
         self.addCleanup(self.db.close)
 
     def add(self, name, platform="Nintendo Switch", physical_format=catalog.GAME_CARD, **fields):
+        fields.setdefault("source_url", "https://example.com")
         row = SwitchCatalogGame(
             source_key=f"nl:{platform}/{name}", name=name, title_key=catalog._release_title_key(name),
-            platform=platform, physical_format=physical_format, source_url="https://example.com", **fields,
+            platform=platform, physical_format=physical_format, **fields,
         )
         self.db.add(row)
         self.db.commit()
@@ -104,9 +115,22 @@ class SwitchCatalogTests(unittest.TestCase):
 
     def test_physical_field_is_classified(self):
         for text, expected in (("Standard Game Card", catalog.GAME_CARD), ("Game-Key Card", catalog.GAME_KEY_CARD),
-                               ("Download Code in Box", catalog.CODE_IN_BOX), ("", ""), ("None", "")):
+                               ("Download Code in Box", catalog.CODE_IN_BOX), ("", ""), ("None", ""),
+                               ("None (Digital Only)", ""), ("Digital-only", "")):
             self.assertEqual(catalog.classify_physical(catalog.parse_physical_release(DETAIL.format(text))), expected)
         self.assertEqual(catalog.parse_physical_release("<dl><dt>Genre</dt><dd>Action</dd></dl>"), "")
+
+    def test_card_release_date_skips_the_eshop_upgrade(self):
+        self.assertEqual(catalog.parse_retail_release(f"<dl>{RELEASES}</dl>"), "27th Mar 2026")
+        # Europe first, then North America.
+        us_only = RELEASES.replace(f"<li class=\" last\">{FLAG.format('EU')} 27th Mar 2026 — £64.99</li>", "")
+        self.assertEqual(catalog.parse_retail_release(f"<dl>{us_only}</dl>"), "26th Mar 2026")
+        partial = ("<dl><dt>Release Date</dt><dd><p><strong>Nintendo Switch 2</strong></p>"
+                   f"<ul class=\"dates\"><li>{FLAG.format('JP')} 2027</li></ul></dd></dl>")
+        self.assertEqual(catalog.parse_retail_release(partial), "2027")
+        eshop_only = RELEASES.split("<p><strong>Nintendo Switch 2")[0] + "</dd>"
+        self.assertEqual(catalog.parse_retail_release(f"<dl>{eshop_only}</dl>"), "")
+        self.assertEqual(catalog.parse_retail_release(DETAIL.format("Game Card")), "")
 
     def test_catalog_lists_only_physical_games_and_flags_owned_and_saved(self):
         self.add("Owned Game")
@@ -147,6 +171,61 @@ class SwitchCatalogTests(unittest.TestCase):
         self.db.commit()
         game = self.games()[EDITION]
         self.assertEqual((game["owned"], game["owned_physical"]), (True, False))
+
+    def test_a_game_from_several_sources_shows_once_per_platform(self):
+        edition = self.add("Racer - Nintendo Switch 2 Edition", "Nintendo Switch 2", catalog.GAME_KEY_CARD)
+        self.add("Racer", "Nintendo Switch")
+        for platform, igdb_id in (("Nintendo Switch 2", 508), ("Nintendo Switch", 130)):
+            self.db.add(SwitchCatalogGame(
+                source_key=f"igdb:1:{igdb_id}", name="Racer", title_key="racer", platform=platform,
+                physical_format=catalog.GAME_CARD, source="IGDB", source_url="https://example.com",
+            ))
+        self.db.add(SwitchCatalogGame(
+            source_key="igdb:2:508", name="Only On IGDB", title_key="only on igdb", platform="Nintendo Switch 2",
+            physical_format=catalog.GAME_CARD, source="IGDB", source_url="https://example.com",
+        ))
+        self.db.commit()
+        response = self.client.get("/api/discovery/catalog").json()["games"]
+        listed = sorted((game["name"], game["platform"], game["source"], game["format"]) for game in response)
+        self.assertEqual(listed, [
+            ("Only On IGDB", "Nintendo Switch 2", "IGDB", catalog.GAME_CARD),
+            ("Racer", "Nintendo Switch", "Nintendo Life", catalog.GAME_CARD),
+            (edition.name, "Nintendo Switch 2", "Nintendo Life", catalog.GAME_KEY_CARD),
+        ])
+
+    def test_switch_2_cards_read_under_old_rules_are_read_again(self):
+        upgrade = self.add("Upgrade - Nintendo Switch 2 Edition", "Nintendo Switch 2",
+                           detail_checked_at=datetime.utcnow(), source_url=f"{catalog.NL_BASE}/games/nintendo-switch-2/upgrade")
+        real = self.add("Real Card", "Nintendo Switch 2",
+                        detail_checked_at=datetime.utcnow(), source_url=f"{catalog.NL_BASE}/games/nintendo-switch-2/real")
+        switch = self.add("Switch Card", detail_checked_at=datetime.utcnow())
+        now = datetime.utcnow().isoformat()
+        catalog.write_state(self.db, listing_at=now, igdb_at=now, finished_at=now)
+        self.assertTrue(catalog.sync_is_due(self.db))
+        key_card = self.add("Key Card", "Nintendo Switch 2", catalog.GAME_KEY_CARD, release_date="2025-12-04",
+                            detail_checked_at=datetime.utcnow(), source_url=f"{catalog.NL_BASE}/games/nintendo-switch-2/key")
+        client = FakeClient({
+            upgrade.source_url: DETAIL.format("None (Digital Only)") + f"<dl>{RELEASES}</dl>",
+            real.source_url: DETAIL.format("Standard Game Card"),
+            key_card.source_url: DETAIL.format("Game-Key Card") + f"<dl>{RELEASES}</dl>",
+        })
+        with patch.object(catalog.httpx, "Client", return_value=client):
+            self.assertTrue(catalog.run_sync(sleep=lambda _seconds: None, session_factory=self.factory))
+        self.db.expire_all()
+        self.assertEqual((upgrade.physical_format, real.physical_format, switch.physical_format, key_card.physical_format),
+                         ("", catalog.GAME_CARD, catalog.GAME_CARD, catalog.GAME_KEY_CARD))
+        # The card's date replaces the eShop upgrade's; a page without one keeps the listing's.
+        self.assertEqual((key_card.retail_release_date, key_card.retail_release_label), ("2026-03-27", "27th Mar 2026"))
+        self.assertIsNone(real.retail_release_label)
+        games = self.games()
+        self.assertEqual((games["Key Card"]["release_date"], games["Key Card"]["release_label"]), ("2026-03-27", "27th Mar 2026"))
+        # A later listing crawl refreshes release_date but not the card's own date.
+        catalog.upsert_games(self.db, [{"source_key": key_card.source_key, "name": "Key Card", "platform": "Nintendo Switch 2",
+                                        "release_date": "2025-12-04", "source": "Nintendo Life", "source_url": key_card.source_url}])
+        self.assertEqual(self.games()["Key Card"]["release_date"], "2026-03-27")
+        self.assertFalse(catalog.sync_is_due(self.db))
+        # The re-read happens once; later runs leave checked cards alone.
+        self.assertEqual(catalog.requeue_outdated_formats(self.db), 0)
 
     def test_hidden_games_are_per_user_and_restorable(self):
         first, second = self.add("First"), self.add("Second")
