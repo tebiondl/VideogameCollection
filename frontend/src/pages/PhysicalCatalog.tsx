@@ -69,7 +69,7 @@ export function PhysicalCatalog() {
 
   const results = useMemo(() => filterCatalog(games, deferredFilters, today), [games, deferredFilters, today]);
   const hiddenGames = useMemo(() => games.filter(game => game.hidden).sort((a, b) => a.name.localeCompare(b.name)), [games]);
-  // One entry per mark (a mark covers every edition and console of the title),
+  // One entry per mark (a mark covers every edition of the title on one console),
   // shown under its shortest name; later entries replace earlier ones in the Map.
   const markedGames = useMemo(() => [...new Map(games.filter(game => game.marked_owned_id != null)
     .sort((a, b) => b.name.length - a.name.length)
@@ -166,7 +166,7 @@ export function PhysicalCatalog() {
   const dialogMatches = dialogGames.filter(game => searchKey(game.name).includes(searchKey(dialogQuery)));
   const dialogText = dialog === 'owned' ? {
     title: 'Games I already have',
-    intro: 'Titles you marked “I already have it”, for editions your collection names differently. Each mark covers every edition and console of the game, which then counts as owned.',
+    intro: 'Titles you marked “I already have it”, for what your collection misses. Each mark covers every edition of the game on that console only, which then counts as owned there.',
     empty: 'Nothing is marked. Use “I already have it” on a game to move it here.',
     noMatch: 'No marked game matches that search.', search: 'Search marked games…', restore: 'Unmark',
   } : {
@@ -243,6 +243,7 @@ export function PhysicalCatalog() {
             <span className={`cat-badge ${game.platform === 'Nintendo Switch 2' ? 'switch2' : 'switch'}`}>{platformLabel(game.platform)}</span>
             {game.format === 'Game-Key Card' && <span className="cat-badge keycard">Game-Key Card</span>}
             {game.owned && <span className="cat-badge owned" title={game.marked_owned ? 'You marked this game “I already have it”' : game.owned_platforms.length ? `In your collection on ${game.owned_platforms.join(', ')}` : 'In your collection'}><Check size={11} /> {game.owned_physical || game.marked_owned ? 'Owned' : 'Owned digital'}</span>}
+            {!game.owned && (game.owned_on_other_console ?? []).length > 0 && <span className="cat-badge elsewhere" title={`You have this game on ${game.owned_on_other_console.join(' and ')}, not on ${game.platform}`}>Have on {game.owned_on_other_console.map(platformLabel).join(' & ')}</span>}
             {game.on_steam && <span className="cat-badge steam" title="In your Steam library">Steam</span>}
           </div>
           <h3 title={game.name}>{game.name}</h3>
@@ -257,7 +258,7 @@ export function PhysicalCatalog() {
             {/* A copy in the collection already makes the game owned; the mark is for the rest. */}
             {(!game.owned || game.marked_owned) && <button type="button" className="cat-action icon" aria-pressed={game.marked_owned}
               onClick={() => void setOwned(game, !game.marked_owned)}
-              title={game.marked_owned ? 'Unmark: you no longer have this game' : 'I already have it: count this game, in every edition, as owned'}
+              title={game.marked_owned ? 'Unmark: you no longer have this game on this console' : `I already have it: count this game, in every edition, as owned on ${platformLabel(game.platform)}`}
               aria-label={game.marked_owned ? `Unmark ${game.name} as a game you have` : `I already have ${game.name}`}><PackageCheck size={15} /></button>}
           </div>
         </div>

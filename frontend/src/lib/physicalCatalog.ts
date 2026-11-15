@@ -11,8 +11,10 @@ export interface CatalogGame {
   owned_platforms: string[]; saved: boolean; hidden: boolean;
   /** The user marked this title "I already have it"; `owned` is then true as well. */
   marked_owned: boolean;
-  /** The mark behind `marked_owned`, shared by every edition and console it covers. */
+  /** The mark behind `marked_owned`, shared by every edition it covers on this console. */
   marked_owned_id: number | null;
+  /** The other Switch console(s) the user has this game on; this card stays listed. */
+  owned_on_other_console: string[];
   /** Games I want entries saved under this title; removing them clears `saved`. */
   wanted_ids: number[];
 }

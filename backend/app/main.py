@@ -111,6 +111,23 @@ def _run_migrations():
 
 _run_migrations()
 
+
+def _move_catalog_owned_marks():
+    """The first "I already have it" marks covered both consoles; keep them that way, per console."""
+    with engine.connect() as conn:
+        if "switch_catalog_owned" not in set(inspect(conn).get_table_names()):
+            return
+        conn.execute(text(
+            "INSERT OR IGNORE INTO switch_catalog_owned_marks (user_id, title_key, platform, name, marked_at) "
+            "SELECT old.user_id, old.title_key, consoles.platform, old.name, old.marked_at FROM switch_catalog_owned AS old "
+            "CROSS JOIN (SELECT 'Nintendo Switch' AS platform UNION ALL SELECT 'Nintendo Switch 2') AS consoles"
+        ))
+        conn.execute(text("DROP TABLE switch_catalog_owned"))
+        conn.commit()
+
+
+_move_catalog_owned_marks()
+
 # Older versions stored retryable metadata notices in the fatal-error field.
 # Keep existing installations from showing those notices as failed syncs.
 def _separate_sync_warnings():

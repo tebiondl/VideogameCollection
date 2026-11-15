@@ -1,4 +1,5 @@
 import json
+import re
 from uuid import uuid4
 from collections import Counter
 from datetime import datetime
@@ -1172,14 +1173,18 @@ def timeline(region: str = Query("Europe", pattern="^(Europe|North America|Japan
     games = [game for game in result["games"] if service.normalized(game["name"]) not in overrides]
     games += [{"id": f"manual:{row.id}", "name": row.name, "release_date": row.release_date, "image_url": row.image_url,
                "source_url": row.source_url, "notes": row.notes, "region": row.region, "source": "Admin verified"} for row in manual]
-    # Like the physical catalog, only a Switch / Switch 2 copy (or a title marked
-    # as owned there) makes a release "owned", whatever edition it is.
-    owned = {key for key, copies in _owned_title_copies(db, user.id).items() if any(_is_switch_copy(copy) for copy in copies)}
+    # Like the physical catalog: a release is "owned" when a copy for its console
+    # (or a catalog mark for that console) exists, whatever edition it is.
+    owned = {(key, console) for key, copies in _owned_title_copies(db, user.id).items()
+             for copy in copies for console in _switch_consoles(copy.get("platform"))}
     owned |= set(_marked_owned_titles(db, user.id))
     wanted = {service._release_title_key(row.name) for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()}
     for game in games:
         key = service._release_title_key(game["name"])
-        game["owned"] = switch_catalog.edition_base_key(key) in owned
+        base_key = switch_catalog.edition_base_key(key)
+        # A release with no console named (an admin entry) counts on either.
+        consoles = _switch_consoles(game.get("platform")) or {SWITCH_1, SWITCH_2}
+        game["owned"] = any((base_key, console) in owned for console in consoles)
         game["saved"] = key in wanted
     result["games"] = sorted(games, key=lambda game: (game["release_date"], game["name"]))
     return result
@@ -1271,9 +1276,33 @@ def _owned_title_copies(db, user_id):
     return owned
 
 
+SWITCH_1, SWITCH_2 = "Nintendo Switch", "Nintendo Switch 2"
+
+
+def _switch_consoles(platform):
+    """The Switch consoles a platform label names: "Nintendo Switch 1 & 2" names both."""
+    text = str(platform or "").casefold()
+    if "switch" not in text:
+        return set()
+    consoles = set()
+    if re.search(r"switch\s*2\b|[&/,+]\s*2\b", text):
+        consoles.add(SWITCH_2)
+    if re.search(r"switch(?!\s*2\b)", text):
+        consoles.add(SWITCH_1)
+    return consoles
+
+
+def _owned_on_console(copies, console):
+    """Copies of a game for one Switch console. Owning it on the other console does not count:
+    a Switch 2 Game-Key Card owner may still want the Switch 1 cartridge, and the reverse."""
+    return [copy for copy in copies if console in _switch_consoles(copy.get("platform"))]
+
+
 def _marked_owned_titles(db, user_id):
-    """Edition-free title key -> id of the user's "I already have it" mark in the catalog."""
-    return {row.title_key: row.id for row in db.query(SwitchCatalogOwned.title_key, SwitchCatalogOwned.id).filter_by(user_id=user_id).all()}
+    """(edition-free title key, console) -> id of the user's "I already have it" mark."""
+    return {(row.title_key, row.platform): row.id for row in db.query(
+        SwitchCatalogOwned.title_key, SwitchCatalogOwned.platform, SwitchCatalogOwned.id,
+    ).filter_by(user_id=user_id).all()}
 
 
 @router.get("/catalog")
@@ -1299,9 +1328,12 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
     for row in rows:
         base_key = switch_catalog.edition_base_key(row.title_key)
         copies = owned.get(base_key, ())
-        switch_copies = [copy for copy in copies if _is_switch_copy(copy)]
-        marked_id = marked.get(base_key)
+        console_copies = _owned_on_console(copies, row.platform)
+        marked_id = marked.get((base_key, row.platform))
         marked_owned = marked_id is not None
+        # Shown as a hint only: having it on the other Switch leaves this card in the catalog.
+        other_consoles = [console for console in (SWITCH_1, SWITCH_2) if console != row.platform
+                          and (_owned_on_console(copies, console) or (base_key, console) in marked)]
         # The game page's card date beats the listing's, which may be an eShop upgrade's.
         release_date, release_label = switch_catalog.card_release(row)
         games.append({
@@ -1310,13 +1342,14 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
             "publisher": row.publisher,
             "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
             "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,
-            # Only a Switch / Switch 2 copy counts as owning a physical-catalog game;
-            # a Steam or other platform copy leaves it in the catalog. A title the
-            # user marked "I already have it" counts too.
-            "owned": bool(switch_copies) or marked_owned, "marked_owned": marked_owned,
-            # Every edition and console one mark covers shares its id.
+            # Only a copy for this card's console counts as owning it, in any edition;
+            # a Steam, other platform or other Switch copy leaves it in the catalog.
+            # A title the user marked "I already have it" on this console counts too.
+            "owned": bool(console_copies) or marked_owned, "marked_owned": marked_owned,
+            # Every edition one mark covers on this console shares its id.
             "marked_owned_id": marked_id,
-            "owned_physical": any(str(copy.get("format") or "").lower() == "physical" for copy in switch_copies),
+            "owned_physical": any(str(copy.get("format") or "").lower() == "physical" for copy in console_copies),
+            "owned_on_other_console": other_consoles,
             "on_steam": any(_is_steam_copy(copy) for copy in copies),
             "owned_platforms": sorted({copy["platform"] for copy in copies if copy.get("platform")}),
             "saved": row.title_key in wanted, "wanted_ids": wanted.get(row.title_key, []), "hidden": row.id in hidden,
@@ -1360,14 +1393,14 @@ def set_catalog_game_owned(
     catalog_id: int, owned: bool = Query(...),
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    """Mark or unmark a catalog title as already owned, for every edition and console of it."""
+    """Mark or unmark a catalog title as already owned, for every edition of it on the card's console."""
     game = db.get(SwitchCatalogGame, catalog_id)
     if game is None:
         raise HTTPException(404, "Catalog game not found.")
     title_key = switch_catalog.edition_base_key(game.title_key) or game.name.casefold()
-    row = db.query(SwitchCatalogOwned).filter_by(user_id=user.id, title_key=title_key).first()
+    row = db.query(SwitchCatalogOwned).filter_by(user_id=user.id, title_key=title_key, platform=game.platform).first()
     if owned and row is None:
-        db.add(SwitchCatalogOwned(user_id=user.id, title_key=title_key, name=game.name))
+        db.add(SwitchCatalogOwned(user_id=user.id, title_key=title_key, platform=game.platform, name=game.name))
     elif not owned and row is not None:
         db.delete(row)
     db.commit()

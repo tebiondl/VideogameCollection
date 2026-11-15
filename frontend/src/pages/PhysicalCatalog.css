@@ -40,6 +40,7 @@
 .cat-badge.switch2 { color:#8ab8ff; border-color:#8ab8ff55; }
 .cat-badge.keycard { color:#f0c674; border-color:#f0c67455; }
 .cat-badge.owned { color:#7fd6ae; border-color:#7fd6ae55; }
+.cat-badge.elsewhere { color:var(--text-secondary); border-color:var(--border-color); }
 .cat-actions { display:flex; gap:6px; }
 .cat-action { display:inline-flex; align-items:center; justify-content:center; gap:5px; flex:1; padding:7px 6px; border:1px solid var(--border-color); border-radius:8px; background:transparent; color:var(--text-secondary); font:inherit; font-size:.76rem; cursor:pointer; white-space:nowrap; }
 .cat-action:hover { color:var(--text-primary); border-color:var(--text-muted); }

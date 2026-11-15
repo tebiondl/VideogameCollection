@@ -292,15 +292,18 @@ class SwitchCatalogHidden(Base):
 
 
 class SwitchCatalogOwned(Base):
-    """A title the user says they already have, for editions the collection names differently.
+    """A title the user says they already have on one Switch console, for what the collection misses.
 
-    Kept by edition-free title (see ``switch_catalog.edition_base_key``) so it covers
-    every edition and console of that game, and kept apart from "Don't show".
+    Kept by edition-free title (see ``switch_catalog.edition_base_key``) and console,
+    so it covers every edition of that game on that console only, and kept apart
+    from "Don't show".
     """
-    __tablename__ = "switch_catalog_owned"
-    __table_args__ = (UniqueConstraint("user_id", "title_key", name="uq_switch_catalog_owned"),)
+    # The first version of this table had no console; marks start fresh in this one.
+    __tablename__ = "switch_catalog_owned_marks"
+    __table_args__ = (UniqueConstraint("user_id", "title_key", "platform", name="uq_switch_catalog_owned_mark"),)
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     title_key = Column(String, nullable=False)
+    platform = Column(String, nullable=False)
     name = Column(String, nullable=False)
     marked_at = Column(DateTime, nullable=False, default=datetime.utcnow)

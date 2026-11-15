@@ -1,13 +1,15 @@
 """Physical Switch catalog. Isolated SQLite and mocked upstreams; no network."""
+import ast
 import json
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -91,8 +93,9 @@ class SwitchCatalogTests(unittest.TestCase):
 
     def add(self, name, platform="Nintendo Switch", physical_format=catalog.GAME_CARD, **fields):
         fields.setdefault("source_url", "https://example.com")
+        fields.setdefault("source_key", f"nl:{platform}/{name}")
         row = SwitchCatalogGame(
-            source_key=f"nl:{platform}/{name}", name=name, title_key=catalog._release_title_key(name),
+            name=name, title_key=catalog._release_title_key(name),
             platform=platform, physical_format=physical_format, **fields,
         )
         self.db.add(row)
@@ -171,12 +174,30 @@ class SwitchCatalogTests(unittest.TestCase):
         self.db.commit()
         self.assertEqual((self.games()["Wanted Game"]["saved"], self.games()["Wanted Game"]["wanted_ids"]), (False, []))
 
-    def test_switch_2_edition_matches_the_owned_base_game(self):
+    def test_a_copy_owns_the_game_only_on_its_own_console(self):
         self.add(EDITION, "Nintendo Switch 2")
-        self.db.add(Videogame(user_id=self.user.id, name="Zelda Quest", copies='[{"platform": "Nintendo Switch", "format": "Digital"}]'))
+        self.add("Zelda Quest")
+        game = Videogame(user_id=self.user.id, name="Zelda Quest", copies='[{"platform": "Nintendo Switch", "format": "Digital"}]')
+        self.db.add(game)
         self.db.commit()
-        game = self.games()[EDITION]
-        self.assertEqual((game["owned"], game["owned_physical"]), (True, False))
+        games = self.games()
+        # The Switch 2 Edition matches the base game, but a Switch 1 copy leaves it listed.
+        self.assertEqual((games["Zelda Quest"]["owned"], games["Zelda Quest"]["owned_physical"]), (True, False))
+        self.assertEqual((games[EDITION]["owned"], games[EDITION]["owned_on_other_console"]), (False, ["Nintendo Switch"]))
+        # A Switch 2 copy (say, a Game-Key Card) likewise leaves the Switch 1 cartridge listed.
+        game.copies = '[{"platform": "Nintendo Switch 2", "format": "Physical"}]'
+        self.db.commit()
+        games = self.games()
+        self.assertEqual((games[EDITION]["owned"], games[EDITION]["owned_physical"]), (True, True))
+        self.assertEqual((games["Zelda Quest"]["owned"], games["Zelda Quest"]["owned_on_other_console"]), (False, ["Nintendo Switch 2"]))
+
+    def test_console_labels(self):
+        self.assertEqual(router._switch_consoles("Nintendo Switch"), {"Nintendo Switch"})
+        self.assertEqual(router._switch_consoles("Nintendo Switch 2"), {"Nintendo Switch 2"})
+        self.assertEqual(router._switch_consoles("Nintendo Switch 1 & 2"), {"Nintendo Switch", "Nintendo Switch 2"})
+        self.assertEqual(router._switch_consoles("Switch"), {"Nintendo Switch"})
+        self.assertEqual(router._switch_consoles("Wii"), set())
+        self.assertEqual(router._switch_consoles(None), set())
 
     def test_edition_words_do_not_make_a_different_game(self):
         for title, base in (
@@ -204,14 +225,16 @@ class SwitchCatalogTests(unittest.TestCase):
         ])))
         self.db.commit()
         owned = {name: game["owned"] for name, game in self.games().items()}
+        # The Switch 2 copy owns the Switch 2 Edition of the Definitive Edition, and only that.
         self.assertEqual(owned, {
             "Xenoblade Chronicles: Definitive Edition – Nintendo Switch 2 Edition": True,
-            "Xenoblade Chronicles: Definitive Edition": True,
+            "Xenoblade Chronicles: Definitive Edition": False,
             "Xenoblade Chronicles X: Definitive Edition": False,
         })
 
-    def test_marking_a_title_owned_covers_its_editions_and_is_per_user(self):
+    def test_marking_a_title_owned_covers_its_editions_on_that_console_and_is_per_user(self):
         edition = self.add("Racer Deluxe – Nintendo Switch 2 Edition", "Nintendo Switch 2")
+        self.add("Racer", "Nintendo Switch 2", source_key="igdb:racer")
         self.add("Racer")
         other = self.add("Other Game")
         response = self.client.put(f"/api/discovery/catalog/{edition.id}/owned?owned=true")
@@ -219,20 +242,42 @@ class SwitchCatalogTests(unittest.TestCase):
         # Marking twice is harmless, and it never touches the "Don't show" list.
         self.client.put(f"/api/discovery/catalog/{edition.id}/owned?owned=true")
         self.assertEqual((self.db.query(SwitchCatalogOwned).count(), self.db.query(SwitchCatalogHidden).count()), (1, 0))
-        games = self.games()
+        games = {(game["name"], game["platform"]): game for game in self.client.get("/api/discovery/catalog").json()["games"]}
         mark = self.db.query(SwitchCatalogOwned).one()
-        self.assertEqual((mark.title_key, games["Racer"]["marked_owned_id"], games[other.name]["marked_owned_id"]), ("racer", mark.id, None))
-        flags = {name: (game["owned"], game["marked_owned"], game["owned_physical"], game["hidden"]) for name, game in games.items()}
+        self.assertEqual((mark.title_key, mark.platform), ("racer", "Nintendo Switch 2"))
+        flags = {key: (game["owned"], game["marked_owned"], game["marked_owned_id"], game["owned_on_other_console"]) for key, game in games.items()}
         self.assertEqual(flags, {
-            edition.name: (True, True, False, False), "Racer": (True, True, False, False), other.name: (False, False, False, False),
+            (edition.name, "Nintendo Switch 2"): (True, True, mark.id, []),
+            ("Racer", "Nintendo Switch 2"): (True, True, mark.id, []),
+            # The Switch 1 cartridge stays listed, with a hint.
+            ("Racer", "Nintendo Switch"): (False, False, None, ["Nintendo Switch 2"]),
+            (other.name, "Nintendo Switch"): (False, False, None, []),
         })
         self.current = self.other
         self.assertFalse(any(game["owned"] for game in self.games().values()))
         self.current = self.user
-        # Unmarking from any edition of the title clears it.
-        self.client.put(f"/api/discovery/catalog/{self.games()['Racer']['id']}/owned?owned=false")
+        # Unmarking from any edition of the title on that console clears it.
+        self.client.put(f"/api/discovery/catalog/{games[('Racer', 'Nintendo Switch 2')]['id']}/owned?owned=false")
         self.assertFalse(any(game["marked_owned"] for game in self.games().values()))
         self.assertEqual(self.client.put("/api/discovery/catalog/9999/owned?owned=true").status_code, 404)
+
+    def test_first_version_marks_move_to_both_consoles(self):
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE switch_catalog_owned (id INTEGER PRIMARY KEY, user_id INTEGER, title_key VARCHAR, name VARCHAR, marked_at DATETIME)"
+            ))
+            connection.execute(text("INSERT INTO switch_catalog_owned VALUES (1, :user, 'racer', 'Racer', '2026-11-15 10:00:00')"),
+                               {"user": self.user.id})
+        # Loading only the function avoids starting the app, as in the stopped-date migration test.
+        module = ast.parse((Path(__file__).parents[1] / "app" / "main.py").read_text(encoding="utf-8"))
+        function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "_move_catalog_owned_marks")
+        namespace = {"engine": self.engine, "inspect": inspect, "text": text}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "<catalog marks migration>", "exec"), namespace)
+        namespace["_move_catalog_owned_marks"]()
+        namespace["_move_catalog_owned_marks"]()
+        marks = sorted((row.user_id, row.title_key, row.platform) for row in self.db.query(SwitchCatalogOwned).all())
+        self.assertEqual(marks, [(self.user.id, "racer", "Nintendo Switch"), (self.user.id, "racer", "Nintendo Switch 2")])
+        self.assertNotIn("switch_catalog_owned", inspect(self.engine).get_table_names())
 
     def test_a_game_from_several_sources_shows_once_per_platform(self):
         edition = self.add("Racer - Nintendo Switch 2 Edition", "Nintendo Switch 2", catalog.GAME_KEY_CARD)
