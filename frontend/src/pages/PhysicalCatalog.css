@@ -45,6 +45,13 @@
 .cat-action:hover { color:var(--text-primary); border-color:var(--text-muted); }
 .cat-action.primary { color:var(--disc-accent-soft); }
 .cat-action.icon { flex:0 0 auto; padding:7px 8px; }
+/* A wanted game's button reads "Wanted" and turns into "Remove" on hover or focus. */
+.cat-action.wanted .on-hover { display:none; }
+.cat-action.wanted:is(:hover, :focus-visible) .on-hover { display:inline-flex; align-items:center; gap:5px; }
+.cat-action.wanted:is(:hover, :focus-visible) .at-rest { display:none; }
+.cat-action.wanted:is(:hover, :focus-visible) { color:var(--error-color); border-color:var(--error-color); }
+.cat-action.wanted span { display:inline-flex; align-items:center; gap:5px; }
+.cat-action:disabled { opacity:.6; cursor:default; }
 .cat-more { display:flex; justify-content:center; margin:24px 0; }
 .cat-hidden-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border-color); }
 .cat-hidden-row .cat-cover { width:44px; flex:none; border-radius:6px; overflow:hidden; }

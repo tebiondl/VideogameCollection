@@ -9,6 +9,8 @@ export interface CatalogGame {
   /** Owned on Steam. */
   on_steam: boolean;
   owned_platforms: string[]; saved: boolean; hidden: boolean;
+  /** Games I want entries saved under this title; removing them clears `saved`. */
+  wanted_ids: number[];
 }
 
 /** On Steam without a physical Switch copy yet: a candidate to buy physically. */

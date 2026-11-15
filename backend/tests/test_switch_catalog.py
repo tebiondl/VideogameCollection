@@ -164,6 +164,12 @@ class SwitchCatalogTests(unittest.TestCase):
         self.assertFalse(games[EDITION]["owned"])
         self.assertEqual(games[EDITION]["format"], catalog.GAME_KEY_CARD)
         self.assertEqual((games["Wanted Game"]["owned"], games["Wanted Game"]["saved"]), (False, True))
+        wanted = self.db.query(WantedGame).filter_by(user_id=self.user.id).one()
+        self.assertEqual((games["Wanted Game"]["wanted_ids"], games["Owned Game"]["wanted_ids"]), ([wanted.id], []))
+        # Removing the entry from Games I want clears the card.
+        wanted.deleted = True
+        self.db.commit()
+        self.assertEqual((self.games()["Wanted Game"]["saved"], self.games()["Wanted Game"]["wanted_ids"]), (False, []))
 
     def test_switch_2_edition_matches_the_owned_base_game(self):
         self.add(EDITION, "Nintendo Switch 2")

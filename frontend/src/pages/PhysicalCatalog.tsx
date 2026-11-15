@@ -46,6 +46,7 @@ export function PhysicalCatalog() {
   const [hiddenQuery, setHiddenQuery] = useState('');
   const [lastHidden, setLastHidden] = useState<CatalogGame | null>(null);
   const [editing, setEditing] = useState<{ game: CatalogGame; draft: WantedDraft } | null>(null);
+  const [removingId, setRemovingId] = useState<number | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString('en-CA');
   const deferredFilters = useDeferredValue(filters);
@@ -70,6 +71,7 @@ export function PhysicalCatalog() {
   const years = useMemo(() => [...new Set(games.map(releaseYear).filter(Boolean))].sort().reverse(), [games]);
   const ownedCount = useMemo(() => games.filter(game => game.owned && !game.hidden).length, [games]);
   const steamCount = useMemo(() => games.filter(game => isSteamWithoutPhysical(game) && !game.hidden).length, [games]);
+  const savedCount = useMemo(() => games.filter(game => game.saved && !game.hidden).length, [games]);
   const ownedHidden = !filters.steamOnly && !filters.showOwned && ownedCount > 0;
   const filterCount = activeFilterCount(filters);
   const shown = results.slice(0, visible);
@@ -114,6 +116,23 @@ export function PhysicalCatalog() {
     } catch (reason) { setError(errorMessage(reason)); }
   }
 
+  async function removeWanted(game: CatalogGame) {
+    const ids = game.wanted_ids ?? [];
+    if (!ids.length) return;
+    const entries = ids.length === 1 ? 'its entry' : `its ${ids.length} entries`;
+    if (!window.confirm(`Remove “${game.name}” from Games I want (${entries})? Steam sync will not re-add it.`)) return;
+    setRemovingId(game.id); setNotice(''); setError('');
+    try {
+      for (const id of ids) await discoveryApi(`/games/${id}`, { method: 'DELETE' });
+      setNotice(`${game.name} removed from Games I want.`);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally {
+      // Reload so every card of this title (both consoles) shows what the server kept.
+      setRemovingId(null);
+      await load();
+    }
+  }
+
   function save(game: CatalogGame) {
     setEditing({ game, draft: { ...emptyWanted(), name: game.name, image_url: game.image_url, platform: game.platform, format: 'Physical',
       release_date: game.release_date, publication_year: Number(releaseYear(game)) || null, store_url: game.source_url } });
@@ -153,13 +172,13 @@ export function PhysicalCatalog() {
       <span className="cat-divider" aria-hidden />
       <label className="cat-toggle" title="Games you own on Switch or Switch 2. Copies on Steam or other platforms don’t count."><input type="checkbox" checked={filters.showOwned} disabled={filters.steamOnly} onChange={event => update('showOwned', event.target.checked)} /> Also show games I own on Switch{ownedCount > 0 && <small>{ownedCount}</small>}</label>
       <label className="cat-toggle" title="Games in your Steam library that you don’t have as a physical Switch copy yet"><input type="checkbox" checked={filters.steamOnly} onChange={event => update('steamOnly', event.target.checked)} /> Only games I have on Steam, not physical{steamCount > 0 && <small>{steamCount}</small>}</label>
+      <label className="cat-toggle" title="Games you already saved to Games I want"><input type="checkbox" checked={filters.hideSaved} onChange={event => update('hideSaved', event.target.checked)} /> Hide games in Games I want{savedCount > 0 && <small>{savedCount}</small>}</label>
     </div>
 
     {filtersOpen && <div className="cat-filters">
       <label>Format<select value={filters.format} onChange={event => update('format', event.target.value as CatalogFilters['format'])}><option value="all">Any physical format</option><option value="Game Card">Game card</option><option value="Game-Key Card">Game-Key Card</option></select></label>
       <label>Release<select value={filters.release} onChange={event => update('release', event.target.value as CatalogFilters['release'])}><option value="all">Released and upcoming</option><option value="released">Already released</option><option value="upcoming">Upcoming or undated</option></select></label>
       <label>Year<select value={filters.year} onChange={event => update('year', event.target.value)}><option value="">Any year</option>{years.map(year => <option key={year}>{year}</option>)}</select></label>
-      <label className="cat-toggle"><input type="checkbox" checked={filters.hideSaved} onChange={event => update('hideSaved', event.target.checked)} /> Hide games already in Games I want</label>
       {filterCount > 0 && <button type="button" className="cat-link" onClick={() => { setFilters({ ...DEFAULT_CATALOG_FILTERS, query: filters.query, sort: filters.sort }); setVisible(PAGE_SIZE); }}><RotateCcw size={14} /> Reset filters</button>}
     </div>}
 
@@ -193,7 +212,11 @@ export function PhysicalCatalog() {
           <h3 title={game.name}>{game.name}</h3>
           <p className="cat-meta">{releaseText(game)}{game.publisher ? ` · ${game.publisher}` : ''}</p>
           <div className="cat-actions">
-            <button type="button" className="cat-action primary" disabled={game.saved} onClick={() => save(game)}>{game.saved ? <><Check size={14} /> Wanted</> : <><Heart size={14} /> Want</>}</button>
+            {game.saved
+              ? <button type="button" className="cat-action primary wanted" disabled={removingId === game.id} onClick={() => void removeWanted(game)} title="Remove from Games I want" aria-label={`Remove ${game.name} from Games I want`}>
+                {removingId === game.id ? <><Loader2 size={14} className="spinner" /> Removing</> : <><span className="at-rest"><Check size={14} /> Wanted</span><span className="on-hover"><X size={14} /> Remove</span></>}
+              </button>
+              : <button type="button" className="cat-action primary" onClick={() => save(game)}><Heart size={14} /> Want</button>}
             <button type="button" className="cat-action" onClick={() => void setHidden(game, true)} title="Hide this game until you restore it from Hidden games"><EyeOff size={14} /> Don’t show</button>
             <a className="cat-action icon" href={game.source_url} target="_blank" rel="noreferrer" aria-label={`${game.name} on ${game.source}`} title={`Open on ${game.source}`}><ArrowUpRight size={15} /></a>
           </div>
@@ -225,9 +248,10 @@ export function PhysicalCatalog() {
     </div>}
 
     {editing && <WantedGameEditor initial={editing.draft} title="Save to Games I want" onClose={() => setEditing(null)} onSave={async draft => {
-      await discoveryApi('/games', { method: 'POST', body: JSON.stringify(draft) });
+      const created = await discoveryApi<{ id: number }>('/games', { method: 'POST', body: JSON.stringify(draft) });
       const saved = editing.game;
-      setGames(current => current.map(row => row.id === saved.id ? { ...row, saved: true } : row));
+      setGames(current => current.map(row => row.id === saved.id
+        ? { ...row, saved: true, wanted_ids: [...(row.wanted_ids ?? []), created.id] } : row));
       setNotice(`${draft.name} saved to Games I want.`);
     }} />}
   </section>;

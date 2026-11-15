@@ -1272,11 +1272,11 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
     The client searches, filters and sorts locally, so the whole list is sent.
     """
     owned = _owned_title_copies(db, user.id)
-    wanted = {
-        service._release_title_key(row.name)
-        for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()
-        if row.status != "Acquired"
-    }
+    # Title key -> the Games I want entries saved for it, so the card can remove them too.
+    wanted = {}
+    for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).order_by(WantedGame.id).all():
+        if row.status != "Acquired":
+            wanted.setdefault(service._release_title_key(row.name), []).append(row.id)
     hidden = {row.catalog_game_id for row in db.query(SwitchCatalogHidden).filter_by(user_id=user.id).all()}
     # IGDB often lists a game Nintendo Life also has, sometimes under the
     # "Nintendo Switch 2 Edition" name, so each game shows once per platform.
@@ -1301,7 +1301,7 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
             "owned_physical": any(str(copy.get("format") or "").lower() == "physical" for copy in switch_copies),
             "on_steam": any(_is_steam_copy(copy) for copy in copies),
             "owned_platforms": sorted({copy["platform"] for copy in copies if copy.get("platform")}),
-            "saved": row.title_key in wanted, "hidden": row.id in hidden,
+            "saved": row.title_key in wanted, "wanted_ids": wanted.get(row.title_key, []), "hidden": row.id in hidden,
         })
     return {"games": games, "status": switch_catalog.status(db)}
 
