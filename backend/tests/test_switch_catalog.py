@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.database import Base, get_db
 from backend.app.models import User, Videogame
-from backend.app.discovery_models import SwitchCatalogGame, SwitchCatalogHidden, WantedGame
+from backend.app.discovery_models import SwitchCatalogGame, SwitchCatalogHidden, SwitchCatalogOwned, WantedGame
 from backend.app.routers import discovery_router as router
 from backend.app.services import switch_catalog as catalog
 
@@ -177,6 +177,62 @@ class SwitchCatalogTests(unittest.TestCase):
         self.db.commit()
         game = self.games()[EDITION]
         self.assertEqual((game["owned"], game["owned_physical"]), (True, False))
+
+    def test_edition_words_do_not_make_a_different_game(self):
+        for title, base in (
+            ("xenoblade chronicles definitive edition", "xenoblade chronicles"),
+            ("mario kart 8 deluxe", "mario kart 8"),
+            ("the legend of zelda skyward sword hd", "the legend of zelda skyward sword"),
+            ("witcher 3 game of the year edition", "witcher 3"),
+            ("final fantasy x x 2 hd remaster", "final fantasy x x 2"),
+            ("death stranding director s cut", "death stranding"),
+            ("stellar blade complete edition", "stellar blade"),
+            # Words that end real titles stay unless "edition" follows them.
+            ("super smash bros ultimate", "super smash bros ultimate"),
+            ("xenoblade chronicles x definitive edition", "xenoblade chronicles x"),
+            ("deluxe", "deluxe"),
+        ):
+            self.assertEqual(catalog.edition_base_key(title), base)
+
+    def test_one_collection_card_owns_every_edition(self):
+        self.add("Xenoblade Chronicles: Definitive Edition – Nintendo Switch 2 Edition", "Nintendo Switch 2")
+        self.add("Xenoblade Chronicles: Definitive Edition")
+        self.add("Xenoblade Chronicles X: Definitive Edition")
+        self.db.add(Videogame(user_id=self.user.id, name="Xenoblade Chronicles", copies=json.dumps([
+            {"id": "a", "platform": "Nintendo Switch 2", "format": "Physical"},
+            {"id": "b", "platform": "Wii", "format": "Physical"},
+        ])))
+        self.db.commit()
+        owned = {name: game["owned"] for name, game in self.games().items()}
+        self.assertEqual(owned, {
+            "Xenoblade Chronicles: Definitive Edition – Nintendo Switch 2 Edition": True,
+            "Xenoblade Chronicles: Definitive Edition": True,
+            "Xenoblade Chronicles X: Definitive Edition": False,
+        })
+
+    def test_marking_a_title_owned_covers_its_editions_and_is_per_user(self):
+        edition = self.add("Racer Deluxe – Nintendo Switch 2 Edition", "Nintendo Switch 2")
+        self.add("Racer")
+        other = self.add("Other Game")
+        response = self.client.put(f"/api/discovery/catalog/{edition.id}/owned?owned=true")
+        self.assertEqual(response.status_code, 200, response.text)
+        # Marking twice is harmless, and it never touches the "Don't show" list.
+        self.client.put(f"/api/discovery/catalog/{edition.id}/owned?owned=true")
+        self.assertEqual((self.db.query(SwitchCatalogOwned).count(), self.db.query(SwitchCatalogHidden).count()), (1, 0))
+        games = self.games()
+        mark = self.db.query(SwitchCatalogOwned).one()
+        self.assertEqual((mark.title_key, games["Racer"]["marked_owned_id"], games[other.name]["marked_owned_id"]), ("racer", mark.id, None))
+        flags = {name: (game["owned"], game["marked_owned"], game["owned_physical"], game["hidden"]) for name, game in games.items()}
+        self.assertEqual(flags, {
+            edition.name: (True, True, False, False), "Racer": (True, True, False, False), other.name: (False, False, False, False),
+        })
+        self.current = self.other
+        self.assertFalse(any(game["owned"] for game in self.games().values()))
+        self.current = self.user
+        # Unmarking from any edition of the title clears it.
+        self.client.put(f"/api/discovery/catalog/{self.games()['Racer']['id']}/owned?owned=false")
+        self.assertFalse(any(game["marked_owned"] for game in self.games().values()))
+        self.assertEqual(self.client.put("/api/discovery/catalog/9999/owned?owned=true").status_code, 404)
 
     def test_a_game_from_several_sources_shows_once_per_platform(self):
         edition = self.add("Racer - Nintendo Switch 2 Edition", "Nintendo Switch 2", catalog.GAME_KEY_CARD)

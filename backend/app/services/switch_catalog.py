@@ -63,6 +63,13 @@ _FLAG_REGIONS = {"EU": "UK/EU", "UK": "UK/EU", "GB": "UK/EU", "US": "NA", "NA": 
 _NO_PHYSICAL = re.compile(r"^none\b|\bdigital[ -]only\b")
 # Bumped when classify_physical changes, so rows read under older rules are read again.
 FORMAT_RULES_VERSION = 2
+# Trailing words that name an edition of a game rather than a different game.
+# Words that also end real titles ("Ultimate", "Complete") only count before "edition".
+_EDITION_SUFFIX = re.compile(
+    r"\s+(?:(?:game of the year|goty|definitive|deluxe|complete|ultimate|standard|special|launch|anniversary"
+    r"|limited|collector s|premium|gold|enhanced|director s)\s+(?:edition|set|version|cut)"
+    r"|edition|goty|definitive|deluxe|remastered|remaster|hd|director s cut)$"
+)
 # Preferred source when several describe the same game on the same platform.
 _SOURCE_PRIORITY = {"Nintendo Life": 0, "Nintendo": 1, "IGDB": 2}
 
@@ -445,6 +452,20 @@ def requeue_outdated_formats(db):
     ).update({SwitchCatalogGame.detail_checked_at: None}, synchronize_session=False)
     write_state(db, format_rules=FORMAT_RULES_VERSION)
     return count
+
+
+def edition_base_key(title_key):
+    """A title key without edition words, so one collection card covers every edition.
+
+    "xenoblade chronicles definitive edition" -> "xenoblade chronicles". The
+    "Nintendo Switch 2 Edition" suffix is already gone from title keys.
+    """
+    key = " ".join((title_key or "").split())
+    while True:
+        shorter = _EDITION_SUFFIX.sub("", key)
+        if shorter == key or not shorter:
+            return key
+        key = shorter
 
 
 def card_release(row):

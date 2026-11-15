@@ -11,7 +11,7 @@ from ..models import AppSetting, User, Videogame
 from ..discovery_models import (
     WantedGame, PhysicalRelease, CopyOption, CopyCompatibility, SteamCollectionLink, SteamCopyTrash,
     SteamMatchReview, SteamOwnedGame, SteamContentLink, GameMergeRedirect, SteamAuditLog,
-    SwitchCatalogGame, SwitchCatalogHidden,
+    SwitchCatalogGame, SwitchCatalogHidden, SwitchCatalogOwned,
 )
 from ..discovery_schemas import (
     WantedInput, WantedResponse, AcquireInput, BatchInput, SettingsInput, SettingsResponse,
@@ -1172,12 +1172,14 @@ def timeline(region: str = Query("Europe", pattern="^(Europe|North America|Japan
     games = [game for game in result["games"] if service.normalized(game["name"]) not in overrides]
     games += [{"id": f"manual:{row.id}", "name": row.name, "release_date": row.release_date, "image_url": row.image_url,
                "source_url": row.source_url, "notes": row.notes, "region": row.region, "source": "Admin verified"} for row in manual]
-    # Like the physical catalog, only a Switch / Switch 2 copy makes a release "owned".
+    # Like the physical catalog, only a Switch / Switch 2 copy (or a title marked
+    # as owned there) makes a release "owned", whatever edition it is.
     owned = {key for key, copies in _owned_title_copies(db, user.id).items() if any(_is_switch_copy(copy) for copy in copies)}
+    owned |= set(_marked_owned_titles(db, user.id))
     wanted = {service._release_title_key(row.name) for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).all()}
     for game in games:
         key = service._release_title_key(game["name"])
-        game["owned"] = key in owned
+        game["owned"] = switch_catalog.edition_base_key(key) in owned
         game["saved"] = key in wanted
     result["games"] = sorted(games, key=lambda game: (game["release_date"], game["name"]))
     return result
@@ -1248,7 +1250,11 @@ def _is_steam_copy(copy):
 
 
 def _owned_title_copies(db, user_id):
-    """Title key -> current copies the user has of it, from visible collection games."""
+    """Edition-free title key -> current copies the user has of it, from visible collection games.
+
+    One collection card stands for every edition of a game, so "Xenoblade Chronicles"
+    also owns "Xenoblade Chronicles: Definitive Edition".
+    """
     owned = {}
     for game in db.query(Videogame).filter_by(user_id=user_id, hidden=False).all():
         if game.merged_into_game_id:
@@ -1258,11 +1264,16 @@ def _owned_title_copies(db, user_id):
         except (TypeError, ValueError):
             copies = []
         copies = [item for item in copies if isinstance(item, dict)]
-        for name in {game.name, *(item.get("name") for item in copies)}:
-            key = service._release_title_key(name)
-            if key:
-                owned.setdefault(key, []).extend(copies)
+        keys = {switch_catalog.edition_base_key(service._release_title_key(name))
+                for name in {game.name, *(item.get("name") for item in copies)}}
+        for key in keys - {""}:
+            owned.setdefault(key, []).extend(copies)
     return owned
+
+
+def _marked_owned_titles(db, user_id):
+    """Edition-free title key -> id of the user's "I already have it" mark in the catalog."""
+    return {row.title_key: row.id for row in db.query(SwitchCatalogOwned.title_key, SwitchCatalogOwned.id).filter_by(user_id=user_id).all()}
 
 
 @router.get("/catalog")
@@ -1272,6 +1283,7 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
     The client searches, filters and sorts locally, so the whole list is sent.
     """
     owned = _owned_title_copies(db, user.id)
+    marked = _marked_owned_titles(db, user.id)
     # Title key -> the Games I want entries saved for it, so the card can remove them too.
     wanted = {}
     for row in db.query(WantedGame).filter_by(user_id=user.id, deleted=False).order_by(WantedGame.id).all():
@@ -1285,8 +1297,11 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
     ).all())
     games = []
     for row in rows:
-        copies = owned.get(row.title_key, ())
+        base_key = switch_catalog.edition_base_key(row.title_key)
+        copies = owned.get(base_key, ())
         switch_copies = [copy for copy in copies if _is_switch_copy(copy)]
+        marked_id = marked.get(base_key)
+        marked_owned = marked_id is not None
         # The game page's card date beats the listing's, which may be an eShop upgrade's.
         release_date, release_label = switch_catalog.card_release(row)
         games.append({
@@ -1296,8 +1311,11 @@ def physical_catalog(db: Session = Depends(get_db), user: User = Depends(get_cur
             "image_url": None if switch_catalog.is_placeholder_image(row.image_url) else row.image_url,
             "source": row.source, "source_url": row.source_url, "added_at": row.first_seen_at,
             # Only a Switch / Switch 2 copy counts as owning a physical-catalog game;
-            # a Steam or other platform copy leaves it in the catalog.
-            "owned": bool(switch_copies),
+            # a Steam or other platform copy leaves it in the catalog. A title the
+            # user marked "I already have it" counts too.
+            "owned": bool(switch_copies) or marked_owned, "marked_owned": marked_owned,
+            # Every edition and console one mark covers shares its id.
+            "marked_owned_id": marked_id,
             "owned_physical": any(str(copy.get("format") or "").lower() == "physical" for copy in switch_copies),
             "on_steam": any(_is_steam_copy(copy) for copy in copies),
             "owned_platforms": sorted({copy["platform"] for copy in copies if copy.get("platform")}),
@@ -1335,6 +1353,25 @@ def set_catalog_game_hidden(
         db.delete(row)
     db.commit()
     return {"id": catalog_id, "hidden": hidden}
+
+
+@router.put("/catalog/{catalog_id}/owned")
+def set_catalog_game_owned(
+    catalog_id: int, owned: bool = Query(...),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Mark or unmark a catalog title as already owned, for every edition and console of it."""
+    game = db.get(SwitchCatalogGame, catalog_id)
+    if game is None:
+        raise HTTPException(404, "Catalog game not found.")
+    title_key = switch_catalog.edition_base_key(game.title_key) or game.name.casefold()
+    row = db.query(SwitchCatalogOwned).filter_by(user_id=user.id, title_key=title_key).first()
+    if owned and row is None:
+        db.add(SwitchCatalogOwned(user_id=user.id, title_key=title_key, name=game.name))
+    elif not owned and row is not None:
+        db.delete(row)
+    db.commit()
+    return {"id": catalog_id, "owned": owned}
 
 
 @router.delete("/catalog/hidden")

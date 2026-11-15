@@ -289,3 +289,18 @@ class SwitchCatalogHidden(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     catalog_game_id = Column(Integer, ForeignKey("switch_catalog_games.id", ondelete="CASCADE"), nullable=False, index=True)
     hidden_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SwitchCatalogOwned(Base):
+    """A title the user says they already have, for editions the collection names differently.
+
+    Kept by edition-free title (see ``switch_catalog.edition_base_key``) so it covers
+    every edition and console of that game, and kept apart from "Don't show".
+    """
+    __tablename__ = "switch_catalog_owned"
+    __table_args__ = (UniqueConstraint("user_id", "title_key", name="uq_switch_catalog_owned"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title_key = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    marked_at = Column(DateTime, nullable=False, default=datetime.utcnow)

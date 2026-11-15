@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, EyeOff, Gamepad2, Heart, Loader2, RefreshCw, RotateCcw, Search, SlidersHorizontal, Undo2, X } from 'lucide-react';
+import { Check, EyeOff, Gamepad2, Heart, Loader2, PackageCheck, RefreshCw, RotateCcw, Search, SlidersHorizontal, Undo2, X } from 'lucide-react';
 import { WantedGameEditor } from '../components/WantedGameEditor';
 import { discoveryApi, emptyWanted, errorMessage, timestamp } from '../lib/discovery';
 import type { WantedDraft } from '../lib/discovery';
@@ -42,9 +42,10 @@ export function PhysicalCatalog() {
   const [filters, setFilters] = useState<CatalogFilters>(loadFilters);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [hiddenOpen, setHiddenOpen] = useState(false);
-  const [hiddenQuery, setHiddenQuery] = useState('');
-  const [lastHidden, setLastHidden] = useState<CatalogGame | null>(null);
+  // "Don't show" and "I already have it" are separate lists, each with its own dialog.
+  const [dialog, setDialog] = useState<'hidden' | 'owned' | null>(null);
+  const [dialogQuery, setDialogQuery] = useState('');
+  const [lastAction, setLastAction] = useState<{ game: CatalogGame; kind: 'hidden' | 'owned' } | null>(null);
   const [editing, setEditing] = useState<{ game: CatalogGame; draft: WantedDraft } | null>(null);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -68,6 +69,12 @@ export function PhysicalCatalog() {
 
   const results = useMemo(() => filterCatalog(games, deferredFilters, today), [games, deferredFilters, today]);
   const hiddenGames = useMemo(() => games.filter(game => game.hidden).sort((a, b) => a.name.localeCompare(b.name)), [games]);
+  // One entry per mark (a mark covers every edition and console of the title),
+  // shown under its shortest name; later entries replace earlier ones in the Map.
+  const markedGames = useMemo(() => [...new Map(games.filter(game => game.marked_owned_id != null)
+    .sort((a, b) => b.name.length - a.name.length)
+    .map(game => [game.marked_owned_id, game] as const)).values()]
+    .sort((a, b) => a.name.localeCompare(b.name)), [games]);
   const years = useMemo(() => [...new Set(games.map(releaseYear).filter(Boolean))].sort().reverse(), [games]);
   const ownedCount = useMemo(() => games.filter(game => game.owned && !game.hidden).length, [games]);
   const steamCount = useMemo(() => games.filter(game => isSteamWithoutPhysical(game) && !game.hidden).length, [games]);
@@ -94,15 +101,24 @@ export function PhysicalCatalog() {
   async function setHidden(game: CatalogGame, hidden: boolean) {
     const apply = (value: boolean) => setGames(current => current.map(row => row.id === game.id ? { ...row, hidden: value } : row));
     apply(hidden);
-    setLastHidden(hidden ? game : null);
+    setLastAction(hidden ? { game, kind: 'hidden' } : null);
     try { await discoveryApi(`/catalog/${game.id}/hidden?hidden=${hidden}`, { method: 'PUT' }); }
-    catch (reason) { apply(!hidden); setLastHidden(null); setError(errorMessage(reason)); }
+    catch (reason) { apply(!hidden); setLastAction(null); setError(errorMessage(reason)); }
+  }
+
+  async function setOwned(game: CatalogGame, owned: boolean) {
+    // The mark covers every edition and console of the title, so the server's answer is reloaded.
+    setGames(current => current.map(row => row.id === game.id ? { ...row, marked_owned: owned, owned: owned || (row.owned && !row.marked_owned) } : row));
+    setLastAction(owned ? { game, kind: 'owned' } : null);
+    try { await discoveryApi(`/catalog/${game.id}/owned?owned=${owned}`, { method: 'PUT' }); }
+    catch (reason) { setLastAction(null); setError(errorMessage(reason)); }
+    await load();
   }
 
   async function restoreAll() {
     const previous = games;
     setGames(current => current.map(row => row.hidden ? { ...row, hidden: false } : row));
-    setHiddenOpen(false); setLastHidden(null);
+    setDialog(null); setLastAction(null);
     try { await discoveryApi('/catalog/hidden', { method: 'DELETE' }); }
     catch (reason) { setGames(previous); setError(errorMessage(reason)); }
   }
@@ -139,13 +155,26 @@ export function PhysicalCatalog() {
   }
 
   useEffect(() => {
-    if (!hiddenOpen) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setHiddenOpen(false); };
+    if (!dialog) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setDialog(null); };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [hiddenOpen]);
+  }, [dialog]);
 
-  const hiddenMatches = hiddenGames.filter(game => searchKey(game.name).includes(searchKey(hiddenQuery)));
+  const openDialog = (kind: 'hidden' | 'owned') => { setDialogQuery(''); setDialog(kind); };
+  const dialogGames = dialog === 'owned' ? markedGames : hiddenGames;
+  const dialogMatches = dialogGames.filter(game => searchKey(game.name).includes(searchKey(dialogQuery)));
+  const dialogText = dialog === 'owned' ? {
+    title: 'Games I already have',
+    intro: 'Titles you marked “I already have it”, for editions your collection names differently. Each mark covers every edition and console of the game, which then counts as owned.',
+    empty: 'Nothing is marked. Use “I already have it” on a game to move it here.',
+    noMatch: 'No marked game matches that search.', search: 'Search marked games…', restore: 'Unmark',
+  } : {
+    title: 'Hidden games',
+    intro: 'Games you marked “Don’t show”. They stay out of the catalog until you restore them here.',
+    empty: 'Nothing is hidden. Use “Don’t show” on a game to move it here.',
+    noMatch: 'No hidden game matches that search.', search: 'Search hidden games…', restore: 'Restore',
+  };
   const building = !!status?.running;
   const empty = !loading && games.length === 0;
 
@@ -162,8 +191,11 @@ export function PhysicalCatalog() {
       <button type="button" className={`cat-button ${filtersOpen || filterCount ? 'active' : ''}`} onClick={() => setFiltersOpen(open => !open)} aria-expanded={filtersOpen}>
         <SlidersHorizontal size={16} /> Filters{filterCount > 0 && <span className="cat-pill">{filterCount}</span>}
       </button>
-      <button type="button" className="cat-button" onClick={() => { setHiddenQuery(''); setHiddenOpen(true); }}>
+      <button type="button" className="cat-button" onClick={() => openDialog('hidden')}>
         <EyeOff size={16} /> Hidden games<span className="cat-pill">{hiddenGames.length}</span>
+      </button>
+      <button type="button" className="cat-button" onClick={() => openDialog('owned')}>
+        <PackageCheck size={16} /> Games I have<span className="cat-pill">{markedGames.length}</span>
       </button>
     </div>
 
@@ -187,7 +219,11 @@ export function PhysicalCatalog() {
     {building && <p className="cat-status" role="status"><Loader2 size={16} className="spinner" /> <span><strong>Building the catalog.</strong> {status?.phase || 'Working'}… Games appear here as they are confirmed; this page updates on its own.</span></p>}
     {!building && status?.error && <p className="disc-alert" role="status">{status.error}</p>}
 
-    {lastHidden && <div className="cat-undo" role="status"><span><strong>{lastHidden.name}</strong> is hidden.</span><button type="button" onClick={() => void setHidden(lastHidden, false)}><Undo2 size={15} /> Undo</button><button type="button" onClick={() => setLastHidden(null)} aria-label="Dismiss"><X size={15} /></button></div>}
+    {lastAction && <div className="cat-undo" role="status">
+      <span><strong>{lastAction.game.name}</strong> {lastAction.kind === 'owned' ? 'is marked as a game you have.' : 'is hidden.'}</span>
+      <button type="button" onClick={() => void (lastAction.kind === 'owned' ? setOwned(lastAction.game, false) : setHidden(lastAction.game, false))}><Undo2 size={15} /> Undo</button>
+      <button type="button" onClick={() => setLastAction(null)} aria-label="Dismiss"><X size={15} /></button>
+    </div>}
 
     {loading ? <p className="disc-empty"><Loader2 className="spinner" size={26} /> Loading the catalog…</p> : empty ? <div className="disc-empty">
       <Gamepad2 size={36} />
@@ -206,7 +242,7 @@ export function PhysicalCatalog() {
           <div className="cat-badges">
             <span className={`cat-badge ${game.platform === 'Nintendo Switch 2' ? 'switch2' : 'switch'}`}>{platformLabel(game.platform)}</span>
             {game.format === 'Game-Key Card' && <span className="cat-badge keycard">Game-Key Card</span>}
-            {game.owned && <span className="cat-badge owned" title={game.owned_platforms.length ? `In your collection on ${game.owned_platforms.join(', ')}` : 'In your collection'}><Check size={11} /> {game.owned_physical ? 'Owned' : 'Owned digital'}</span>}
+            {game.owned && <span className="cat-badge owned" title={game.marked_owned ? 'You marked this game “I already have it”' : game.owned_platforms.length ? `In your collection on ${game.owned_platforms.join(', ')}` : 'In your collection'}><Check size={11} /> {game.owned_physical || game.marked_owned ? 'Owned' : 'Owned digital'}</span>}
             {game.on_steam && <span className="cat-badge steam" title="In your Steam library">Steam</span>}
           </div>
           <h3 title={game.name}>{game.name}</h3>
@@ -217,7 +253,12 @@ export function PhysicalCatalog() {
                 {removingId === game.id ? <><Loader2 size={14} className="spinner" /> Removing</> : <><span className="at-rest"><Check size={14} /> Wanted</span><span className="on-hover"><X size={14} /> Remove</span></>}
               </button>
               : <button type="button" className="cat-action primary" onClick={() => save(game)}><Heart size={14} /> Want</button>}
-            <button type="button" className="cat-action" onClick={() => void setHidden(game, true)} title="Hide this game until you restore it from Hidden games"><EyeOff size={14} /> Don’t show</button>
+            <button type="button" className="cat-action icon" onClick={() => void setHidden(game, true)} title="Don’t show: hide this game until you restore it from Hidden games" aria-label={`Don’t show ${game.name}`}><EyeOff size={15} /></button>
+            {/* A copy in the collection already makes the game owned; the mark is for the rest. */}
+            {(!game.owned || game.marked_owned) && <button type="button" className="cat-action icon" aria-pressed={game.marked_owned}
+              onClick={() => void setOwned(game, !game.marked_owned)}
+              title={game.marked_owned ? 'Unmark: you no longer have this game' : 'I already have it: count this game, in every edition, as owned'}
+              aria-label={game.marked_owned ? `Unmark ${game.name} as a game you have` : `I already have ${game.name}`}><PackageCheck size={15} /></button>}
           </div>
         </div>
       </article>)}</div>}
@@ -225,23 +266,23 @@ export function PhysicalCatalog() {
       <p className="disc-source-note">Retail releases from Nintendo Life’s games database and Nintendo Europe’s catalog. Game-Key Cards are included and labelled; code-in-box products are left out. Limited-print and region-exclusive releases can be missing.{status?.listing_at ? ` Last refreshed: ${timestamp(status.listing_at)}.` : ''} {!building && <button type="button" className="disc-text-button" onClick={() => void refresh()}><RefreshCw size={12} /> Refresh now</button>}</p>
     </>}
 
-    {hiddenOpen && <div className="disc-confirm-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setHiddenOpen(false); }}>
+    {dialog && <div className="disc-confirm-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="disc-confirm-dialog disc-review-dialog cat-hidden-dialog" role="dialog" aria-modal="true" aria-labelledby="cat-hidden-title">
-        <button className="disc-confirm-close" onClick={() => setHiddenOpen(false)} aria-label="Close"><X size={18} /></button>
-        <div className="disc-review-dialog-heading"><div><h2 id="cat-hidden-title">Hidden games</h2><p>Games you marked “Don’t show”. They stay out of the catalog until you restore them here.</p></div></div>
-        {hiddenGames.length > 8 && <label className="cat-search compact"><Search size={16} aria-hidden /><input type="search" value={hiddenQuery} onChange={event => setHiddenQuery(event.target.value)} placeholder="Search hidden games…" aria-label="Search hidden games" /></label>}
+        <button className="disc-confirm-close" onClick={() => setDialog(null)} aria-label="Close"><X size={18} /></button>
+        <div className="disc-review-dialog-heading"><div><h2 id="cat-hidden-title">{dialogText.title}</h2><p>{dialogText.intro}</p></div></div>
+        {dialogGames.length > 8 && <label className="cat-search compact"><Search size={16} aria-hidden /><input type="search" value={dialogQuery} onChange={event => setDialogQuery(event.target.value)} placeholder={dialogText.search} aria-label={dialogText.search.replace('…', '')} /></label>}
         <div className="disc-review-dialog-list">
-          {hiddenGames.length === 0 ? <p className="disc-review-empty">Nothing is hidden. Use “Don’t show” on a game to move it here.</p>
-            : hiddenMatches.length === 0 ? <p className="disc-review-empty">No hidden game matches that search.</p>
-            : hiddenMatches.map(game => <div className="cat-hidden-row" key={game.id}>
+          {dialogGames.length === 0 ? <p className="disc-review-empty">{dialogText.empty}</p>
+            : dialogMatches.length === 0 ? <p className="disc-review-empty">{dialogText.noMatch}</p>
+            : dialogMatches.map(game => <div className="cat-hidden-row" key={game.id}>
               <Cover game={game} />
               <div><strong>{game.name}</strong><small>{platformLabel(game.platform)}{game.format === 'Game-Key Card' ? ' · Game-Key Card' : ''} · {releaseText(game)}</small></div>
-              <button type="button" className="btn btn-secondary" onClick={() => void setHidden(game, false)}><Undo2 size={15} /> Restore</button>
+              <button type="button" className="btn btn-secondary" onClick={() => void (dialog === 'owned' ? setOwned(game, false) : setHidden(game, false))}><Undo2 size={15} /> {dialogText.restore}</button>
             </div>)}
         </div>
         <div className="disc-actions">
-          {hiddenGames.length > 1 && <button type="button" className="btn btn-secondary" onClick={() => void restoreAll()}>Restore all {hiddenGames.length}</button>}
-          <button type="button" className="btn btn-primary" onClick={() => setHiddenOpen(false)}>Done</button>
+          {dialog === 'hidden' && hiddenGames.length > 1 && <button type="button" className="btn btn-secondary" onClick={() => void restoreAll()}>Restore all {hiddenGames.length}</button>}
+          <button type="button" className="btn btn-primary" onClick={() => setDialog(null)}>Done</button>
         </div>
       </div>
     </div>}

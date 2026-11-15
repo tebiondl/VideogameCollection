@@ -44,6 +44,8 @@
 .cat-action { display:inline-flex; align-items:center; justify-content:center; gap:5px; flex:1; padding:7px 6px; border:1px solid var(--border-color); border-radius:8px; background:transparent; color:var(--text-secondary); font:inherit; font-size:.76rem; cursor:pointer; white-space:nowrap; }
 .cat-action:hover { color:var(--text-primary); border-color:var(--text-muted); }
 .cat-action.primary { color:var(--disc-accent-soft); }
+.cat-action.icon { flex:0 0 auto; padding:7px 9px; }
+.cat-action.icon[aria-pressed=true] { color:var(--accent-primary); border-color:var(--accent-primary); }
 /* A wanted game's button reads "Wanted" and turns into "Remove" on hover or focus. */
 .cat-action.wanted .on-hover { display:none; }
 .cat-action.wanted:is(:hover, :focus-visible) .on-hover { display:inline-flex; align-items:center; gap:5px; }

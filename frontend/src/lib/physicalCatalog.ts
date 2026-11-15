@@ -9,12 +9,16 @@ export interface CatalogGame {
   /** Owned on Steam. */
   on_steam: boolean;
   owned_platforms: string[]; saved: boolean; hidden: boolean;
+  /** The user marked this title "I already have it"; `owned` is then true as well. */
+  marked_owned: boolean;
+  /** The mark behind `marked_owned`, shared by every edition and console it covers. */
+  marked_owned_id: number | null;
   /** Games I want entries saved under this title; removing them clears `saved`. */
   wanted_ids: number[];
 }
 
 /** On Steam without a physical Switch copy yet: a candidate to buy physically. */
-export const isSteamWithoutPhysical = (game: CatalogGame) => game.on_steam && !game.owned_physical;
+export const isSteamWithoutPhysical = (game: CatalogGame) => game.on_steam && !game.owned_physical && !game.marked_owned;
 export interface CatalogStatus {
   running: boolean; phase: string | null; listing_at: string | null; finished_at: string | null;
   error: string | null; pending_details: number;
