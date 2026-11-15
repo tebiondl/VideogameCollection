@@ -27,6 +27,9 @@ import { buildCollectionCsv, collectionCsvFilename } from '../lib/collectionCsv'
 import '../components/Modal.css';
 import './VideogamesDashboard.css';
 
+// Lowercases and strips diacritics so "pokemon" matches "Pokémon".
+const searchKey = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 type ViewMode = 'list' | 'matrix';
 
 // ─── Sort types ────────────────────────────────────────────────────────────────
@@ -164,7 +167,7 @@ export function VideogamesDashboard() {
   );
   const parentCandidates = useMemo(() => games
     .filter(game => game.id !== editingGame?.id && !game.hidden && !game.merged_into_game_id)
-    .filter(game => !parentQuery || game.name.toLowerCase().includes(parentQuery.toLowerCase()))
+    .filter(game => !parentQuery || searchKey(game.name).includes(searchKey(parentQuery)))
     .sort((a, b) => a.name.localeCompare(b.name)), [games, editingGame?.id, parentQuery]);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
@@ -536,7 +539,7 @@ export function VideogamesDashboard() {
      if (filterState.reviewedState === 'unreviewed' && !!g.reviewed) return false;
      if (filterState.playNextState === 'planned' && !g.play_next) return false;
      if (filterState.playNextState === 'unplanned' && !!g.play_next) return false;
-     if (searchQuery && !g.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+     if (searchQuery && !searchKey(g.name).includes(searchKey(searchQuery))) return false;
      
      if (filterState.statusFilter.length > 0 && !filterState.statusFilter.includes(g.status)) return false;
 
