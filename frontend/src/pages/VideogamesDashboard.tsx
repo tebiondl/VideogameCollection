@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink, RefreshCw, Play } from 'lucide-react';
+import { Search, Filter, LayoutGrid, List as ListIcon, Plus, Loader2, Trash2, Edit2, X, ArrowUpDown, ArrowUp, ArrowDown, Plus as PlusIcon, HelpCircle, Sparkles, Library, EyeOff, GitMerge, AlertTriangle, Puzzle, ExternalLink, RefreshCw, Play, Download } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchWithAuth } from '../lib/api';
 import { TagMultiSelect } from '../components/TagMultiSelect';
@@ -23,6 +23,7 @@ import { copyPlaytimeHours, displayPlaytimeHours, matchesOwnedCopyFilters, moveC
 import { collectionGameUpdatePayload } from '../lib/videogamePayload';
 import { applyGameMetadata, type GameMetadata, type GameMetadataDraft } from '../lib/gameMetadata';
 import { findProbableDuplicate } from '../lib/titleSimilarity';
+import { buildCollectionCsv, collectionCsvFilename } from '../lib/collectionCsv';
 import '../components/Modal.css';
 import './VideogamesDashboard.css';
 
@@ -582,6 +583,17 @@ export function VideogamesDashboard() {
   const hasSorts = sortCriteria.length > 0;
   const hasActiveFiltersOrSearch = searchQuery !== '' || JSON.stringify(filterState) !== JSON.stringify(DEFAULT_FILTER_STATE);
 
+  // Exports every game that matches the current filters, search and sort, not only the visible page.
+  const downloadCsv = () => {
+    const url = URL.createObjectURL(new Blob([buildCollectionCsv(displayGames)], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = collectionCsvFilename();
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const csvGameCount = `${displayGames.length} ${displayGames.length === 1 ? 'game' : 'games'}`;
+
   return (
     <div className="container vg-dashboard">
       <VideogamePageHeader
@@ -722,6 +734,18 @@ export function VideogamesDashboard() {
             </div>,
             document.body
           )}
+
+          <button
+            type="button"
+            className="btn btn-ghost toolbar-btn"
+            onClick={downloadCsv}
+            disabled={isLoading || displayGames.length === 0}
+            title={`Download the ${csvGameCount} that match the current filters, search and sort as a CSV file`}
+          >
+            <Download size={18} />
+            Download CSV
+            {!isLoading && <span className="csv-count">({displayGames.length})</span>}
+          </button>
 
           {(hasActiveFiltersOrSearch || hasSorts) && (
             <button

@@ -49,6 +49,11 @@
   padding: 0.6rem 1rem;
 }
 
+.csv-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .toolbar-views {
   display: flex;
   gap: 0.25rem;
