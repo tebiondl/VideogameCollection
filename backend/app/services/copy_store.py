@@ -494,6 +494,7 @@ def link_physical_item(
 
     With ``target_copy_id`` an existing copy of the target game joins the object
     (grouping copies that were added separately); otherwise a new copy is created.
+    When that copy is already on a cartridge, ``row`` joins that cartridge instead.
     """
     if target.id == game.id:
         raise HTTPException(422, "Choose a different game to share this copy with.")
@@ -503,7 +504,7 @@ def link_physical_item(
     if target_copy_id:
         target_row = _owned_row(db, target, target_copy_id)
         if target_row.physical_item_id:
-            raise HTTPException(409, f"That copy of {target.name} is already shared with other games. Unlink it first.")
+            return _join_item(db, game, row, target_row.physical_item_id)
     item = db.get(PhysicalItem, row.physical_item_id) if row.physical_item_id else None
     if item is None:
         item = PhysicalItem(user_id=game.user_id, **{field: getattr(row, field) for field in SHARED_FIELDS})
@@ -539,6 +540,34 @@ def link_physical_item(
     return item
 
 
+def _join_item(db: Session, game: Videogame, row: OwnedCopy, item_id: int) -> PhysicalItem:
+    """Put ``row`` on an existing cartridge; it takes that cartridge's details and price."""
+    item = db.get(PhysicalItem, item_id)
+    if item is None or item.user_id != game.user_id:
+        raise HTTPException(404, "That cartridge or disc no longer exists. Reload and try again.")
+    if row.physical_item_id == item.id:
+        return item
+    if row.physical_item_id:
+        # This copy's own cartridge turns out to be the same object: merge them,
+        # keeping the details and price of the one being joined.
+        old_id = row.physical_item_id
+        db.query(OwnedCopy).filter_by(physical_item_id=old_id).update(
+            {"physical_item_id": item.id}, synchronize_session="fetch",
+        )
+        db.flush()
+        old = db.get(PhysicalItem, old_id)
+        if old is not None:
+            db.delete(old)
+    else:
+        if db.query(OwnedCopy).filter_by(collection_game_id=game.id, physical_item_id=item.id).first():
+            raise HTTPException(409, f"{game.name} is already on that cartridge or disc.")
+        row.physical_item_id = item.id
+    row.user_modified, item.updated_at = True, datetime.utcnow()
+    db.flush()
+    _mirror_item(db, item)
+    return item
+
+
 def sync_shared_games(db: Session, game: Videogame, row: OwnedCopy, requested: object) -> set[int]:
     """Make the games sharing ``row``'s object match the list sent by the form.
 
@@ -566,8 +595,13 @@ def sync_shared_games(db: Session, game: Videogame, row: OwnedCopy, requested: o
     affected: set[int] = set()
     for game_id in current - set(wanted):
         affected |= unlink_physical_item(db, game.user_id, row.physical_item_id, game_id)
-    for game_id, copy_id in wanted.items():
+    # Copies to group go first: joining a cartridge brings along the games already on it.
+    for game_id, copy_id in sorted(wanted.items(), key=lambda entry: entry[1] is None):
         if game_id in current:
+            continue
+        if row.physical_item_id and db.query(OwnedCopy).filter_by(
+            collection_game_id=game_id, physical_item_id=row.physical_item_id,
+        ).first():
             continue
         target = db.query(Videogame).filter_by(id=game_id, user_id=game.user_id).first()
         if target is None:

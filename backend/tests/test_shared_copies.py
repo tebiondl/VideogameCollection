@@ -228,6 +228,41 @@ class SharedCopyTests(unittest.TestCase):
             "Super Mario 64": [(12, 70)], "Super Mario Sunshine": [(5, 70)], "Super Mario Galaxy": [(31, 70)],
         })
 
+    def test_a_new_game_joins_a_cartridge_that_already_holds_other_games(self):
+        self.share(self.sm64, "copy:cart", self.galaxy, target_copy_id="copy:galaxy", price=60)
+        response = self.client.post("/api/videogames/", json={"name": "Super Mario Sunshine", "copies": json.dumps([{
+            "id": "copy:new", "platform": "Nintendo Switch", "format": "Physical", "price": 99, "playtime_hours": 4,
+            # The form lists every game of the joined cartridge; only the grouped one names its copy.
+            "shared_games": [{"game_id": self.sm64.id, "copy_id": "copy:cart"}, {"game_id": self.galaxy.id}],
+        }])})
+        self.assertEqual(response.status_code, 200, response.text)
+        [created] = json.loads(response.json()["copies"])
+        self.assertEqual((created["name"], created["price"], created["playtime_hours"]), ("Super Mario 3D All-Stars", 60, 4))
+        self.assertEqual({game["name"] for game in created["physical_item"]["games"]}, {"Super Mario 64", "Super Mario Galaxy"})
+        # Galaxy was already on the cartridge: no second copy was added to it.
+        self.assertEqual([copy["id"] for copy in self.copies(self.galaxy)], ["copy:galaxy", "steam:1"])
+        self.assertEqual(len(self.copies(self.sm64)[0]["physical_item"]["games"]), 2)
+        self.assertEqual(self.db.query(PhysicalItem).count(), 1)
+
+    def test_two_cartridges_found_to_be_the_same_are_merged(self):
+        self.share(self.sm64, "copy:cart", self.galaxy, target_copy_id="copy:galaxy", price=60)
+        # Sunshine and Zelda were recorded on a cartridge of their own first.
+        zelda = Videogame(user_id=self.user.id, name="Zelda")
+        self.db.add(zelda)
+        self.db.commit()
+        self.put_copies(self.sunshine, [{"id": "copy:sun", "platform": "Nintendo Switch", "format": "Physical",
+                                         "price": 20, "shared_games": [{"game_id": zelda.id}]}])
+        copy = self.copies(self.sunshine)[0]
+        copy["shared_games"] = [{"game_id": game["id"]} for game in copy["physical_item"]["games"]]
+        copy["shared_games"].append({"game_id": self.sm64.id, "copy_id": "copy:cart"})
+        response = self.put_copies(self.sunshine, [copy])
+        self.assertEqual(response.status_code, 200, response.text)
+
+        [sunshine_copy] = self.copies(self.sunshine)
+        self.assertEqual({game["name"] for game in sunshine_copy["physical_item"]["games"]}, {"Super Mario 64", "Super Mario Galaxy", "Zelda"})
+        self.assertEqual(sunshine_copy["price"], 60)
+        self.assertEqual(self.db.query(PhysicalItem).count(), 1)
+
     def test_rejects_steam_copies_duplicates_and_other_users_games(self):
         self.assertEqual(self.share(self.galaxy, "steam:1", self.sm64).status_code, 409)
         self.assertEqual(self.share(self.sm64, "copy:cart", self.sm64).status_code, 422)
