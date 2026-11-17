@@ -434,3 +434,16 @@ class CopyPrice(BaseModel):
 
 class CopyPricesUpdate(BaseModel):
     prices: list[CopyPrice] = Field(min_length=1, max_length=5000)
+
+
+class SharedCopyLink(BaseModel):
+    """Add another collection game to the cartridge or disc of an owned copy."""
+    target_game_id: int
+    # An existing copy of the target game to group; omit to create a new copy.
+    target_copy_id: str | None = Field(default=None, min_length=1, max_length=200)
+    # Price of the whole object, when the user settles it while grouping copies.
+    price: float | None = Field(default=None, ge=0, le=100000)
+
+
+class SharedCopyGames(BaseModel):
+    games: list[VideogameResponse]

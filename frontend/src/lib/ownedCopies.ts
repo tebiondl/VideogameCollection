@@ -17,6 +17,14 @@ export interface OwnedCopy {
   currency?: string;
   playtime_hours?: number | null;
   counts_toward_totals?: boolean;
+  /** Set when this copy is one game of a cartridge or disc that holds several games. */
+  physical_item?: SharedPhysicalItem | null;
+}
+
+export interface SharedPhysicalItem {
+  id: number;
+  /** The other collection games stored on the same object. */
+  games: { id: number; name: string }[];
 }
 
 export interface OldCopy {
@@ -76,6 +84,27 @@ export function parseCopies(value: string | null | undefined): OwnedCopy[] {
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
+/**
+ * Every owned copy of the given games, with a shared cartridge or disc listed once,
+ * so counts and spending treat it as the single object it is.
+ */
+export function distinctOwnedCopies<T extends { copies?: string | null }>(games: T[]): { game: T; copy: OwnedCopy }[] {
+  const seenItems = new Set<number>();
+  return games.flatMap(game => parseCopies(game.copies).filter(copy => {
+    const itemId = copy.physical_item?.id;
+    if (itemId == null) return true;
+    if (seenItems.has(itemId)) return false;
+    seenItems.add(itemId);
+    return true;
+  }).map(copy => ({ game, copy })));
+}
+
+/** The part of a copy's price that belongs to one game when the object holds several. */
+export function priceShare(copy: OwnedCopy): number | null {
+  if (typeof copy.price !== 'number') return null;
+  return copy.price / ((copy.physical_item?.games.length || 0) + 1);
+}
+
 export function parseOldCopies(value: string | null | undefined): OldCopy[] {
   if (!value) return [];
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
@@ -93,7 +122,8 @@ export function moveCopyToOldCopies(
   if (oldCopies.length >= 100) throw new Error('You can keep at most 100 old copies per game.');
   const id = copy.id && !oldCopies.some(oldCopy => oldCopy.id === copy.id) ? copy.id : crypto.randomUUID();
   // Keep the original details in the historical record as well as its editable platform and time.
-  const oldCopy = { ...copy, id, console: copy.platform, playtime_hours: copy.playtime_hours ?? null };
+  // A historical record is not on a shared cartridge any more.
+  const oldCopy = { ...copy, physical_item: undefined, id, console: copy.platform, playtime_hours: copy.playtime_hours ?? null };
   const remaining = copies.filter((_, copyIndex) => copyIndex !== index);
   return {
     copies: remaining.length ? JSON.stringify(remaining) : null,

@@ -169,6 +169,10 @@ export function VideogamesDashboard() {
     .filter(game => game.id !== editingGame?.id && !game.hidden && !game.merged_into_game_id)
     .filter(game => !parentQuery || searchKey(game.name).includes(searchKey(parentQuery)))
     .sort((a, b) => a.name.localeCompare(b.name)), [games, editingGame?.id, parentQuery]);
+  const shareTargets = useMemo(() => games
+    .filter(game => game.id !== editingGameId && !game.hidden && !game.merged_into_game_id)
+    .map(game => ({ id: game.id, name: game.name, copies: game.copies }))
+    .sort((a, b) => a.name.localeCompare(b.name)), [games, editingGameId]);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [copyOptions, setCopyOptions] = useState<CopyOptions>(EMPTY_COPY_OPTIONS);
   const copyFilterOptions = useMemo(() => {
@@ -399,6 +403,38 @@ export function VideogamesDashboard() {
       setSavingPlayNext(new Set(playNextRequests.current));
     }
   };
+
+  // Shared cartridges change several games at once, so they are saved straight away.
+  const updateSharedCopy = async (path: string, init: RequestInit) => {
+    if (editingGame) {
+      const saved = games.find(game => game.id === editingGame.id);
+      if (JSON.stringify(parseCopies(saved?.copies)) !== JSON.stringify(parseCopies(editingGame.copies))) {
+        throw new Error('Save Changes first: this game has unsaved edits to its copies.');
+      }
+    }
+    const response = await fetchWithAuth(path, init);
+    if (!response.ok) {
+      const problem = await response.json().catch(() => null);
+      throw new Error(problem?.detail || 'Could not update this shared copy.');
+    }
+    const result: { games: { id: number; copies: string | null; version: number }[] } = await response.json();
+    const changed = new Map(result.games.map(game => [game.id, game]));
+    setGames(current => current.map(game => changed.get(game.id) || game));
+    // Keep the other unsaved edits of the open game; only its copies and version moved on.
+    setEditingGame((current: typeof editingGame) => {
+      const fresh = current && changed.get(current.id);
+      return fresh ? { ...current, copies: fresh.copies, version: fresh.version } : current;
+    });
+  };
+  const sharedCopyActions = editingGame ? {
+    targets: shareTargets,
+    onShare: (copy: { id?: string }, request: object) => updateSharedCopy(
+      `/videogames/${editingGame.id}/copies/${encodeURIComponent(copy.id || '')}/shared-games`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+    ),
+    onUnshare: (itemId: number, gameId: number) => updateSharedCopy(`/videogames/physical-items/${itemId}/games/${gameId}`, { method: 'DELETE' }),
+    onDeleteItem: (itemId: number) => updateSharedCopy(`/videogames/physical-items/${itemId}`, { method: 'DELETE' }),
+  } : undefined;
 
   const saveEdit = async () => {
     if (!editingGame || isSavingEdit) return;
@@ -918,8 +954,8 @@ export function VideogamesDashboard() {
 
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
-                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game. Sold or given away a copy? Expand it and choose Move to old copies, then Save Changes. Its platform and playtime will be kept.</p>
-                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} onMoveToOldCopy={(_copy, index) => {
+                <p className="text-muted" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Keep each platform or edition as a separate copy of this game. A cartridge or disc with several games? Expand its copy and add the other games to it. Sold or given away a copy? Expand it and choose Move to old copies, then Save Changes. Its platform and playtime will be kept.</p>
+                <OwnedCopiesEditor value={editingGame.copies} onChange={value => setEditingGame({...editingGame, copies: value})} sharing={sharedCopyActions} onMoveToOldCopy={(_copy, index) => {
                   try {
                     const moved = moveCopyToOldCopies(editingGame.copies, editingGame.old_copies, index);
                     setEditingGame({ ...editingGame, ...moved });

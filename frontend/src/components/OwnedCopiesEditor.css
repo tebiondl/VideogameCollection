@@ -11,3 +11,20 @@
 .owned-copy-grid label { color:var(--text-secondary); font-size:.8rem; }
 .owned-copy-grid .wide { grid-column:1/-1; }
 .owned-copy-grid .form-input { margin-top:.35rem; }
+.shared-copy-games { display:flex; flex-direction:column; gap:.6rem; padding:.85rem; border:1px dashed var(--border-color); border-radius:8px; }
+.shared-copy-games-heading { display:flex; align-items:center; gap:.45rem; color:var(--text-primary); font-size:.85rem; }
+.shared-copy-games-heading svg { color:var(--accent-primary); }
+.shared-copy-chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:0; padding:0; list-style:none; }
+.shared-copy-chip { display:inline-flex; align-items:center; gap:.25rem; padding:.25rem .35rem .25rem .65rem; border-radius:999px; background:var(--accent-surface); color:var(--text-primary); font-size:.8rem; }
+.shared-copy-chip.current { padding-right:.65rem; background:transparent; border:1px solid var(--border-color); color:var(--text-secondary); }
+.shared-copy-chip .icon-btn { padding:.15rem; }
+.shared-copy-actions { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; }
+.shared-copy-add { display:flex; flex-direction:column; gap:.6rem; }
+.shared-copy-matches { margin:0; padding:0; list-style:none; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; }
+.shared-copy-matches li + li { border-top:1px solid var(--border-color); }
+.shared-copy-matches button { width:100%; padding:.55rem .75rem; border:0; background:transparent; color:var(--text-primary); text-align:left; cursor:pointer; font:inherit; font-size:.85rem; }
+.shared-copy-matches button:hover, .shared-copy-matches button:focus-visible { background:var(--accent-surface); }
+.shared-copy-target { display:flex; align-items:center; gap:.6rem; margin:0; color:var(--text-primary); }
+.shared-copy-target .btn-link { padding:0; border:0; background:none; color:var(--accent-primary); cursor:pointer; font:inherit; font-size:.8rem; }
+.shared-copy-error { color:var(--error-color); }
+.owned-copy-shared-badge { display:inline-flex; align-items:center; gap:.25rem; flex:none; color:var(--accent-primary); font-size:.75rem; }

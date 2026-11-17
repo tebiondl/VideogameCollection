@@ -59,6 +59,7 @@ def _run_migrations():
         "ALTER TABLE owned_copies ADD COLUMN merged_from_game_id INTEGER",
         "ALTER TABLE owned_copies ADD COLUMN steam_imported BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE owned_copies ADD COLUMN region VARCHAR",
+        "ALTER TABLE owned_copies ADD COLUMN physical_item_id INTEGER",
         "ALTER TABLE steam_copy_suppressions ADD COLUMN in_trash BOOLEAN NOT NULL DEFAULT 1",
         "ALTER TABLE wanted_games ADD COLUMN steam_wishlist_missing BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE wanted_games ADD COLUMN steam_id VARCHAR",

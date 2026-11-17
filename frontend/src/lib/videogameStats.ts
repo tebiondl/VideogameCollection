@@ -1,4 +1,4 @@
-import { analyticsPlaytimeHours, parseCopies, parseOldCopies } from './ownedCopies';
+import { analyticsPlaytimeHours, distinctOwnedCopies, parseCopies, parseOldCopies } from './ownedCopies';
 
 export interface StatsGame {
   id: number;
@@ -56,7 +56,9 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
   const started = baseGames.filter(game => game.status && game.status !== 'Not Started' && game.status !== 'Viewed');
   const completionValues = started.map(game => game.completion_percentage).filter((value): value is number => value != null);
   const currentYear = now.getFullYear();
-  const copies = baseGames.flatMap(game => parseCopies(game.copies));
+  // A cartridge holding several games is one copy and one purchase.
+  const ownedCopies = distinctOwnedCopies(baseGames);
+  const copies = ownedCopies.map(row => row.copy);
   const oldCopies = baseGames.flatMap(game => parseOldCopies(game.old_copies));
   const dlcs = baseGames.flatMap(game => {
     try { const parsed = JSON.parse(game.dlcs || '[]'); return Array.isArray(parsed) ? parsed : []; }
@@ -107,8 +109,8 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
   }));
 
   // --- Shelf & spending ---------------------------------------------------
-  const priced = baseGames.flatMap(game => parseCopies(game.copies).filter(copy => typeof copy.price === 'number' && copy.price > 0)
-    .map(copy => ({ game, copy, price: copy.price as number, currency: copy.currency || 'EUR' })));
+  const priced = ownedCopies.filter(({ copy }) => typeof copy.price === 'number' && copy.price > 0)
+    .map(({ game, copy }) => ({ game, copy, price: copy.price as number, currency: copy.currency || 'EUR' }));
   const spendingByCurrency = sumBy(priced.map(row => ({ name: row.currency, value: row.price })));
   const mainCurrency = spendingByCurrency[0]?.name || 'EUR';
   const mainPriced = priced.filter(row => row.currency === mainCurrency);
@@ -139,7 +141,7 @@ export function calculateVideogameStats(allGames: StatsGame[], now = new Date())
     mainCurrency,
     averagePrice: mainPriced.length ? mainPriced.reduce((sum, row) => sum + row.price, 0) / mainPriced.length : null,
     spendingByPlatform,
-    mostExpensive: [...mainPriced].sort((a, b) => b.price - a.price).slice(0, 5).map(row => ({ id: row.game.id + ':' + (row.copy.id || row.copy.platform), name: row.game.name, platform: row.copy.platform, price: row.price })),
+    mostExpensive: [...mainPriced].sort((a, b) => b.price - a.price).slice(0, 5).map(row => ({ id: row.game.id + ':' + (row.copy.id || row.copy.platform), name: row.copy.physical_item && row.copy.name ? row.copy.name : row.game.name, platform: row.copy.platform, price: row.price })),
     sourceCounts,
     physicalRegionCounts,
     multiCopyGames,

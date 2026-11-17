@@ -63,6 +63,29 @@ class DiscoverySettings(Base):
         return steam_api_key_available(self.steam_api_key)
 
 
+class PhysicalItem(Base):
+    """One owned object (a cartridge, disc or box) that holds several collection games.
+
+    Each game keeps its own ``OwnedCopy`` row for per-game data (playtime). The
+    fields shared by the object live here and are mirrored onto every linked row,
+    so queries that read copies directly still see the right platform or region.
+    """
+    __tablename__ = "physical_items"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String)
+    platform = Column(String, nullable=False, default="")
+    format = Column(String, nullable=False, default="Physical")
+    region = Column(String, nullable=True)
+    source = Column(String)
+    store_url = Column(String)
+    igdb_id = Column(Integer)
+    price = Column(Float)
+    currency = Column(String, nullable=False, default="EUR")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class OwnedCopy(Base):
     """Authoritative owned-copy row. ``videogames.copies`` is only an API projection."""
     __tablename__ = "owned_copies"
@@ -94,6 +117,8 @@ class OwnedCopy(Base):
     # the user's game-level data.
     merged_from_game_id = Column(Integer, nullable=True, index=True)
     created_collection_game = Column(Boolean, nullable=False, default=False)
+    # Set when this copy is one game of a multi-game cartridge or disc.
+    physical_item_id = Column(Integer, ForeignKey("physical_items.id"), nullable=True, index=True)
     user_selected = Column(Boolean, nullable=False, default=False)
     counts_toward_totals = Column(Boolean, nullable=False, default=True)
     user_modified = Column(Boolean, nullable=False, default=False)

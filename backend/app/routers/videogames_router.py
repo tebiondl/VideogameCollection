@@ -762,6 +762,7 @@ def set_copy_prices(
     ).all()
     if len(games) != len(by_game):
         raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+    others: set[int] = set()
     for game in games:
         rows = copy_store.ensure_copies(db, game)
         by_copy = {row.copy_id: row for row in rows}
@@ -771,11 +772,75 @@ def set_copy_prices(
                 raise HTTPException(status_code=404, detail=f"{game.name} no longer has that copy. Reload and try again.")
             row.price, row.currency = item.price, item.currency
             row.user_modified, row.updated_at = True, datetime.utcnow()
+            if row.physical_item_id:
+                others |= copy_store.store_shared_edit(db, row)
         db.flush()
         copy_store.project_game(db, game, rows)
         game.version = (game.version or 1) + 1
+    copy_store.refresh_games(db, current_user.id, others - set(by_game))
     db.commit()
     return {"updated": len(payload.prices)}
+
+
+def _owned_game(db: Session, user_id: int, game_id: int) -> models.Videogame:
+    game = db.query(models.Videogame).filter(
+        models.Videogame.id == game_id, models.Videogame.user_id == user_id,
+    ).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found or unauthorized")
+    return game
+
+
+def _shared_copy_response(db: Session, user_id: int, game_ids: set[int]) -> dict:
+    games = copy_store.refresh_games(db, user_id, game_ids)
+    for game in games:
+        game.user_modified_at = datetime.utcnow()
+    db.commit()
+    for game in games:
+        db.refresh(game)
+    return {"games": games}
+
+
+@router.post("/{game_id}/copies/{copy_id}/shared-games", response_model=schemas.SharedCopyGames)
+def share_copy_with_game(
+    game_id: int,
+    copy_id: str,
+    payload: schemas.SharedCopyLink,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    """Mark another game as stored on the same cartridge or disc as this copy."""
+    game = _owned_game(db, current_user.id, game_id)
+    target = _owned_game(db, current_user.id, payload.target_game_id)
+    item = copy_store.link_physical_item(
+        db, game, copy_id, target, target_copy_id=payload.target_copy_id,
+        price=payload.price, set_price="price" in payload.model_fields_set,
+    )
+    linked = {row.collection_game_id for row in db.query(copy_store.OwnedCopy).filter_by(physical_item_id=item.id)}
+    return _shared_copy_response(db, current_user.id, linked)
+
+
+@router.delete("/physical-items/{item_id}/games/{game_id}", response_model=schemas.SharedCopyGames)
+def unshare_copy_from_game(
+    item_id: int,
+    game_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    """Take one game off a shared object; its copy stays as an ordinary copy."""
+    affected = copy_store.unlink_physical_item(db, current_user.id, item_id, game_id)
+    return _shared_copy_response(db, current_user.id, affected)
+
+
+@router.delete("/physical-items/{item_id}", response_model=schemas.SharedCopyGames)
+def delete_shared_copy(
+    item_id: int,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: Session = Depends(database.get_db),
+):
+    """Remove a shared cartridge or disc from every game that holds it."""
+    affected = copy_store.delete_physical_item(db, current_user.id, item_id)
+    return _shared_copy_response(db, current_user.id, affected)
 
 
 @router.delete("/{game_id}")
@@ -795,9 +860,16 @@ def delete_videogame(
     # A deleted collection record must not leave a Steam app pinned to a
     # missing target. Its next owned-library sync may then be matched again.
     from ..discovery_models import SteamCollectionLink, SteamMatchReview, WantedGame
+    shared_items: set[int] = set()
     for owned_copy in copy_store.ensure_copies(db, db_game):
         copy_store.suppress_copy(db, db_game, owned_copy, reason="game_deleted")
+        if owned_copy.physical_item_id:
+            shared_items.add(owned_copy.physical_item_id)
         db.delete(owned_copy)
+    # Other games on a shared cartridge keep it; one left alone becomes an ordinary copy.
+    others = copy_store.prune_physical_items(db, shared_items)
+    others.discard(db_game.id)
+    copy_store.refresh_games(db, current_user.id, others)
     db.query(SteamMatchReview).filter_by(
         user_id=current_user.id, candidate_game_id=db_game.id
     ).delete(synchronize_session=False)

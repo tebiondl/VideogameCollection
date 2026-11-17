@@ -1,4 +1,4 @@
-import { analyticsPlaytimeHours, parseCopies, parseOldCopies } from './ownedCopies';
+import { analyticsPlaytimeHours, parseCopies, parseOldCopies, priceShare } from './ownedCopies';
 import { tagNames, type StatsGame } from './videogameStats';
 import { effectiveCompletionDate, effectiveStoppedDate } from './completionDate';
 
@@ -178,9 +178,10 @@ export function buildYearlyRewind(allGames: RewindGame[], year: number, options:
 
   // --- Spending ---------------------------------------------------------------
   // Copies carry no purchase date, so this is what the games of the year cost, not what was paid during it.
+  // A cartridge holding several games splits its price between them.
   const priced = played.flatMap(entry => parseCopies(entry.game.copies)
     .filter(copy => typeof copy.price === 'number' && copy.price > 0)
-    .map(copy => ({ entry, price: copy.price as number, currency: copy.currency || 'EUR' })));
+    .map(copy => ({ entry, price: priceShare(copy) as number, currency: copy.currency || 'EUR' })));
   const currencyTotals = new Map<string, number>();
   priced.forEach(row => currencyTotals.set(row.currency, (currencyTotals.get(row.currency) || 0) + row.price));
   const mainCurrency = [...currencyTotals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || null;
