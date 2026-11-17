@@ -17,7 +17,8 @@
 .shared-copy-chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:0; padding:0; list-style:none; }
 .shared-copy-chip { display:inline-flex; align-items:center; gap:.25rem; padding:.25rem .35rem .25rem .65rem; border-radius:999px; background:var(--accent-surface); color:var(--text-primary); font-size:.8rem; }
 .shared-copy-chip.current { padding-right:.65rem; background:transparent; border:1px solid var(--border-color); color:var(--text-secondary); }
-.shared-copy-chip .icon-btn { padding:.15rem; }
+.shared-copy-chip .icon-btn { width:20px; height:20px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--text-secondary); }
+.shared-copy-chip .icon-btn:hover, .shared-copy-chip .icon-btn:focus-visible { background:hsl(var(--accent-h) 80% 45% / 0.22); color:var(--text-primary); }
 .shared-copy-actions { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; }
 .shared-copy-add { display:flex; flex-direction:column; gap:.6rem; }
 .shared-copy-matches { margin:0; padding:0; list-style:none; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; }

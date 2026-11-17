@@ -209,6 +209,25 @@ class SharedCopyTests(unittest.TestCase):
         self.assertEqual([copy["id"] for copy in self.copies(self.galaxy)], ["copy:galaxy", "steam:1"])
         self.assertEqual(self.db.query(PhysicalItem).count(), 0)
 
+    def test_hours_stay_with_each_game_while_the_price_is_shared(self):
+        copy = self.copies(self.sm64)[0]
+        copy["shared_games"] = [{"game_id": self.galaxy.id, "copy_id": "copy:galaxy"}, {"game_id": self.sunshine.id}]
+        self.assertEqual(self.put_copies(self.sm64, [copy]).status_code, 200)
+        for game, hours in ((self.sunshine, 5), (self.galaxy, 31)):
+            copies = self.copies(game)
+            for value in copies:
+                if value.get("physical_item"):
+                    value.update(playtime_hours=hours, price=70)
+            self.assertEqual(self.put_copies(game, copies).status_code, 200)
+
+        shared = {
+            game.name: [(c["playtime_hours"], c["price"]) for c in self.copies(game) if c.get("physical_item")]
+            for game in (self.sm64, self.sunshine, self.galaxy)
+        }
+        self.assertEqual(shared, {
+            "Super Mario 64": [(12, 70)], "Super Mario Sunshine": [(5, 70)], "Super Mario Galaxy": [(31, 70)],
+        })
+
     def test_rejects_steam_copies_duplicates_and_other_users_games(self):
         self.assertEqual(self.share(self.galaxy, "steam:1", self.sm64).status_code, 409)
         self.assertEqual(self.share(self.sm64, "copy:cart", self.sm64).status_code, 422)
