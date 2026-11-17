@@ -19,6 +19,22 @@ export interface OwnedCopy {
   counts_toward_totals?: boolean;
   /** Set when this copy is one game of a cartridge or disc that holds several games. */
   physical_item?: SharedPhysicalItem | null;
+  /** Form draft: the other games that should be on this object once the game is saved. */
+  shared_games?: SharedGameLink[];
+  /** Form draft: remove this object from every game that holds it when the game is saved. */
+  delete_shared?: boolean;
+}
+
+export interface SharedGameLink {
+  game_id: number;
+  name?: string;
+  /** An existing copy of that game to group with this one, instead of adding a new copy. */
+  copy_id?: string;
+}
+
+/** The other games on a copy's object, including changes not saved yet. */
+export function sharedGameLinks(copy: OwnedCopy): SharedGameLink[] {
+  return copy.shared_games ?? copy.physical_item?.games.map(game => ({ game_id: game.id, name: game.name })) ?? [];
 }
 
 export interface SharedPhysicalItem {
@@ -123,7 +139,7 @@ export function moveCopyToOldCopies(
   const id = copy.id && !oldCopies.some(oldCopy => oldCopy.id === copy.id) ? copy.id : crypto.randomUUID();
   // Keep the original details in the historical record as well as its editable platform and time.
   // A historical record is not on a shared cartridge any more.
-  const oldCopy = { ...copy, physical_item: undefined, id, console: copy.platform, playtime_hours: copy.playtime_hours ?? null };
+  const oldCopy = { ...copy, physical_item: undefined, shared_games: undefined, delete_shared: undefined, id, console: copy.platform, playtime_hours: copy.playtime_hours ?? null };
   const remaining = copies.filter((_, copyIndex) => copyIndex !== index);
   return {
     copies: remaining.length ? JSON.stringify(remaining) : null,

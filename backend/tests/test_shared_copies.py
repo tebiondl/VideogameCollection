@@ -4,7 +4,7 @@ import unittest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -13,11 +13,14 @@ from backend.app.database import Base, get_db
 from backend.app.discovery_models import OwnedCopy, PhysicalItem
 from backend.app.models import User, Videogame
 from backend.app.routers import videogames_router
+from backend.app.services import copy_store
 
 
 class SharedCopyTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        # The app enforces foreign keys; so must the tests, or delete order bugs hide.
+        event.listen(self.engine, "connect", lambda connection, _record: connection.execute("PRAGMA foreign_keys=ON"))
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
         self.user = User(username="owner", hashed_password="unused")
@@ -40,6 +43,8 @@ class SharedCopyTests(unittest.TestCase):
             OwnedCopy(user_id=self.user.id, collection_game_id=self.galaxy.id, copy_id="steam:1",
                       steam_appid=1, name="Steam", platform="PC", format="Digital", source="Steam", position=1),
         ])
+        self.db.commit()
+        copy_store.project_games(self.db, [self.sm64, self.sunshine, self.galaxy])
         self.db.commit()
         app = FastAPI()
         app.include_router(videogames_router.router)
@@ -146,6 +151,63 @@ class SharedCopyTests(unittest.TestCase):
         [sunshine_copy] = self.copies(self.sunshine)
         self.assertNotIn("physical_item", sunshine_copy)
         self.assertEqual(sunshine_copy["price"], 60)
+
+    def put_copies(self, game, copies):
+        return self.client.put(f"/api/videogames/{game.id}", json={"name": game.name, "copies": json.dumps(copies) if copies else None})
+
+    def test_the_edit_form_saves_games_added_to_a_copy_with_its_other_changes(self):
+        copy = self.copies(self.sm64)[0]
+        copy.update(price=55, shared_games=[
+            {"game_id": self.sunshine.id, "name": "Super Mario Sunshine"},
+            {"game_id": self.galaxy.id, "name": "Super Mario Galaxy", "copy_id": "copy:galaxy"},
+        ])
+        new_copy = {"id": "copy:new", "platform": "PC", "format": "Digital", "shared_games": []}
+        response = self.put_copies(self.sm64, [copy, new_copy])
+        self.assertEqual(response.status_code, 200, response.text)
+
+        sm64 = {copy["id"]: copy for copy in self.copies(self.sm64)}
+        self.assertEqual(len(sm64["copy:cart"]["physical_item"]["games"]), 2)
+        self.assertNotIn("physical_item", sm64["copy:new"])
+        galaxy = {copy["id"]: copy for copy in self.copies(self.galaxy)}
+        self.assertEqual((galaxy["copy:galaxy"]["price"], galaxy["copy:galaxy"]["playtime_hours"]), (55, 30))
+        [sunshine_copy] = self.copies(self.sunshine)
+        self.assertEqual(sunshine_copy["name"], "Super Mario 3D All-Stars")
+
+    def test_a_new_copy_can_be_shared_before_it_was_ever_saved(self):
+        response = self.put_copies(self.sunshine, [{
+            "id": "copy:fresh", "name": "Cartridge", "platform": "Nintendo Switch", "format": "Physical",
+            "price": 40, "shared_games": [{"game_id": self.sm64.id, "copy_id": "copy:cart"}],
+        }])
+        self.assertEqual(response.status_code, 200, response.text)
+        [sm64_copy] = self.copies(self.sm64)
+        self.assertEqual((sm64_copy["name"], sm64_copy["price"]), ("Cartridge", 40))
+
+    def test_a_new_game_can_be_created_on_an_existing_cartridge(self):
+        response = self.client.post("/api/videogames/", json={"name": "Super Mario Galaxy 2", "copies": json.dumps([{
+            "id": "copy:g2", "platform": "Nintendo Switch", "format": "Physical",
+            "shared_games": [{"game_id": self.sm64.id, "copy_id": "copy:cart"}],
+        }])})
+        self.assertEqual(response.status_code, 200, response.text)
+        [created_copy] = json.loads(response.json()["copies"])
+        self.assertEqual(created_copy["name"], "Super Mario 3D All-Stars")
+        self.assertEqual(created_copy["physical_item"]["games"], [{"id": self.sm64.id, "name": "Super Mario 64"}])
+
+    def test_the_form_takes_games_off_a_copy_and_deletes_it_everywhere(self):
+        self.share(self.sm64, "copy:cart", self.sunshine)
+        self.share(self.sm64, "copy:cart", self.galaxy)
+        copy = self.copies(self.sm64)[0]
+        copy["shared_games"] = [{"game_id": self.galaxy.id}]
+        self.assertEqual(self.put_copies(self.sm64, [copy]).status_code, 200)
+        self.assertNotIn("physical_item", self.copies(self.sunshine)[0])
+        self.assertEqual(len(self.copies(self.sm64)[0]["physical_item"]["games"]), 1)
+
+        copy = self.copies(self.sm64)[0]
+        copy["delete_shared"] = True
+        response = self.put_copies(self.sm64, [copy])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.copies(self.sm64), [])
+        self.assertEqual([copy["id"] for copy in self.copies(self.galaxy)], ["copy:galaxy", "steam:1"])
+        self.assertEqual(self.db.query(PhysicalItem).count(), 0)
 
     def test_rejects_steam_copies_duplicates_and_other_users_games(self):
         self.assertEqual(self.share(self.galaxy, "steam:1", self.sm64).status_code, 409)

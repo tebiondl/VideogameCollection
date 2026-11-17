@@ -9,6 +9,7 @@ import { CompletionDatePicker } from '../components/CompletionDatePicker';
 import { isCompletedStatus } from '../lib/completionDate';
 import { DlcEditor } from '../components/DlcEditor';
 import { OwnedCopiesEditor } from '../components/OwnedCopiesEditor';
+import type { ShareTargetGame } from '../components/SharedCopyGames';
 import { OldCopiesEditor } from '../components/OldCopiesEditor';
 import { VideogamePageHeader } from '../components/VideogamePageHeader';
 import { EMPTY_COPY_OPTIONS, type CopyOptions } from '../lib/discovery';
@@ -114,6 +115,21 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
       }
     };
     fetchFormOptions();
+  }, []);
+
+  // Games already in the collection, so a new game can join a cartridge or disc you own.
+  const [shareTargets, setShareTargets] = useState<ShareTargetGame[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetchWithAuth('/videogames/').then(async response => {
+      if (!response.ok || !active) return;
+      const games: (ShareTargetGame & { hidden?: boolean; merged_into_game_id?: number | null })[] = await response.json();
+      if (!active) return;
+      setShareTargets(games.filter(game => !game.hidden && !game.merged_into_game_id)
+        .map(game => ({ id: game.id, name: game.name, copies: game.copies }))
+        .sort((a, b) => a.name.localeCompare(b.name)));
+    }).catch(error => console.error('Could not load the collection for shared copies', error));
+    return () => { active = false; };
   }, []);
 
   // IGDB: debounced search — fires 400 ms after user stops typing
@@ -623,7 +639,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
             <div className="form-group">
               <label className="form-label">Owned Copies</label>
               <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
-              <OwnedCopiesEditor value={copies} onChange={setCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
+              <OwnedCopiesEditor value={copies} onChange={setCopies} sharing={{ targets: shareTargets }} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
             </div>
             <div className="form-group">
               <label className="form-label">Old Copies</label>
@@ -1162,7 +1178,7 @@ export function AddGamePage({ initialTab = 'search' }: { initialTab?: 'search' |
               <div className="form-group">
                 <label className="form-label">Owned Copies</label>
                 <p className="text-secondary" style={{ marginBottom: '.75rem', fontSize: '.85rem' }}>Add every platform or edition you already own.</p>
-                <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
+                <OwnedCopiesEditor value={igdbCopies} onChange={setIgdbCopies} sharing={{ targets: shareTargets }} platformOptions={copyOptions.platforms} sourceOptions={copyOptions.sources} typeOptions={copyOptions.types} platformSources={copyOptions.platform_sources} sourceTypes={copyOptions.source_types} />
               </div>
               <div className="form-group">
                 <label className="form-label">Old Copies</label>

@@ -2,17 +2,14 @@ import { Archive, ChevronDown, Layers, Link2, Plus, CopyPlus, Trash2 } from 'luc
 import './OwnedCopiesEditor.css';
 import { compatibleCopyFormat, compatibleCopyFormats, compatibleCopySources, isCopySourceCompatible, isSteamSource, preferredCopySource, sameCopyValue } from '../lib/copyCompatibility';
 import type { OwnedCopy } from '../lib/ownedCopies';
-import { parseCopies } from '../lib/ownedCopies';
+import { parseCopies, sharedGameLinks } from '../lib/ownedCopies';
 import { CopyRegionSelect } from './CopyRegionSelect';
 import { SharedCopyGames } from './SharedCopyGames';
-import type { ShareCopyRequest, ShareTargetGame } from './SharedCopyGames';
+import type { ShareTargetGame } from './SharedCopyGames';
 
 export interface SharedCopyActions {
   /** Other games of the collection that may be on the same cartridge or disc. */
   targets: ShareTargetGame[];
-  onShare: (copy: OwnedCopy, request: ShareCopyRequest) => Promise<void>;
-  onUnshare: (itemId: number, gameId: number) => Promise<void>;
-  onDeleteItem: (itemId: number) => Promise<void>;
 }
 
 export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOptions, typeOptions, platformSources, sourceTypes, onLinkSteam, onRestoreDuplicate, onMoveToOldCopy, sharing }: { value: string | null | undefined; onChange: (value: string | null) => void; platformOptions: string[]; sourceOptions: string[]; typeOptions: string[]; platformSources: Record<string, string[]>; sourceTypes: Record<string, string[]>; onLinkSteam?: (copy: OwnedCopy, index: number) => void; onRestoreDuplicate?: (copy: OwnedCopy, index: number) => void; onMoveToOldCopy?: (copy: OwnedCopy, index: number) => void; sharing?: SharedCopyActions }) {
@@ -44,6 +41,8 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
   };
   return <div className="owned-copies-editor">
     {copies.map((copy, index) => {
+      // Deleted from every game on save; kept in the draft so the save can say so.
+      if (copy.delete_shared) return null;
       const platforms = copy.platform && !platformOptions.includes(copy.platform) ? [copy.platform, ...platformOptions] : platformOptions;
       const isSteam = !!copy.steam_appid;
       const canEditSteamPlaytime = isSteam && copy.steam_playtime_available === false;
@@ -56,7 +55,7 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
       const canLinkSteam = !!onLinkSteam && (isSteam || isSteamSource(sourceValue));
       const canRestoreDuplicate = !!onRestoreDuplicate && isSteam;
       return <details className="owned-copy-editor" key={copy.id || index}>
-      <summary className="owned-copy-heading"><span><ChevronDown size={16} /><strong>Copy {index + 1}</strong><small>{[copy.name, copy.platform || 'Choose platform', copy.format || 'Any format', copy.region].filter(Boolean).join(' · ')}</small>{copy.physical_item && <span className="owned-copy-shared-badge" title={`Shared with ${copy.physical_item.games.map(game => game.name).join(', ')}`}><Layers size={13} />+{copy.physical_item.games.length}</span>}</span><button type="button" className="icon-btn" onClick={event => { event.preventDefault(); event.stopPropagation(); remove(index); }} aria-label={`Remove copy ${index + 1}`}><Trash2 size={15} /></button></summary>
+      <summary className="owned-copy-heading"><span><ChevronDown size={16} /><strong>Copy {index + 1}</strong><small>{[copy.name, copy.platform || 'Choose platform', copy.format || 'Any format', copy.region].filter(Boolean).join(' · ')}</small>{sharedGameLinks(copy).length > 0 && <span className="owned-copy-shared-badge" title={`Shared with ${sharedGameLinks(copy).map(game => game.name).filter(Boolean).join(', ')}`}><Layers size={13} />+{sharedGameLinks(copy).length}</span>}</span><button type="button" className="icon-btn" onClick={event => { event.preventDefault(); event.stopPropagation(); remove(index); }} aria-label={`Remove copy ${index + 1}`}><Trash2 size={15} /></button></summary>
       <div className="owned-copy-grid">
         <label className="wide">Copy name / edition<input className="form-input" value={copy.name || ''} disabled={isSteam} onChange={event => update(index, { name: event.target.value || null })} placeholder="e.g. Final Fantasy VII (2013)" /></label>
         <label>Platform<select className="form-input" value={copy.platform || ''} disabled={isSteam} onChange={event => {
@@ -71,10 +70,10 @@ export function OwnedCopiesEditor({ value, onChange, platformOptions, sourceOpti
           update(index, { source, format: compatibleCopyFormat(copy.platform, source, copy.format, typeOptions, sourceTypes) });
         }}><option value="" disabled>Choose source</option>{renderedSources.map(value => <option key={value}>{value}</option>)}</select>{isSteam && <small className="text-muted">Locked while this copy is linked to Steam.</small>}</label>
         <label>Copy playtime (hours)<input className="form-input" type="number" min="0" step="0.1" value={copy.playtime_hours ?? ''} disabled={isSteam && !canEditSteamPlaytime} onChange={event => update(index, { playtime_hours: event.target.value ? Number(event.target.value) : null })} />{isSteam && <small className="text-muted">{canEditSteamPlaytime ? 'Steam confirms this game but does not expose its playtime; enter it manually.' : 'Updated automatically by Steam.'}{copy.counts_toward_totals === false ? ' Shared link; counted once in global analytics.' : ''}</small>}</label>
-        <label>{copy.physical_item ? 'Price (whole cartridge or disc)' : 'Price'}<input className="form-input" type="number" min="0" step="0.01" value={copy.price ?? ''} onChange={event => update(index, { price: event.target.value ? Number(event.target.value) : null })} />{copy.physical_item && <small className="text-muted">Shared with its other games and counted once.</small>}</label>
+        <label>{sharedGameLinks(copy).length ? 'Price (whole cartridge or disc)' : 'Price'}<input className="form-input" type="number" min="0" step="0.01" value={copy.price ?? ''} onChange={event => update(index, { price: event.target.value ? Number(event.target.value) : null })} />{sharedGameLinks(copy).length > 0 && <small className="text-muted">Shared with its other games and counted once.</small>}</label>
         <label>Currency<select className="form-input" value={copy.currency || 'EUR'} onChange={event => update(index, { currency: event.target.value })}>{['EUR', 'USD', 'GBP', 'JPY'].map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="wide">Store / source URL<input className="form-input" type="url" value={copy.store_url || ''} disabled={isSteam} onChange={event => update(index, { store_url: event.target.value || null })} /></label>
-        {sharing && !isSteam && <SharedCopyGames copy={copy} targets={sharing.targets} onShare={sharing.onShare} onUnshare={sharing.onUnshare} onDeleteItem={sharing.onDeleteItem} />}
+        {sharing && !isSteam && <SharedCopyGames copy={copy} targets={sharing.targets} onChange={patch => update(index, patch)} onDeleteEverywhere={() => update(index, { delete_shared: true })} />}
         {(canLinkSteam || canRestoreDuplicate || onMoveToOldCopy) && <div className="wide" style={{ display: 'flex', gap: '.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {onMoveToOldCopy && <button type="button" className="btn btn-secondary" disabled={!copy.platform?.trim()} onClick={() => onMoveToOldCopy(copy, index)}><Archive size={16} />Move to old copies</button>}
           {canLinkSteam && <button type="button" className="btn btn-secondary" disabled={!copy.id} onClick={() => onLinkSteam!(copy, index)}><Link2 size={16} />{copy.steam_appid ? 'Change linked Steam game' : 'Link this copy to Steam'}</button>}

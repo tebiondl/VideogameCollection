@@ -324,6 +324,17 @@ def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> li
     incoming_ids: set[str] = set()
     incoming_apps: set[int] = set()
     result: list[OwnedCopy] = []
+    shared_requests: list[tuple[OwnedCopy, object]] = []
+    deleted_items: set[int] = set()
+    for value in values:
+        # "Delete from all its games": the copy leaves this game and every other one.
+        row = by_id.get(str(value.get("id") or ""))
+        if value.get("delete_shared") and row is not None and row.physical_item_id:
+            deleted_items.add(row.physical_item_id)
+    values = [value for value in values if not (
+        value.get("delete_shared") and by_id.get(str(value.get("id") or ""))
+        and by_id[str(value["id"])].physical_item_id in deleted_items
+    )]
     for position, value in enumerate(values):
         copy_id = str(value.get("id") or f"copy:{uuid4().hex}")
         if copy_id in incoming_ids:
@@ -370,9 +381,14 @@ def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> li
             raise HTTPException(422, "Copy playtime cannot be negative.")
         row.position, row.user_modified, row.updated_at = position, True, datetime.utcnow()
         result.append(row)
+        if "shared_games" in value:
+            shared_requests.append((row, value.get("shared_games")))
+    others: set[int] = set()
+    for item_id in deleted_items:
+        others |= delete_physical_item(db, game.user_id, item_id)
     removed_items: set[int] = set()
     for row in existing:
-        if row.copy_id in incoming_ids:
+        if row.copy_id in incoming_ids or row.physical_item_id in deleted_items:
             continue
         if row.physical_item_id:
             # Removing a shared copy only takes this game off the object.
@@ -380,11 +396,13 @@ def replace_from_payload(db: Session, game: Videogame, values: list[dict]) -> li
         suppress_copy(db, game, row)
         db.delete(row)
     db.flush()
-    others: set[int] = set()
     for row in result:
         if row.physical_item_id:
             others |= store_shared_edit(db, row)
     others |= prune_physical_items(db, removed_items)
+    # Games added to or taken off a cartridge in the form are saved with it.
+    for row, requested in shared_requests:
+        others |= sync_shared_games(db, game, row, requested)
     others.discard(game.id)
     project_game(db, game, result)
     refresh_games(db, game.user_id, others)
@@ -436,6 +454,8 @@ def prune_physical_items(db: Session, item_ids: set[int]) -> set[int]:
         # The remaining copy keeps the shared details, price included.
         for row in rows:
             row.physical_item_id = None
+        # Detach before deleting: SQLite enforces the item foreign key.
+        db.flush()
         item = db.get(PhysicalItem, item_id)
         if item is not None:
             db.delete(item)
@@ -460,40 +480,48 @@ def _owned_row(db: Session, game: Videogame, copy_id: str) -> OwnedCopy:
         user_id=game.user_id, collection_game_id=game.id, copy_id=copy_id,
     ).first()
     if row is None:
-        raise HTTPException(404, f"{game.name} has no saved copy with that ID. Save your changes first.")
+        raise HTTPException(404, f"{game.name} no longer has that copy. Reload and try again.")
     if row.steam_appid:
         raise HTTPException(409, "Steam copies belong to one Steam game and cannot be shared.")
     return row
 
 
 def link_physical_item(
-    db: Session, game: Videogame, copy_id: str, target: Videogame, *,
+    db: Session, game: Videogame, row: OwnedCopy, target: Videogame, *,
     target_copy_id: str | None = None, price: float | None = None, set_price: bool = False,
 ) -> PhysicalItem:
-    """Put another collection game on the same physical object as ``copy_id``.
+    """Put another collection game on the same physical object as the copy ``row``.
 
     With ``target_copy_id`` an existing copy of the target game joins the object
     (grouping copies that were added separately); otherwise a new copy is created.
     """
     if target.id == game.id:
         raise HTTPException(422, "Choose a different game to share this copy with.")
-    row = _owned_row(db, game, copy_id)
+    if row.steam_appid:
+        raise HTTPException(409, "Steam copies belong to one Steam game and cannot be shared.")
+    target_row = None
+    if target_copy_id:
+        target_row = _owned_row(db, target, target_copy_id)
+        if target_row.physical_item_id:
+            raise HTTPException(409, f"That copy of {target.name} is already shared with other games. Unlink it first.")
     item = db.get(PhysicalItem, row.physical_item_id) if row.physical_item_id else None
     if item is None:
         item = PhysicalItem(user_id=game.user_id, **{field: getattr(row, field) for field in SHARED_FIELDS})
+        if target_row is not None:
+            # Grouping two copies: details missing on this one come from the other,
+            # so a copy added for a new game picks up the cartridge already recorded.
+            for field in SHARED_FIELDS:
+                if getattr(item, field) in (None, "", "Any") and getattr(target_row, field) not in (None, ""):
+                    setattr(item, field, getattr(target_row, field))
         item.platform = item.platform or ""
         item.format = item.format or "Physical"
         item.currency = item.currency or "EUR"
         db.add(item)
         db.flush()
         row.physical_item_id = item.id
-    if db.query(OwnedCopy).filter_by(collection_game_id=target.id, physical_item_id=item.id).first():
+    elif db.query(OwnedCopy).filter_by(collection_game_id=target.id, physical_item_id=item.id).first():
         raise HTTPException(409, f"{target.name} is already on this item.")
-    if target_copy_id:
-        target_row = _owned_row(db, target, target_copy_id)
-        if target_row.physical_item_id:
-            raise HTTPException(409, f"That copy of {target.name} is already shared with other games. Unlink it first.")
-    else:
+    if target_row is None:
         ensure_copies(db, target)
         last = db.query(OwnedCopy).filter_by(collection_game_id=target.id).order_by(OwnedCopy.position.desc()).first()
         target_row = OwnedCopy(
@@ -509,6 +537,46 @@ def link_physical_item(
     db.flush()
     _mirror_item(db, item)
     return item
+
+
+def sync_shared_games(db: Session, game: Videogame, row: OwnedCopy, requested: object) -> set[int]:
+    """Make the games sharing ``row``'s object match the list sent by the form.
+
+    Each entry is ``{"game_id": int, "copy_id"?: str}``; ``copy_id`` groups an
+    existing copy of that game instead of creating a new one.
+    """
+    if row.steam_appid:
+        return set()
+    if not isinstance(requested, list):
+        raise HTTPException(422, "The games on a shared copy must be a list.")
+    wanted: dict[int, str | None] = {}
+    for entry in requested:
+        try:
+            game_id = int(entry.get("game_id"))
+        except (AttributeError, TypeError, ValueError):
+            raise HTTPException(422, "Each game on a shared copy needs a game ID.")
+        if game_id != game.id:
+            wanted.setdefault(game_id, str(entry["copy_id"]) if entry.get("copy_id") else None)
+    current: set[int] = set()
+    if row.physical_item_id:
+        current = {
+            linked.collection_game_id
+            for linked in db.query(OwnedCopy).filter_by(physical_item_id=row.physical_item_id)
+        } - {game.id}
+    affected: set[int] = set()
+    for game_id in current - set(wanted):
+        affected |= unlink_physical_item(db, game.user_id, row.physical_item_id, game_id)
+    for game_id, copy_id in wanted.items():
+        if game_id in current:
+            continue
+        target = db.query(Videogame).filter_by(id=game_id, user_id=game.user_id).first()
+        if target is None:
+            raise HTTPException(404, "A game added to this copy is no longer in your collection.")
+        item = link_physical_item(db, game, row, target, target_copy_id=copy_id)
+        affected |= {
+            linked.collection_game_id for linked in db.query(OwnedCopy).filter_by(physical_item_id=item.id)
+        }
+    return affected
 
 
 def unlink_physical_item(db: Session, user_id: int, item_id: int, game_id: int) -> set[int]:
@@ -537,6 +605,7 @@ def delete_physical_item(db: Session, user_id: int, item_id: int) -> set[int]:
     affected = {row.collection_game_id for row in rows}
     for row in rows:
         db.delete(row)
+    db.flush()
     db.delete(item)
     db.flush()
     return affected

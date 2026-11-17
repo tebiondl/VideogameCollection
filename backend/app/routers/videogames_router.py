@@ -813,7 +813,7 @@ def share_copy_with_game(
     game = _owned_game(db, current_user.id, game_id)
     target = _owned_game(db, current_user.id, payload.target_game_id)
     item = copy_store.link_physical_item(
-        db, game, copy_id, target, target_copy_id=payload.target_copy_id,
+        db, game, copy_store._owned_row(db, game, copy_id), target, target_copy_id=payload.target_copy_id,
         price=payload.price, set_price="price" in payload.model_fields_set,
     )
     linked = {row.collection_game_id for row in db.query(copy_store.OwnedCopy).filter_by(physical_item_id=item.id)}
